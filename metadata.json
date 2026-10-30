@@ -1,0 +1,8 @@
+{
+  "name": "VSTEP Tutor",
+  "description": "VSTEP Tutor - Hệ thống Luyện thi & Tạo đề thi VSTEP B1-B2-C1 (Bậc 3-5) chuẩn cấu trúc Bộ Giáo dục & Đào tạo với giao diện Gamification thông minh.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "entities": {
+    "Test": {
+      "title": "Test",
+      "description": "A LanguageCert B1 exam paper with 52 questions, audio metadata, and parts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the test" },
+        "title": { "type": "string", "description": "Title of the test", "maxLength": 200 },
+        "subtitle": { "type": "string", "description": "Subtitle description", "maxLength": 500 },
+        "totalQuestions": { "type": "number", "description": "Total question count, standard 52" },
+        "durationMinutes": { "type": "number", "description": "Duration in minutes, default 90" },
+        "isAvailable": { "type": "boolean", "description": "Availability flag" },
+        "isCustom": { "type": "boolean", "description": "Whether test is custom generated" },
+        "createdAt": { "type": "number", "description": "Creation timestamp in milliseconds" },
+        "creatorId": { "type": "string", "description": "UID of creator" },
+        "creatorEmail": { "type": "string", "description": "Email of creator" },
+        "audioUrl": { "type": "string", "description": "Audio URL or endpoint path" },
+        "audioFileName": { "type": "string", "description": "Original file name of MP3" },
+        "questions": { "type": "array", "description": "List of 52 questions across Listening and Reading" }
+      },
+      "required": ["id", "title", "totalQuestions", "durationMinutes", "isAvailable", "isCustom", "createdAt", "creatorId", "questions"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account profile authenticated via Google",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "User display name", "maxLength": 200 },
+        "photoURL": { "type": "string", "description": "Avatar photo URL" },
+        "role": { "type": "string", "enum": ["admin", "student"], "description": "User role in the system" },
+        "createdAt": { "type": "number", "description": "Profile creation timestamp" }
+      },
+      "required": ["uid", "email", "displayName", "role", "createdAt"]
+    },
+    "UserExamAttempt": {
+      "title": "UserExamAttempt",
+      "description": "Record of a completed exam or practice session",
+      "type": "object",
+      "properties": {
+        "attemptId": { "type": "string", "description": "Unique attempt ID" },
+        "testId": { "type": "string", "description": "ID of the test taken" },
+        "testTitle": { "type": "string", "description": "Title of the test", "maxLength": 200 },
+        "mode": { "type": "string", "enum": ["exam", "practice"], "description": "Exam simulation or practice mode" },
+        "score": { "type": "number", "description": "Total correct answers count" },
+        "totalQuestions": { "type": "number", "description": "Total questions count (52)" },
+        "percentage": { "type": "number", "description": "Score percentage" },
+        "grade": { "type": "string", "enum": ["High Pass", "Pass", "Fail"], "description": "LanguageCert achievement grade" },
+        "listeningScore": { "type": "number", "description": "Listening section score (out of 26)" },
+        "readingScore": { "type": "number", "description": "Reading section score (out of 26)" },
+        "timeSpentSeconds": { "type": "number", "description": "Total time spent in seconds" },
+        "completedAt": { "type": "number", "description": "Completion timestamp" }
+      },
+      "required": ["attemptId", "testId", "testTitle", "mode", "score", "totalQuestions", "percentage", "grade", "listeningScore", "readingScore", "timeSpentSeconds", "completedAt"]
+    },
+    "FeedbackReport": {
+      "title": "FeedbackReport",
+      "description": "Student bug report or suggestion submitted from any screen or question",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique feedback ID" },
+        "userId": { "type": "string", "description": "Optional user UID or guest" },
+        "userName": { "type": "string", "description": "Student name or email" },
+        "userEmail": { "type": "string", "description": "Student email if available" },
+        "category": { "type": "string", "enum": ["question_error", "audio_media", "answer_explanation", "ui_issue", "general_suggestion"] },
+        "message": { "type": "string", "description": "Detailed report or suggestion content" },
+        "contextScreen": { "type": "string", "description": "Screen where report was triggered" },
+        "testId": { "type": "string", "description": "Optional exam test ID" },
+        "testTitle": { "type": "string", "description": "Optional exam title" },
+        "section": { "type": "string", "description": "Optional section (LISTENING, READING, WRITING)" },
+        "partNumber": { "type": "number", "description": "Optional part number (1-4)" },
+        "questionNumber": { "type": "number", "description": "Optional question number" },
+        "status": { "type": "string", "enum": ["unread", "read", "unresolved", "resolved"] },
+        "adminNote": { "type": "string", "description": "Admin resolution note by Mr.Harry" },
+        "createdAt": { "type": "number", "description": "Timestamp in ms" },
+        "updatedAt": { "type": "number", "description": "Timestamp in ms" }
+      },
+      "required": ["id", "userName", "category", "message", "status", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/tests/{testId}": {
+      "schema": "Test",
+      "description": "Collection of all official and custom created exam papers"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile collection"
+    },
+    "/users/{userId}/attempts/{attemptId}": {
+      "schema": "UserExamAttempt",
+      "description": "Sub-collection of user exam attempts and results"
+    },
+    "/users/{userId}/vocabSrs/{docId}": {
+      "schema": "UserProfile",
+      "description": "Sub-collection storing user Anki SM-2 spaced repetition state"
+    },
+    "/feedbacks/{feedbackId}": {
+      "schema": "FeedbackReport",
+      "description": "Student bug reports and suggestions managed by Admin"
+    }
+  }
+}
