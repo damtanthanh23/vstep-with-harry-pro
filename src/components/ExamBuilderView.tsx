@@ -684,6 +684,19 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
         ...patch,
       };
       const updatedPassageStr = (updatedArticle.paragraphs || []).join('\n\n');
+      const parsedTranslation =
+        translationText !== undefined
+          ? translationText.trim()
+            ? {
+                title: updatedArticle.title || `Bản dịch Bài đọc ${targetPartNum}`,
+                paragraphs: translationText
+                  .split(/\n\s*\n/)
+                  .map((p) => p.trim())
+                  .filter(Boolean),
+              }
+            : undefined
+          : undefined;
+
       return prev.map((q) =>
         q.section === 'READING' && q.partNumber === targetPartNum
           ? {
@@ -691,7 +704,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
               readingArticle: updatedArticle,
               readingPassage: updatedPassageStr,
               ...(translationText !== undefined
-                ? { readingArticleTranslation: translationText }
+                ? { readingArticleTranslation: parsedTranslation }
                 : {}),
             }
           : q
@@ -2089,7 +2102,14 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                 </label>
                 <textarea
                   rows={6}
-                  value={firstQuestionOfPart.readingArticleTranslation || ''}
+                  value={
+                    typeof firstQuestionOfPart.readingArticleTranslation === 'object' &&
+                    firstQuestionOfPart.readingArticleTranslation
+                      ? (firstQuestionOfPart.readingArticleTranslation.paragraphs || []).join('\n\n')
+                      : typeof firstQuestionOfPart.readingArticleTranslation === 'string'
+                      ? firstQuestionOfPart.readingArticleTranslation
+                      : ''
+                  }
                   onChange={(e) =>
                     handleUpdateReadingPassageArticle(
                       activePartConfig.partNumber,

@@ -174,6 +174,7 @@ export interface UserProfile {
   role: 'admin' | 'co_teacher' | 'student';
   assignedBy?: string;
   createdAt: number;
+  lastActiveAt?: number;
 }
 
 export interface UserExamAttempt {

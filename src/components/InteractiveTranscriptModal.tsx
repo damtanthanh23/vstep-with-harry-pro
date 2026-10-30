@@ -284,7 +284,8 @@ export function parseScriptIntoSpeakerTurns(
 
     if (viSentences.length >= enTurns.length) {
       const enSentenceCounts = enTurns.map((t) => {
-        const matches = t.englishText ? t.englishText.match(/[.?!…]+/g) : t.text.match(/[.?!…]+/g);
+        const rawText = (t as any).englishText || t.text;
+        const matches = rawText.match(/[.?!…]+/g);
         return Math.max(1, matches ? matches.length : 1);
       });
       const totalEnSentences = enSentenceCounts.reduce((a, b) => a + b, 0);

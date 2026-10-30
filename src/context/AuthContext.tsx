@@ -11,6 +11,7 @@ import {
 import {
   doc,
   getDoc,
+  setDoc,
 } from 'firebase/firestore';
 import { auth, googleProvider, db, safeSetDoc, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types/exam';
@@ -108,11 +109,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ...localCache,
               ...data,
               role: effectiveRole,
+              lastActiveAt: Date.now(),
             };
             
-            // If profile role in Firestore was different from superadmin override, sync it
+            // Sync role or lastActiveAt to Firestore
+            const syncPayload: Record<string, unknown> = {
+              lastActiveAt: Date.now(),
+            };
             if (userIsSuperAdmin && data.role !== 'admin') {
-              await safeSetDoc(userDocRef, { role: 'admin' }, { merge: true });
+              syncPayload.role = 'admin';
+            }
+            if (!data.email && user.email) {
+              syncPayload.email = user.email;
+            }
+            if ((!data.displayName || data.displayName === 'Học viên VSTEP') && user.displayName) {
+              syncPayload.displayName = user.displayName;
+            }
+            if (!data.photoURL && user.photoURL) {
+              syncPayload.photoURL = user.photoURL;
+            }
+
+            try {
+              await setDoc(userDocRef, syncPayload, { merge: true });
+            } catch {
+              await safeSetDoc(userDocRef, syncPayload, { merge: true });
             }
 
             if (updatedProfile.nickname) {
@@ -135,8 +155,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ...(user.photoURL ? { photoURL: user.photoURL } : {}),
               role: effectiveRole,
               createdAt: Date.now(),
+              lastActiveAt: Date.now(),
             };
-            await safeSetDoc(userDocRef, newProfile, { merge: true });
+            try {
+              await setDoc(userDocRef, newProfile, { merge: true });
+            } catch {
+              await safeSetDoc(userDocRef, newProfile, { merge: true });
+            }
             saveLocalProfileCache(user.uid, newProfile);
             setUserProfile(newProfile);
             setIsAdmin(userIsSuperAdmin);
