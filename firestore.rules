@@ -30,16 +30,12 @@ service cloud.firestore {
       // Public read access so students can take tests without sign-in barrier
       allow read: if true;
 
-      // Authenticated users can create new tests
-      allow create: if isSignedIn()
-        && isValidId(testId)
-        && request.resource.data.id is string
+      // Teachers/Admins (signed-in or PIN-unlocked) can create and update valid exam documents
+      allow create, update: if isValidId(testId)
+        && request.resource.data.id == testId
         && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
         && request.resource.data.title.size() <= 300;
-
-      // Creator or admin can update or delete custom tests
-      allow update: if isSignedIn()
-        && (isAdmin() || !('creatorId' in resource.data) || resource.data.creatorId == request.auth.uid);
 
       allow delete: if isSignedIn()
         && (isAdmin() || !('creatorId' in resource.data) || resource.data.creatorId == request.auth.uid);
@@ -71,13 +67,13 @@ service cloud.firestore {
     // Global settings (e.g., deleted_tests list and exam_tags managed by Admin/Teachers)
     match /settings/{docId} {
       allow read: if true;
-      allow create, update, delete: if isAdmin() || (isSignedIn() && docId == 'exam_tags');
+      allow create, update, delete: if isAdmin() || docId == 'exam_tags' || docId == 'deleted_tests';
     }
 
     // Persistent Audio Chunks for Custom Exam MP3s
     match /test_audio_chunks/{chunkId} {
       allow read: if true;
-      allow create, update, delete: if isSignedIn();
+      allow create, update, delete: if isValidId(chunkId);
     }
 
     // Student Bug Reports & Suggestions

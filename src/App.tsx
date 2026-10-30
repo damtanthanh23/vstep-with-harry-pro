@@ -294,6 +294,9 @@ export default function App() {
 
   // Modals
   const [isAdminPinModalOpen, setIsAdminPinModalOpen] = useState(false);
+  const [isAdminPinUnlocked, setIsAdminPinUnlocked] = useState<boolean>(
+    () => sessionStorage.getItem('langcert_admin_unlocked') === 'true'
+  );
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
@@ -673,12 +676,13 @@ export default function App() {
 
   // Role-filtered tests: Only Teachers and Admins can see Draft exams (status === 'draft' or categoryTag === 'Đề Nháp')
   const visibleTests = useMemo(() => {
-    const isUnlocked = sessionStorage.getItem('langcert_admin_unlocked') === 'true';
+    const isUnlocked =
+      isAdminPinUnlocked || sessionStorage.getItem('langcert_admin_unlocked') === 'true';
     if (canManageExams || isUnlocked) {
       return allTests;
     }
     return allTests.filter((t) => !isDraftTest(t));
-  }, [allTests, canManageExams]);
+  }, [allTests, canManageExams, isAdminPinUnlocked]);
 
   // Current active test questions
   const activeExamQuestions = useMemo(() => {
@@ -1440,6 +1444,7 @@ export default function App() {
   };
 
   const handleAdminPinSuccess = () => {
+    setIsAdminPinUnlocked(true);
     if (pendingEditTestId === 'NEW_TEST' || !pendingEditTestId) {
       setEditingTest(null);
       setEditingQuestions(null);

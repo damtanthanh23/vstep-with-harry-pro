@@ -392,7 +392,73 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
     localStorage.setItem(LOCAL_COINS_KEY, String(coinCount));
   }, [coinCount]);
 
-  // Firestore Sync if logged in (quota-safe and debounced)
+  // Load user's saved vocabulary decks, folders & SRS progress from Firestore when logged in
+  const hasLoadedRemoteVocabRef = React.useRef<string | null>(null);
+  useEffect(() => {
+    if (!currentUser?.uid) {
+      hasLoadedRemoteVocabRef.current = null;
+      return;
+    }
+    if (hasLoadedRemoteVocabRef.current === currentUser.uid) return;
+
+    let cancelled = false;
+    import('firebase/firestore').then(({ getDoc }) => {
+      const userRef = doc(db, 'users', currentUser.uid);
+      getDoc(userRef)
+        .then((snap) => {
+          if (cancelled) return;
+          hasLoadedRemoteVocabRef.current = currentUser.uid;
+          if (!snap.exists()) return;
+          const data = snap.data() as {
+            vocabDecksBackup?: UserVocabDeck[];
+            vocabFoldersBackup?: UserVocabFolder[];
+            vocabSrsBackup?: Record<string, VocabSrsRecord>;
+          };
+
+          if (Array.isArray(data.vocabDecksBackup) && data.vocabDecksBackup.length > 0) {
+            setDecks((prev) => {
+              const map = new Map<string, UserVocabDeck>();
+              prev.forEach((d) => map.set(d.id, d));
+              data.vocabDecksBackup!.forEach((remoteDeck) => {
+                if (!remoteDeck || !remoteDeck.id) return;
+                const localDeck = map.get(remoteDeck.id);
+                if (!localDeck || (remoteDeck.updatedAt || 0) >= (localDeck.updatedAt || 0)) {
+                  map.set(remoteDeck.id, remoteDeck);
+                }
+              });
+              return Array.from(map.values());
+            });
+          }
+
+          if (Array.isArray(data.vocabFoldersBackup) && data.vocabFoldersBackup.length > 0) {
+            setFolders((prev) => {
+              const map = new Map<string, UserVocabFolder>();
+              prev.forEach((f) => map.set(f.id, f));
+              data.vocabFoldersBackup!.forEach((rf) => {
+                if (rf && rf.id) map.set(rf.id, rf);
+              });
+              return Array.from(map.values());
+            });
+          }
+
+          if (data.vocabSrsBackup && typeof data.vocabSrsBackup === 'object') {
+            setSrsRecords((prev) => ({
+              ...data.vocabSrsBackup,
+              ...prev,
+            }));
+          }
+        })
+        .catch(() => {
+          hasLoadedRemoteVocabRef.current = currentUser.uid;
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.uid]);
+
+  // Firestore Sync if logged in (quota-safe, sanitized, and debounced)
   const hasMountedVocabRef = React.useRef(false);
   useEffect(() => {
     if (!currentUser?.uid) return;
@@ -402,14 +468,26 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
     }
     const timer = setTimeout(() => {
       const userRef = doc(db, 'users', currentUser.uid);
+      // Only sync custom decks or modified official decks so payload stays compact
+      const customOrModifiedDecks = decks.filter(
+        (d) => !d.id.startsWith('deck_official_') || (d.items && d.items.length > 35)
+      );
+      const cleanDecks = JSON.parse(JSON.stringify(customOrModifiedDecks));
+      const cleanFolders = JSON.parse(JSON.stringify(folders));
+      const cleanSrs = JSON.parse(JSON.stringify(srsRecords));
       safeSetDoc(
         userRef,
-        { uid: currentUser.uid, vocabDecksBackup: decks },
+        {
+          uid: currentUser.uid,
+          vocabDecksBackup: cleanDecks,
+          vocabFoldersBackup: cleanFolders,
+          vocabSrsBackup: cleanSrs,
+        },
         { merge: true }
       ).catch(() => {});
-    }, 5000);
+    }, 2500);
     return () => clearTimeout(timer);
-  }, [currentUser, decks]);
+  }, [currentUser?.uid, decks, folders, srsRecords]);
 
   // Handle coins earning & record real study activity
   const handleEarnCoins = (amount: number) => {

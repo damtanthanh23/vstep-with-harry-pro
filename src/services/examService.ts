@@ -307,6 +307,29 @@ export function subscribeToDeletedTestIds(
  * Permanently delete any test (custom or built-in default test) from the system
  */
 export async function deleteAnyTestFromSystem(testId: string): Promise<void> {
+  try {
+    const rawV1 = localStorage.getItem('langcert_custom_tests_backup_v1');
+    if (rawV1) {
+      const mapV1: Record<string, CustomTestPayload> = JSON.parse(rawV1);
+      if (mapV1 && mapV1[testId]) {
+        delete mapV1[testId];
+        localStorage.setItem('langcert_custom_tests_backup_v1', JSON.stringify(mapV1));
+      }
+    }
+    const rawLegacy = localStorage.getItem('langcert_custom_tests_backup');
+    if (rawLegacy) {
+      const listLegacy: TestMetadata[] = JSON.parse(rawLegacy);
+      if (Array.isArray(listLegacy)) {
+        localStorage.setItem(
+          'langcert_custom_tests_backup',
+          JSON.stringify(listLegacy.filter((t) => t.id !== testId))
+        );
+      }
+    }
+  } catch {
+    // Ignore local storage errors
+  }
+
   if (!canWriteToFirestore()) return;
 
   try {
@@ -380,6 +403,17 @@ export async function saveTestToFirestore(payload: CustomTestPayload): Promise<v
     const docRef = doc(db, 'tests', payload.id);
     const sanitizedPayload = sanitizeForFirestore(compactedPayload);
     await safeSetDoc(docRef, sanitizedPayload);
+
+    // If this test ID was previously in deleted_tests, remove it so it stays visible
+    const settingsRef = doc(db, 'settings', 'deleted_tests');
+    const snap = await getDoc(settingsRef);
+    if (snap.exists() && Array.isArray(snap.data()?.ids) && snap.data().ids.includes(payload.id)) {
+      const updatedIds = (snap.data().ids as string[]).filter((id) => id !== payload.id);
+      await safeSetDoc(settingsRef, {
+        ids: updatedIds,
+        updatedAt: Date.now(),
+      });
+    }
   } catch (error) {
     console.warn('Firestore test save notice (saved to local backup):', error);
   }

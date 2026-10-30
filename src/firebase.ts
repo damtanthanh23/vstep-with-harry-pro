@@ -25,8 +25,15 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-const QUOTA_TRIPPED_DATE_KEY = 'langcert_fs_quota_exhausted_utc_date';
+const QUOTA_TRIPPED_DATE_KEY = 'langcert_fs_quota_exhausted_utc_date_v2';
 let quotaTrippedInMemory = false;
+
+// Clear any legacy false-positive quota flag from previous sessionStorage key
+try {
+  sessionStorage.removeItem('langcert_fs_quota_exhausted_utc_date');
+} catch {
+  // Ignore
+}
 
 function getTodayUtcDateString(): string {
   return new Date().toISOString().slice(0, 10);
@@ -39,8 +46,7 @@ export function isQuotaError(error: unknown): boolean {
     code === 'resource-exhausted' ||
     msg.includes('resource-exhausted') ||
     msg.includes('Quota limit exceeded') ||
-    msg.includes('Quota exceeded') ||
-    msg.includes('quota')
+    msg.includes('Quota exceeded')
   );
 }
 
@@ -59,22 +65,20 @@ export function canWriteToFirestore(): boolean {
 }
 
 export function markFirestoreQuotaExhausted(error?: unknown): void {
+  if (error && !isQuotaError(error)) {
+    return;
+  }
   quotaTrippedInMemory = true;
   try {
     sessionStorage.setItem(QUOTA_TRIPPED_DATE_KEY, getTodayUtcDateString());
   } catch {
     // Ignore
   }
-  // Halt internal SDK write retry stream so it stops hitting the exhausted daily quota
-  disableNetwork(db).catch(() => {});
-  if (error && !isQuotaError(error)) {
-    // Non-quota error
-  }
 }
 
 /**
- * Quota-safe wrapper around Firestore `setDoc` that skips cloud writes when daily quota is exhausted
- * and enforces a short timeout so exponential backoff never hangs or spams retries.
+ * Quota-safe wrapper around Firestore `setDoc` that skips cloud writes only when daily quota is genuinely exhausted
+ * and uses a generous 20s timeout for full 75-question exam payloads without disabling the network on slow connections.
  */
 export async function safeSetDoc<T>(
   reference: DocumentReference<T>,
@@ -89,7 +93,7 @@ export async function safeSetDoc<T>(
       : setDoc(reference, data);
 
     const timeoutPromise = new Promise<'timeout'>((resolve) =>
-      setTimeout(() => resolve('timeout'), 3500)
+      setTimeout(() => resolve('timeout'), 20000)
     );
 
     const result = await Promise.race([
@@ -98,8 +102,7 @@ export async function safeSetDoc<T>(
     ]);
 
     if (result === 'timeout') {
-      // Firestore SDK entered backoff delay (quota exhausted or offline)
-      markFirestoreQuotaExhausted();
+      console.warn('Firestore write took longer than 20s; continuing in background.');
       return false;
     }
     return true;
@@ -108,6 +111,7 @@ export async function safeSetDoc<T>(
       markFirestoreQuotaExhausted(err);
       return false;
     }
+    console.warn('Firestore write error:', err);
     return false;
   }
 }
@@ -119,14 +123,13 @@ export async function safeDeleteDoc(reference: DocumentReference<unknown>): Prom
   if (!canWriteToFirestore()) return false;
   try {
     const timeoutPromise = new Promise<'timeout'>((resolve) =>
-      setTimeout(() => resolve('timeout'), 3500)
+      setTimeout(() => resolve('timeout'), 15000)
     );
     const result = await Promise.race([
       deleteDoc(reference).then(() => 'ok' as const),
       timeoutPromise,
     ]);
     if (result === 'timeout') {
-      markFirestoreQuotaExhausted();
       return false;
     }
     return true;
