@@ -152,10 +152,11 @@ export interface ExamSessionState {
 }
 
 export interface UserTargetScores {
-  overall: number; // 0 - 50
-  listening: number; // 0 - 50
-  reading: number; // 0 - 50
-  writing: number; // 0 - 50
+  overall: number; // 0 - 10 (VSTEP scale, step 0.5)
+  listening: number; // 0 - 10
+  reading: number; // 0 - 10
+  writing: number; // 0 - 10
+  speaking?: number; // 0 - 10
   updatedAt?: number;
 }
 

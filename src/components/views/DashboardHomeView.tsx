@@ -21,6 +21,7 @@ import {
   Check,
   Target,
   Tag,
+  Mic,
 } from 'lucide-react';
 import { TestMetadata, InProgressAttempt, isDraftTest, UserTargetScores } from '../../types/exam';
 import { NavTabType } from '../navigation/Sidebar';
@@ -50,25 +51,64 @@ import { ZodiacPixelMascot } from './ZodiacPixelMascot';
 const TARGET_SCORES_STORAGE_KEY = 'langcert_target_scores_v1';
 
 const DEFAULT_TARGET_SCORES: UserTargetScores = {
-  overall: 38,
-  listening: 38,
-  reading: 38,
-  writing: 38,
+  overall: 6.5,
+  listening: 6.5,
+  reading: 6.5,
+  writing: 6.5,
+  speaking: 6.5,
 };
+
+function roundToHalfScore(val: number): number {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return 6.5;
+  return Math.round(Math.max(0, Math.min(10, num)) * 2) / 2;
+}
+
+function normalizeLegacyScore(raw: unknown, fallback = 6.5): number {
+  const num = Number(raw);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  if (num > 10) {
+    // Legacy 50-point default 38 maps cleanly to VSTEP default 6.5 (B2)
+    if (num === 38) return 6.5;
+    return roundToHalfScore((num / 50) * 10);
+  }
+  return roundToHalfScore(num);
+}
 
 function loadSavedTargetScores(uid?: string, profileScores?: UserTargetScores): UserTargetScores {
   if (profileScores && typeof profileScores.overall === 'number') {
-    return profileScores;
+    const listening = normalizeLegacyScore(profileScores.listening, 6.5);
+    const reading = normalizeLegacyScore(profileScores.reading, 6.5);
+    const writing = normalizeLegacyScore(profileScores.writing, 6.5);
+    const speaking =
+      profileScores.speaking !== undefined
+        ? normalizeLegacyScore(profileScores.speaking, 6.5)
+        : 6.5;
+    const overall =
+      profileScores.overall > 10 || profileScores.speaking === undefined
+        ? roundToHalfScore((listening + reading + writing + speaking) / 4)
+        : normalizeLegacyScore(profileScores.overall, 6.5);
+    return { overall, listening, reading, writing, speaking };
   }
   try {
     const raw = localStorage.getItem(`${TARGET_SCORES_STORAGE_KEY}_${uid || 'guest'}`);
     if (raw) {
       const parsed = JSON.parse(raw);
+      const listening = normalizeLegacyScore(parsed.listening, 6.5);
+      const reading = normalizeLegacyScore(parsed.reading, 6.5);
+      const writing = normalizeLegacyScore(parsed.writing, 6.5);
+      const speaking =
+        parsed.speaking !== undefined ? normalizeLegacyScore(parsed.speaking, 6.5) : 6.5;
+      const overall =
+        Number(parsed.overall) > 10 || parsed.speaking === undefined
+          ? roundToHalfScore((listening + reading + writing + speaking) / 4)
+          : normalizeLegacyScore(parsed.overall, 6.5);
       return {
-        overall: Number(parsed.overall ?? 38),
-        listening: Number(parsed.listening ?? 38),
-        reading: Number(parsed.reading ?? 38),
-        writing: Number(parsed.writing ?? 38),
+        overall,
+        listening,
+        reading,
+        writing,
+        speaking,
       };
     }
   } catch {
@@ -119,7 +159,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
     userProfile?.nickname ||
     userProfile?.displayName ||
     currentUser?.displayName ||
-    (currentUser?.email ? currentUser.email.split('@')[0] : 'Học viên LanguageCert');
+    (currentUser?.email ? currentUser.email.split('@')[0] : 'Học viên VSTEP');
 
   const [nickname, setNickname] = useState<string>(() =>
     userProfile?.nickname || getSavedNickname(currentUser?.uid, defaultAccountName)
@@ -165,13 +205,22 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
     setTimeout(() => setIsQuoteSpinning(false), 350);
   };
 
-  const clampScore = (val: number) => Math.max(0, Math.min(50, Math.round(val || 0)));
+  const clampScore = (val: number) => roundToHalfScore(val);
 
-  const handleSkillGoalChange = (skill: 'listening' | 'reading' | 'writing', rawVal: number) => {
+  const handleSkillGoalChange = (
+    skill: 'listening' | 'reading' | 'writing' | 'speaking',
+    rawVal: number
+  ) => {
     const val = clampScore(rawVal);
     setTargetScores((prev) => {
-      const next = { ...prev, [skill]: val };
-      next.overall = Math.round((next.listening + next.reading + next.writing) / 3);
+      const next: UserTargetScores = {
+        ...prev,
+        speaking: prev.speaking ?? 6.5,
+        [skill]: val,
+      };
+      next.overall = roundToHalfScore(
+        (next.listening + next.reading + next.writing + (next.speaking ?? 6.5)) / 4
+      );
       return next;
     });
   };
@@ -183,6 +232,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
       listening: val,
       reading: val,
       writing: val,
+      speaking: val,
     });
   };
 
@@ -249,10 +299,17 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
   }, [tests, filterCategory]);
 
   const getLevelBadgeForScore = (score: number) => {
-    if (score >= 38) return { label: 'B1 High Pass', color: 'bg-amber-300 text-slate-950' };
-    if (score >= 25) return { label: 'B1 Pass', color: 'bg-lime-200 text-slate-950' };
-    if (score >= 15) return { label: 'A2 Level', color: 'bg-sky-200 text-slate-950' };
-    return { label: 'A1 Level', color: 'bg-slate-200 text-slate-900' };
+    if (score >= 8.5) return { label: 'Bậc 5 (C1)', color: 'bg-amber-300 text-slate-950' };
+    if (score >= 6.0) return { label: 'Bậc 4 (B2)', color: 'bg-lime-200 text-slate-950' };
+    if (score >= 4.0) return { label: 'Bậc 3 (B1)', color: 'bg-sky-200 text-slate-950' };
+    return { label: 'Dưới B1 (<4.0)', color: 'bg-slate-200 text-slate-900' };
+  };
+
+  const getSkillLevelLabel = (score: number) => {
+    if (score >= 8.5) return 'Bậc 5 - C1';
+    if (score >= 6.0) return 'Bậc 4 - B2';
+    if (score >= 4.0) return 'Bậc 3 - B1';
+    return 'Dưới B1';
   };
 
   const overallBadge = getLevelBadgeForScore(targetScores.overall);
@@ -324,12 +381,12 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
         {/* Left Hero Card: Bảng Mục Tiêu Điểm Số + Linh Vật 12 Con Giáp Pixel */}
         <div className="md:col-span-7 rounded-3xl bg-gradient-to-br from-[#58CC02] via-[#46A302] to-[#2E7D32] p-5 sm:p-6 text-white shadow-md relative overflow-hidden flex flex-col justify-between">
           <div className="relative z-10 flex flex-col sm:flex-row items-start justify-between gap-4">
-            {/* Left Column: Goal Board Header, Overall Target & 3 Skill Bars / Sliders */}
+            {/* Left Column: Goal Board Header, Overall Target & 4 VSTEP Skill Bars / Sliders */}
             <div className="flex-1 w-full min-w-0">
               <div className="flex items-center justify-between gap-2 mb-2.5">
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 text-white font-black text-xs backdrop-blur-xs">
                   <Target className="h-3.5 w-3.5" />
-                  <span>BẢNG MỤC TIÊU LANGUAGECERT B1</span>
+                  <span>BẢNG MỤC TIÊU VSTEP B1–B2–C1</span>
                 </div>
 
                 {/* Compact Edit Button */}
@@ -348,7 +405,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                     type="button"
                     onClick={() => setIsEditingGoals(true)}
                     className="inline-flex items-center justify-center h-8 w-8 rounded-xl bg-black/20 hover:bg-black/35 text-white border border-white/25 transition-all cursor-pointer"
-                    title="Chỉnh sửa mục tiêu điểm số (Kéo thả hoặc nhập nhanh)"
+                    title="Chỉnh sửa mục tiêu điểm số 4 kỹ năng VSTEP (Thang 10, bước nhảy 0.5)"
                   >
                     <Edit3 className="h-3.5 w-3.5" />
                   </button>
@@ -365,17 +422,18 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                     <input
                       type="number"
                       min={0}
-                      max={50}
+                      max={10}
+                      step={0.5}
                       value={targetScores.overall}
                       onChange={(e) => handleOverallGoalChange(Number(e.target.value))}
-                      className="w-16 rounded-xl bg-white text-slate-900 px-2 py-0.5 text-xl font-black text-center focus:outline-hidden"
+                      className="w-20 rounded-xl bg-white text-slate-900 px-2 py-0.5 text-xl font-black text-center focus:outline-hidden"
                     />
                   ) : (
                     <span className="text-3xl sm:text-4xl font-black tabular-nums">
-                      {targetScores.overall}
+                      {targetScores.overall.toFixed(1)}
                     </span>
                   )}
-                  <span className="text-sm font-bold text-lime-100">/50</span>
+                  <span className="text-sm font-bold text-lime-100">/10</span>
                 </div>
 
                 <span
@@ -388,26 +446,31 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                   <input
                     type="range"
                     min={0}
-                    max={50}
+                    max={10}
+                    step={0.5}
                     value={targetScores.overall}
                     onChange={(e) => handleOverallGoalChange(Number(e.target.value))}
                     className="w-full sm:w-32 accent-amber-300 cursor-pointer h-1.5 rounded-lg"
-                    title="Kéo để chỉnh nhanh điểm Overall"
+                    title="Kéo để chỉnh nhanh điểm Overall (Thang 10)"
                   />
                 )}
               </div>
 
-              {/* 3 Individual Skills (Listening, Reading, Writing) */}
+              {/* 4 Individual VSTEP Skills (Listening, Reading, Writing, Speaking) */}
               <div className="space-y-2 bg-black/15 rounded-2xl p-3 border border-white/15 backdrop-blur-[2px]">
                 {(
                   [
                     { key: 'listening', label: 'Listening (Nghe)', icon: Headphones },
                     { key: 'reading', label: 'Reading (Đọc)', icon: BookOpen },
                     { key: 'writing', label: 'Writing (Viết)', icon: PenTool },
+                    { key: 'speaking', label: 'Speaking (Nói)', icon: Mic },
                   ] as const
                 ).map(({ key, label, icon: SkillIcon }) => {
-                  const val = targetScores[key];
-                  const pct = Math.min(100, Math.round((val / 50) * 100));
+                  const val =
+                    key === 'speaking'
+                      ? targetScores.speaking ?? 6.5
+                      : targetScores[key];
+                  const pct = Math.min(100, Math.round((val / 10) * 100));
                   return (
                     <div key={key} className="space-y-1">
                       <div className="flex items-center justify-between text-xs">
@@ -420,7 +483,8 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                             <input
                               type="range"
                               min={0}
-                              max={50}
+                              max={10}
+                              step={0.5}
                               value={val}
                               onChange={(e) =>
                                 handleSkillGoalChange(key, Number(e.target.value))
@@ -430,20 +494,21 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                             <input
                               type="number"
                               min={0}
-                              max={50}
+                              max={10}
+                              step={0.5}
                               value={val}
                               onChange={(e) =>
                                 handleSkillGoalChange(key, Number(e.target.value))
                               }
-                              className="w-12 rounded-lg bg-white text-slate-900 px-1.5 py-0.5 text-xs font-black text-center focus:outline-hidden"
+                              className="w-14 rounded-lg bg-white text-slate-900 px-1.5 py-0.5 text-xs font-black text-center focus:outline-hidden"
                             />
-                            <span className="text-[10px] font-bold text-lime-100">/50</span>
+                            <span className="text-[10px] font-bold text-lime-100">/10</span>
                           </div>
                         ) : (
                           <span className="font-mono font-black text-white tabular-nums">
-                            {val}/50{' '}
+                            {val.toFixed(1)}/10{' '}
                             <span className="text-[10px] font-bold text-lime-200">
-                              ({val >= 38 ? 'High Pass' : val >= 25 ? 'Pass' : 'Cần cố gắng'})
+                              ({getSkillLevelLabel(val)})
                             </span>
                           </span>
                         )}
@@ -495,7 +560,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
             </div>
 
             <span className="text-[11px] font-bold text-lime-100/90">
-              Chuẩn PeopleCert: Pass ≥25 · High Pass ≥38
+              Chuẩn Bộ GD&ĐT: B1 ≥4.0 · B2 ≥6.0 · C1 ≥8.5
             </span>
           </div>
 
@@ -643,7 +708,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
             </div>
             <div className="font-black text-sm text-slate-800 dark:text-white">Luyện đọc</div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-              Split screen đối chiếu Part 2 & 3
+              Split screen đối chiếu 4 Passages
             </div>
           </div>
 
@@ -657,7 +722,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
               </div>
               <ArrowRight className="h-4 w-4 text-slate-400 group-hover:translate-x-1 transition-transform text-purple-500" />
             </div>
-            <div className="font-black text-sm text-slate-800 dark:text-white">Từ vựng B1</div>
+            <div className="font-black text-sm text-slate-800 dark:text-white">Từ vựng VSTEP</div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
               Quizlet + Anki Spaced Repetition
             </div>
@@ -670,7 +735,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-base font-black text-slate-900 dark:text-white">
-              Lộ trình đề thi LanguageCert B1
+              Lộ trình đề thi VSTEP B1–B2–C1
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               Phân loại theo nhãn đề của Giáo viên: Đề thi minh họa, Đề thi thật{canManageExams ? ', Đề Nháp' : ''} và các mục tùy chỉnh
@@ -811,7 +876,9 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                     >
                       <Award className="h-3.5 w-3.5 text-amber-600" />
                       <span>
-                        {bestScore !== undefined ? `Điểm số: ${bestScore}/52` : 'Điểm số'}
+                        {bestScore !== undefined
+                          ? `Điểm số: ${bestScore}/${test.totalQuestions || 75}`
+                          : 'Điểm số'}
                       </span>
                     </button>
                   </div>
@@ -822,7 +889,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                       <FileText className="h-4 w-4 text-slate-400" />
                       <span>
                         <strong className="font-black text-slate-900 dark:text-white">
-                          {test.totalQuestions || 52}
+                          {test.totalQuestions || 75}
                         </strong>{' '}
                         câu
                       </span>
@@ -831,7 +898,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                       <Clock className="h-4 w-4 text-slate-400" />
                       <span>
                         <strong className="font-black text-slate-900 dark:text-white">
-                          {test.durationMinutes || 90}
+                          {test.durationMinutes || 160}
                         </strong>{' '}
                         phút
                       </span>
@@ -842,11 +909,11 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                   <div className="flex flex-wrap items-center gap-2 mb-5">
                     <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold">
                       <Headphones className="h-3.5 w-3.5 text-slate-500" />
-                      <span>26 Listening</span>
+                      <span>35 Listening</span>
                     </span>
                     <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold">
                       <BookOpen className="h-3.5 w-3.5 text-slate-500" />
-                      <span>26 Reading</span>
+                      <span>40 Reading</span>
                     </span>
                     <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold">
                       <PenTool className="h-3.5 w-3.5 text-slate-500" />
@@ -861,12 +928,16 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                     {inProgress ? (
                       <div className="flex items-center gap-2 text-xs font-extrabold text-amber-600 dark:text-amber-400">
                         <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                        <span>Đang làm bài ({answeredInProgressCount}/52 câu)</span>
+                        <span>
+                          Đang làm bài ({answeredInProgressCount}/{test.totalQuestions || 75} câu)
+                        </span>
                       </div>
                     ) : bestScore !== undefined ? (
                       <div className="flex items-center gap-2 text-xs font-extrabold text-emerald-600 dark:text-emerald-400">
                         <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                        <span>Đã hoàn thành ({bestScore}/52 câu đúng)</span>
+                        <span>
+                          Đã hoàn thành ({bestScore}/{test.totalQuestions || 75} câu đúng)
+                        </span>
                       </div>
                     ) : (
                       <div className="flex items-center gap-2 text-xs font-extrabold text-slate-500 dark:text-slate-400">

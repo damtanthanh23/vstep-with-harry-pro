@@ -209,7 +209,7 @@ const MOOD_LIST: MascotMood[] = ['happy', 'growl', 'sleep', 'sing', 'cheer'];
 
 export const ZodiacPixelMascot: React.FC<ZodiacPixelMascotProps> = ({
   birthDate,
-  targetOverall = 38,
+  targetOverall = 6.5,
   onOpenProfile,
 }) => {
   const zodiac = useMemo(() => getZodiacFromBirthDate(birthDate), [birthDate]);
@@ -252,7 +252,7 @@ export const ZodiacPixelMascot: React.FC<ZodiacPixelMascotProps> = ({
         return { text: 'Lalala ♪ ♫', badge: '🎵', tone: 'bg-pink-200 text-pink-950' };
       case 'cheer':
         return {
-          text: `Quyết đạt ${targetOverall}/50!`,
+          text: `Quyết đạt ${Number(targetOverall).toFixed(1)}/10!`,
           badge: '✨',
           tone: 'bg-lime-300 text-slate-950',
         };

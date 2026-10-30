@@ -87,7 +87,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'vocab' as NavTabType,
-      label: 'Từ vựng B1',
+      label: 'Từ vựng VSTEP',
       icon: BookmarkCheck,
     },
     {
@@ -110,7 +110,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className={`flex items-center gap-3 cursor-pointer group ${
             isCollapsed ? 'justify-center' : ''
           }`}
-          title="LanguageCert B1 Master · Created by Mr.Harry"
+          title="VSTEP Tutor B1-B2-C1 · Created by Mr.Harry"
         >
           <UkFlagLogo
             size="md"
@@ -119,7 +119,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {!isCollapsed && (
             <div className="flex flex-col overflow-hidden">
               <span className="text-base font-black tracking-tight text-slate-900 dark:text-white truncate">
-                LanguageCert <span className="text-[#58CC02]">B1</span>
+                VSTEP <span className="text-[#58CC02]">Tutor</span>
               </span>
               <span className="text-[10px] font-bold text-[#3C8C02] dark:text-[#58CC02] truncate">
                 by Mr.Harry (Lecturer)

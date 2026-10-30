@@ -83,7 +83,7 @@ export const TopBarHeader: React.FC<TopBarHeaderProps> = ({
           <div className="lg:hidden flex items-center gap-2 shrink-0">
             <UkFlagLogo size="sm" />
             <span className="font-black text-sm text-slate-900 dark:text-white whitespace-nowrap">
-              LanguageCert <span className="text-[#58CC02]">B1</span>
+              VSTEP <span className="text-[#58CC02]">Tutor</span>
             </span>
           </div>
 
