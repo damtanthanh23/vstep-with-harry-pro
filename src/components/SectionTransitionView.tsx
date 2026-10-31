@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileText, Headphones, PenTool, ArrowRight } from 'lucide-react';
+import { FileText, Headphones, PenTool, Mic, ArrowRight } from 'lucide-react';
 import { ExamSection } from '../types/exam';
 
 interface SectionTransitionViewProps {
@@ -13,10 +13,12 @@ export const SectionTransitionView: React.FC<SectionTransitionViewProps> = ({
 }) => {
   const isListening = section === 'LISTENING';
   const isWriting = section === 'WRITING';
+  const isSpeaking = section === 'SPEAKING';
 
   const getSectionTitle = () => {
     if (isListening) return 'SKILL 1: LISTENING (35 QUESTIONS · 40 MINUTES)';
     if (isWriting) return 'SKILL 3: WRITING (2 TASKS · 60 MINUTES)';
+    if (isSpeaking) return 'SKILL 4: SPEAKING (3 PARTS · 12 MINUTES)';
     return 'SKILL 2: READING (4 PASSAGES · 40 QUESTIONS · 60 MINUTES)';
   };
 
@@ -27,12 +29,16 @@ export const SectionTransitionView: React.FC<SectionTransitionViewProps> = ({
     if (isWriting) {
       return 'Task 1: Letter / Email Writing (≥ 120 words, weight 1/3) · Task 2: Essay Writing (≥ 250 words, weight 2/3)';
     }
+    if (isSpeaking) {
+      return "Part 1: Social Interaction (3') · Part 2: Solution Discussion (4') · Part 3: Topic Development & Mind-map (5')";
+    }
     return '4 Academic Reading Passages (Passage 1–4) · 10 Multiple-Choice Questions (A, B, C, D) per Passage';
   };
 
   const getButtonText = () => {
     if (isListening) return 'Bắt đầu phần thi Nghe (Listening)';
     if (isWriting) return 'Bắt đầu phần thi Viết (Writing)';
+    if (isSpeaking) return 'Bắt đầu phần thi Nói (Speaking)';
     return 'Bắt đầu phần thi Đọc (Reading)';
   };
 
@@ -44,6 +50,8 @@ export const SectionTransitionView: React.FC<SectionTransitionViewProps> = ({
             <Headphones className="h-12 w-12 stroke-[2]" />
           ) : isWriting ? (
             <PenTool className="h-12 w-12 stroke-[2]" />
+          ) : isSpeaking ? (
+            <Mic className="h-12 w-12 stroke-[2]" />
           ) : (
             <FileText className="h-12 w-12 stroke-[2]" />
           )}

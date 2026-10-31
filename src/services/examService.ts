@@ -16,6 +16,7 @@ import {
   InProgressAttempt,
 } from '../types/exam';
 import { WritingTask, SAMPLE_B1_WRITING_TASKS } from '../types/writing';
+import { SpeakingTask, SAMPLE_VSTEP_SPEAKING_TASKS } from '../types/speaking';
 import { TEST_1_QUESTIONS } from '../data/test1Data';
 
 export interface CustomTestPayload {
@@ -30,6 +31,7 @@ export interface CustomTestPayload {
   status?: 'draft' | 'published';
   categoryTag?: string;
   createdAt: number;
+  updatedAt?: number;
   creatorId: string;
   creatorEmail: string;
   audioMode?: 'single' | 'per_part';
@@ -39,6 +41,7 @@ export interface CustomTestPayload {
   partAudioFileNames?: PartAudioMap;
   questions: Question[];
   writingTasks?: WritingTask[];
+  speakingTasks?: SpeakingTask[];
   vocabulary?: any[];
 }
 
@@ -179,11 +182,39 @@ export function hydrateQuestionsFromStorage(questions: Question[]): Question[] {
   });
 }
 
-function getLocalCustomTestsBackup(): TestMetadata[] {
+export function getLocalCustomTestsBackup(): TestMetadata[] {
   try {
-    const raw = localStorage.getItem('langcert_custom_tests_backup_v1');
-    if (!raw) return [];
-    const map: Record<string, CustomTestPayload> = JSON.parse(raw);
+    const map: Record<string, CustomTestPayload> = {};
+    const rawV1 = localStorage.getItem('langcert_custom_tests_backup_v1');
+    if (rawV1) {
+      const parsedV1 = JSON.parse(rawV1);
+      if (parsedV1 && typeof parsedV1 === 'object' && !Array.isArray(parsedV1)) {
+        Object.assign(map, parsedV1);
+      }
+    }
+
+    // Migrate any legacy array backup key into v1 map so nothing is ever lost
+    const rawLegacy = localStorage.getItem('langcert_custom_tests_backup');
+    if (rawLegacy) {
+      try {
+        const legacyArr = JSON.parse(rawLegacy);
+        if (Array.isArray(legacyArr)) {
+          legacyArr.forEach((item: any) => {
+            if (item && item.id) {
+              const existing = map[item.id];
+              if (!existing || (item.updatedAt || item.createdAt || 0) > (existing.updatedAt || existing.createdAt || 0)) {
+                map[item.id] = item;
+              }
+            }
+          });
+          localStorage.setItem('langcert_custom_tests_backup_v1', JSON.stringify(map));
+          localStorage.removeItem('langcert_custom_tests_backup');
+        }
+      } catch {
+        // Ignore legacy parse error
+      }
+    }
+
     const list: TestMetadata[] = [];
     Object.values(map).forEach((data) => {
       if (!data || !data.id) return;
@@ -191,15 +222,16 @@ function getLocalCustomTestsBackup(): TestMetadata[] {
       list.push({
         id: data.id,
         title: data.title,
-        subtitle: data.subtitle || 'Đề thi VSTEP tùy chỉnh',
+        subtitle: data.subtitle || 'Đề thi VSTEP 4 Kỹ năng tùy chỉnh',
         description: data.description || data.subtitle,
         totalQuestions: data.totalQuestions || (hydratedQuestions.length || 75),
-        durationMinutes: data.durationMinutes || 100,
+        durationMinutes: data.durationMinutes || 172,
         isAvailable: true,
         isCustom: true,
         status: data.status || (data.categoryTag === 'Đề Nháp' ? 'draft' : 'published'),
         categoryTag: data.categoryTag || (data.status === 'draft' ? 'Đề Nháp' : 'Đề thi minh họa'),
         createdAt: data.createdAt,
+        updatedAt: data.updatedAt || data.createdAt,
         creatorId: data.creatorId,
         creatorEmail: data.creatorEmail,
         audioMode: data.audioMode || 'single',
@@ -208,7 +240,8 @@ function getLocalCustomTestsBackup(): TestMetadata[] {
         partAudioUrls: data.partAudioUrls,
         partAudioFileNames: data.partAudioFileNames,
         questions: hydratedQuestions,
-        writingTasks: data.writingTasks,
+        writingTasks: data.writingTasks || SAMPLE_B1_WRITING_TASKS,
+        speakingTasks: data.speakingTasks || SAMPLE_VSTEP_SPEAKING_TASKS,
         vocabulary: data.vocabulary,
       });
     });
@@ -235,22 +268,32 @@ export function subscribeToCustomTests(
       // 1. Load local backups first
       getLocalCustomTestsBackup().forEach((t) => testsMap.set(t.id, t));
 
-      // 2. Override with remote snapshot
+      // 2. Override with authoritative Cloud Firestore snapshot
+      const updatedBackupMap: Record<string, CustomTestPayload> = {};
+      try {
+        const raw = localStorage.getItem('langcert_custom_tests_backup_v1');
+        if (raw) Object.assign(updatedBackupMap, JSON.parse(raw));
+      } catch {
+        // Ignore
+      }
+
       snapshot.forEach((docSnap) => {
         const data = docSnap.data() as CustomTestPayload;
+        if (!data || !data.id) return;
         const hydratedQuestions = hydrateQuestionsFromStorage(data.questions || []);
-        testsMap.set(data.id, {
+        const remoteMeta: TestMetadata = {
           id: data.id,
           title: data.title,
-          subtitle: data.subtitle || 'Đề thi VSTEP tùy chỉnh',
+          subtitle: data.subtitle || 'Đề thi VSTEP 4 Kỹ năng tùy chỉnh',
           description: data.description || data.subtitle,
           totalQuestions: data.totalQuestions || (hydratedQuestions.length || 75),
-          durationMinutes: data.durationMinutes || 100,
+          durationMinutes: data.durationMinutes || 172,
           isAvailable: true,
           isCustom: true,
           status: data.status || (data.categoryTag === 'Đề Nháp' ? 'draft' : 'published'),
           categoryTag: data.categoryTag || (data.status === 'draft' ? 'Đề Nháp' : 'Đề thi minh họa'),
           createdAt: data.createdAt,
+          updatedAt: data.updatedAt || data.createdAt,
           creatorId: data.creatorId,
           creatorEmail: data.creatorEmail,
           audioMode: data.audioMode || 'single',
@@ -259,20 +302,29 @@ export function subscribeToCustomTests(
           partAudioUrls: data.partAudioUrls,
           partAudioFileNames: data.partAudioFileNames,
           questions: hydratedQuestions,
-          writingTasks: data.writingTasks,
+          writingTasks: data.writingTasks || SAMPLE_B1_WRITING_TASKS,
+          speakingTasks: data.speakingTasks || SAMPLE_VSTEP_SPEAKING_TASKS,
           vocabulary: data.vocabulary,
-        });
+        };
+        testsMap.set(data.id, remoteMeta);
+        updatedBackupMap[data.id] = data;
       });
 
+      try {
+        localStorage.setItem('langcert_custom_tests_backup_v1', JSON.stringify(updatedBackupMap));
+      } catch {
+        // Ignore storage quota
+      }
+
       const combined = Array.from(testsMap.values()).sort(
-        (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+        (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
       );
       onUpdate(combined);
     },
     (error) => {
       console.warn('Firestore custom test subscription notice (using local backup):', error);
       const localBackups = getLocalCustomTestsBackup().sort(
-        (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+        (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
       );
       onUpdate(localBackups);
       if (onError) onError(error);
@@ -316,16 +368,7 @@ export async function deleteAnyTestFromSystem(testId: string): Promise<void> {
         localStorage.setItem('langcert_custom_tests_backup_v1', JSON.stringify(mapV1));
       }
     }
-    const rawLegacy = localStorage.getItem('langcert_custom_tests_backup');
-    if (rawLegacy) {
-      const listLegacy: TestMetadata[] = JSON.parse(rawLegacy);
-      if (Array.isArray(listLegacy)) {
-        localStorage.setItem(
-          'langcert_custom_tests_backup',
-          JSON.stringify(listLegacy.filter((t) => t.id !== testId))
-        );
-      }
-    }
+    localStorage.removeItem('langcert_custom_tests_backup');
   } catch {
     // Ignore local storage errors
   }
@@ -379,11 +422,16 @@ export function sanitizeForFirestore<T>(obj: T): T {
 }
 
 /**
- * Save a new or edited custom test to Firestore and local backup storage
+ * Save a new or edited custom test to Firestore and local backup storage.
+ * Returns { syncedToCloud: boolean } so UI can display true Cloud Firestore sync status.
  */
-export async function saveTestToFirestore(payload: CustomTestPayload): Promise<void> {
+export async function saveTestToFirestore(
+  payload: CustomTestPayload
+): Promise<{ syncedToCloud: boolean }> {
+  const now = Date.now();
   const compactedPayload: CustomTestPayload = {
     ...payload,
+    updatedAt: payload.updatedAt || now,
     questions: compactQuestionsForStorage(payload.questions || []),
   };
 
@@ -393,16 +441,19 @@ export async function saveTestToFirestore(payload: CustomTestPayload): Promise<v
     const existingMap: Record<string, CustomTestPayload> = raw ? JSON.parse(raw) : {};
     existingMap[payload.id] = compactedPayload;
     localStorage.setItem(backupKey, JSON.stringify(existingMap));
+    localStorage.removeItem('langcert_custom_tests_backup');
   } catch (err) {
     console.warn('Notice saving local custom test backup:', err);
   }
 
-  if (!canWriteToFirestore()) return;
+  if (!canWriteToFirestore()) {
+    return { syncedToCloud: false };
+  }
 
   try {
     const docRef = doc(db, 'tests', payload.id);
     const sanitizedPayload = sanitizeForFirestore(compactedPayload);
-    await safeSetDoc(docRef, sanitizedPayload);
+    const synced = await safeSetDoc(docRef, sanitizedPayload);
 
     // If this test ID was previously in deleted_tests, remove it so it stays visible
     const settingsRef = doc(db, 'settings', 'deleted_tests');
@@ -414,8 +465,10 @@ export async function saveTestToFirestore(payload: CustomTestPayload): Promise<v
         updatedAt: Date.now(),
       });
     }
+    return { syncedToCloud: synced };
   } catch (error) {
     console.warn('Firestore test save notice (saved to local backup):', error);
+    return { syncedToCloud: false };
   }
 }
 
@@ -653,10 +706,73 @@ export function createBlankWritingTasksTemplate(): WritingTask[] {
 }
 
 /**
+ * Generates blank VSTEP Speaking Tasks template (Part 1, Part 2, Part 3 with Mind-map) for manual creation
+ */
+export function createBlankSpeakingTasksTemplate(): SpeakingTask[] {
+  return [
+    {
+      id: 'speaking-part-1',
+      partNumber: 1,
+      title: "PART 1: Social Interaction (3')",
+      durationMinutes: 3,
+      prepSeconds: 0,
+      speakSeconds: 180,
+      instruction:
+        'In this part of the speaking test, the examiner will ask you 3–6 questions about TWO familiar topics. Answer naturally with full sentences and reasons.',
+      topicClusters: [
+        {
+          topicTitle: "Let's talk about your free time activities.",
+          questions: ['', '', ''],
+        },
+        {
+          topicTitle: "Let's talk about your neighborhood.",
+          questions: ['', '', ''],
+        },
+      ],
+      sampleAnswer: '',
+      vietnameseTranslation: '',
+    },
+    {
+      id: 'speaking-part-2',
+      partNumber: 2,
+      title: "PART 2: Solution Discussion (4')",
+      durationMinutes: 4,
+      prepSeconds: 60,
+      speakSeconds: 180,
+      instruction:
+        'You have 1 minute to prepare and up to 3 minutes to speak. Explain which option you think is the best choice and why you do not choose the other two options.',
+      situation: '',
+      options: ['', '', ''],
+      sampleAnswer: '',
+      vietnameseTranslation: '',
+    },
+    {
+      id: 'speaking-part-3',
+      partNumber: 3,
+      title: "PART 3: Topic Development (5')",
+      durationMinutes: 5,
+      prepSeconds: 60,
+      speakSeconds: 240,
+      instruction:
+        'You have 1 minute to prepare your talk based on the mind-map below, then speak for 2–3 minutes and answer the follow-up discussion questions.',
+      topicStatement: '',
+      mindMap: {
+        centralIdea: '',
+        nodes: ['', '', '', '[Your own ideas]'],
+      },
+      followUpQuestions: ['', '', ''],
+      sampleAnswer: '',
+      vietnameseTranslation: '',
+    },
+  ];
+}
+
+/**
  * Smart normalizer for any VSTEP JSON produced by external AI (ChatGPT, Claude, Gemini) or internal parser.
  * Automatically resolves Reading question numbering whether numbered 1..40 or 36..75,
  * preserves underlined/highlighted words (<u><b>...</b></u>, <mark>...</mark>),
- * normalizes 4 options A-D, and propagates shared Reading passages across all 10 questions of each Passage.
+ * normalizes 4 options A-D, propagates shared Reading passages across all 10 questions of each Passage,
+ * and normalizes both Writing (2 Tasks) and Speaking (3 Parts with Mind-map).
  */
 export function normalizeImportedExamData(rawParsed: Record<string, any>): {
   title: string;
@@ -668,6 +784,7 @@ export function normalizeImportedExamData(rawParsed: Record<string, any>): {
   partAudioUrls?: PartAudioMap;
   questions: Question[];
   writingTasks: WritingTask[];
+  speakingTasks: SpeakingTask[];
   vocabulary?: any[];
 } {
   const skeleton = createBlankQuestionsTemplate();
@@ -872,7 +989,7 @@ export function normalizeImportedExamData(rawParsed: Record<string, any>): {
     const partNum = (idx + 1) as 1 | 2;
     const foundW =
       rawWriting.find((w: any) => Number(w?.partNumber) === partNum) || rawWriting[idx];
-    if (!foundW) return blankWriting[idx];
+    if (!foundW) return SAMPLE_B1_WRITING_TASKS[idx] || blankWriting[idx];
     return {
       ...blankWriting[idx],
       id: `task-${partNum}`,
@@ -890,6 +1007,62 @@ export function normalizeImportedExamData(rawParsed: Record<string, any>): {
       maxWords: Number(foundW.maxWords) || blankWriting[idx].maxWords,
       marks: 10,
       sampleAnswer: foundW.sampleAnswer || '',
+    };
+  });
+
+  // Normalize Speaking Tasks (3 Parts: Part 1 Social Interaction, Part 2 Solution Discussion, Part 3 Topic Development + Mind-map)
+  const blankSpeaking = createBlankSpeakingTasksTemplate();
+  const rawSpeaking = Array.isArray(rawParsed.speakingTasks) ? rawParsed.speakingTasks : [];
+  const normalizedSpeakingTasks: SpeakingTask[] = [0, 1, 2].map((idx) => {
+    const partNum = (idx + 1) as 1 | 2 | 3;
+    const foundS =
+      rawSpeaking.find((s: any) => Number(s?.partNumber) === partNum) || rawSpeaking[idx];
+    if (!foundS) return SAMPLE_VSTEP_SPEAKING_TASKS[idx] || blankSpeaking[idx];
+
+    const baseTask = blankSpeaking[idx];
+    return {
+      ...baseTask,
+      id: `speaking-part-${partNum}`,
+      partNumber: partNum,
+      title: foundS.title || baseTask.title,
+      durationMinutes: Number(foundS.durationMinutes) || baseTask.durationMinutes,
+      prepSeconds: foundS.prepSeconds !== undefined ? Number(foundS.prepSeconds) : baseTask.prepSeconds,
+      speakSeconds: Number(foundS.speakSeconds) || baseTask.speakSeconds,
+      instruction: foundS.instruction || baseTask.instruction,
+      topicClusters:
+        Array.isArray(foundS.topicClusters) && foundS.topicClusters.length > 0
+          ? foundS.topicClusters.map((tc: any) => ({
+              topicTitle: String(tc?.topicTitle || tc?.title || tc?.topic || ''),
+              questions: Array.isArray(tc?.questions)
+                ? tc.questions.map((q: any) => String(q))
+                : [''],
+            }))
+          : baseTask.topicClusters,
+      situation: foundS.situation !== undefined ? String(foundS.situation) : baseTask.situation,
+      options:
+        Array.isArray(foundS.options) && foundS.options.length > 0
+          ? foundS.options.map((o: any) => String(o))
+          : baseTask.options,
+      topicStatement:
+        foundS.topicStatement !== undefined
+          ? String(foundS.topicStatement)
+          : foundS.topic !== undefined
+          ? String(foundS.topic)
+          : baseTask.topicStatement,
+      mindMap: foundS.mindMap
+        ? {
+            centralIdea: String(foundS.mindMap.centralIdea || foundS.mindMap.center || ''),
+            nodes: Array.isArray(foundS.mindMap.nodes)
+              ? foundS.mindMap.nodes.map((n: any) => String(n))
+              : baseTask.mindMap?.nodes || [],
+          }
+        : baseTask.mindMap,
+      followUpQuestions:
+        Array.isArray(foundS.followUpQuestions) && foundS.followUpQuestions.length > 0
+          ? foundS.followUpQuestions.map((fq: any) => String(fq))
+          : baseTask.followUpQuestions,
+      sampleAnswer: foundS.sampleAnswer || '',
+      vietnameseTranslation: foundS.vietnameseTranslation || '',
     };
   });
 
@@ -914,15 +1087,17 @@ export function normalizeImportedExamData(rawParsed: Record<string, any>): {
   return {
     title: String(rawParsed.title || 'VSTEP B1-B2-C1 Practice Test'),
     subtitle: String(
-      rawParsed.subtitle || 'Đề luyện thi chuẩn cấu trúc VSTEP B1-B2-C1 (Listening 35 câu · Reading 40 câu · Writing 2 bài)'
+      rawParsed.subtitle ||
+        'Đề luyện thi chuẩn cấu trúc 4 kỹ năng VSTEP B1-B2-C1 (Listening 35 câu · Reading 40 câu · Writing 2 bài · Speaking 3 phần)'
     ),
-    durationMinutes: Number(rawParsed.durationMinutes) || 100,
+    durationMinutes: Number(rawParsed.durationMinutes) || 172,
     audioUrl: rawParsed.audioUrl || '',
     audioFileName: rawParsed.audioFileName || '',
     audioMode: rawParsed.audioMode || 'single',
     partAudioUrls: rawParsed.partAudioUrls || {},
     questions: hydratedQuestions,
     writingTasks: normalizedWritingTasks,
+    speakingTasks: normalizedSpeakingTasks,
     vocabulary: normalizedVocabulary,
   };
 }
@@ -933,10 +1108,10 @@ export function normalizeImportedExamData(rawParsed: Record<string, any>): {
  */
 export function getAiExtractionMasterPromptText(): string {
   return `ĐÓNG VAI CHUYÊN GIA KHẢO THÍ VSTEP (B1-B2-C1) CỦA BỘ GIÁO DỤC & ĐÀO TẠO:
-Hãy đọc kỹ mục "_AI_MASTER_EXTRACTION_PROMPT_AND_RULES" trong file JSON mẫu đính kèm, sau đó trích xuất TOÀN BỘ đề thi VSTEP từ file PDF / ảnh chụp đề thi tôi gửi thành 1 file JSON chuẩn mực duy nhất (75 câu hỏi trắc nghiệm A, B, C, D + 2 bài Writing + Từ vựng cốt lõi).
+Hãy đọc kỹ mục "_AI_MASTER_EXTRACTION_PROMPT_AND_RULES" trong file JSON mẫu đính kèm, sau đó trích xuất TOÀN BỘ đề thi VSTEP 4 Kỹ Năng (Listening, Reading, Writing, Speaking) từ file PDF / ảnh chụp đề thi tôi gửi thành 1 file JSON chuẩn mực duy nhất.
 
-⚠️ CÁC YẾU TỐ ĐẶC THÙ CỦA KỲ THI VSTEP BẮT BUỘC PHẢI TUÂN THỦ 100%:
-1. QUY ƯỚC ID 75 CÂU HỎI CHUẨN HỆ THỐNG:
+⚠️ CÁC YẾU TỐ ĐẶC THÙ CỦA KỲ THI VSTEP 4 KỸ NĂNG BẮT BUỘC PHẢI TUÂN THỦ 100%:
+1. QUY ƯỚC ID 75 CÂU HỎI TRẮC NGHIỆM (LISTENING & READING):
    - LISTENING (35 câu, 4 lựa chọn A, B, C, D):
      • Part 1 (8 thông báo ngắn): "section": "LISTENING", "partNumber": 1, "id": từ 1 đến 8.
      • Part 2 (3 đoạn hội thoại × 4 câu): "section": "LISTENING", "partNumber": 2, "id": từ 9 đến 20 (Hội thoại 1: 9-12, Hội thoại 2: 13-16, Hội thoại 3: 17-20).
@@ -948,58 +1123,61 @@ Hãy đọc kỹ mục "_AI_MASTER_EXTRACTION_PROMPT_AND_RULES" trong file JSON 
      • Passage 4 (Câu 31–40 trên đề giấy): "section": "READING", "partNumber": 4, "id": từ 66 đến 75.
 
 2. BẢO TOÀN 100% CHỮ GẠCH CHÂN, IN ĐẬM, HIGHLIGHT & Ô VUÔNG CHÈN CÂU TRONG BÀI ĐỌC VSTEP:
-   - Đề thi VSTEP Reading luôn có các câu hỏi từ vựng ("The word 'X' in line Y is closest in meaning to...") và câu hỏi đại từ quy chiếu ("The word 'they/which/it' in paragraph X refers to...").
-   - Trong mảng "readingArticle.paragraphs" VÀ trong "prompt" của câu hỏi, BẮT BUỘC bọc chính xác các từ/cụm từ được gạch chân hoặc in đậm trên đề gốc bằng thẻ HTML: <u><b>từ_vựng</b></u> (ví dụ: <u><b>evolutionary fine-tuning</b></u>, <u><b>which</b></u>, <u><b>discards</b></u>) hoặc <mark>cụm_từ_highlight</mark>.
-   - Nếu bài đọc có các ô vuông chèn câu (Insertion question), hãy giữ nguyên ký hiệu [A], [B], [C], [D] trong đoạn văn để hệ thống hiển thị huy hiệu vị trí chèn câu.
+   - Trong mảng "readingArticle.paragraphs" VÀ trong "prompt" của câu hỏi, BẮT BUỘC bọc chính xác các từ/cụm từ được gạch chân hoặc in đậm trên đề gốc bằng thẻ HTML: <u><b>từ_vựng</b></u> hoặc <mark>cụm_từ_highlight</mark>.
+   - Nếu bài đọc có các ô vuông chèn câu (Insertion question), giữ nguyên ký hiệu [A], [B], [C], [D] trong đoạn văn.
 
 3. ĐẦY ĐỦ ĐÁP ÁN, SCRIPT, BẢN DỊCH SONG NGỮ, GIẢI THÍCH & BẰNG CHỨNG NGUYÊN VĂN (EVIDENCE QUOTE):
    - "correctAnswer": Đáp án đúng ("A", "B", "C", hoặc "D").
-   - "evidenceQuote": BẮT BUỘC trích dẫn NGUYÊN VĂN 100% (exact verbatim substring) câu văn chứa đáp án trong Audio Script hoặc trong Reading Passage để hệ thống tự động tô sáng (highlight) bằng chứng ở cột bên trái.
-   - "explanation": Giải thích chi tiết bằng tiếng Việt vì sao chọn đáp án đó và vì sao các phương án khác sai.
-   - "vietnameseTranslation": Dịch tiếng Việt đầy đủ cho câu hỏi và cả 4 phương án A, B, C, D.
-   - "audioScript" & "audioScriptTranslation": Lời thoại tiếng Anh (kèm nhãn người nói Man:, Woman:, Speaker:, Professor:...) và bản dịch tiếng Việt cho toàn bộ câu 1..35.
-   - "readingArticle" & "readingArticleTranslation": Đặt ở câu đầu tiên của mỗi Passage (id: 36, 46, 56, 66), chia đúng từng đoạn văn trong mảng "paragraphs" và dịch đầy đủ sang tiếng Việt.
+   - "evidenceQuote": BẮT BUỘC trích dẫn NGUYÊN VĂN 100% câu văn chứa đáp án trong Audio Script hoặc Reading Passage.
+   - "explanation", "vietnameseTranslation", "audioScript", "audioScriptTranslation", "readingArticle", "readingArticleTranslation".
 
-4. WRITING (2 BÀI VIẾT VSTEP):
-   - Task 1 (partNumber: 1, tối thiểu 120 từ, trọng số 1/3): Viết thư/email.
-   - Task 2 (partNumber: 2, tối thiểu 250 từ, trọng số 2/3): Viết bài luận (Essay) kèm "sampleAnswer" đạt chuẩn B2-C1.`;
+4. WRITING (2 BÀI VIẾT VSTEP — 60 PHÚT):
+   - Task 1 (partNumber: 1, tối thiểu 120 từ, trọng số 1/3): Viết thư/email ("stimulusText" chứa nội dung bức thư gốc trong khung nét đứt).
+   - Task 2 (partNumber: 2, tối thiểu 250 từ, trọng số 2/3): Viết bài luận Essay ("stimulusText" chứa chủ đề nghị luận trong khung nét đứt) kèm "sampleAnswer".
+
+5. SPEAKING (3 PHẦN THI NÓI VSTEP — 12 PHÚT) TRONG MẢNG "speakingTasks":
+   - Part 1 (partNumber: 1, Social Interaction 3'): Mảng "topicClusters" gồm 2 chủ đề ("Let's talk about..."), mỗi chủ đề 3 câu hỏi nhỏ.
+   - Part 2 (partNumber: 2, Solution Discussion 4'): Trường "situation" (tình huống thảo luận) và mảng "options" (3 phương án lựa chọn).
+   - Part 3 (partNumber: 3, Topic Development 5'): Trường "topicStatement" (câu chủ đề), object "mindMap": { "centralIdea": "Ô trung tâm", "nodes": ["Nhánh trái", "Nhánh phải", "Nhánh dưới", "[Your own ideas]"] } giống hệt sơ đồ tư duy trên đề gốc, và mảng "followUpQuestions" (3 câu hỏi thảo luận mở rộng) kèm "sampleAnswer".`;
 }
 
 /**
- * Generates the comprehensive VSTEP B1-B2-C1 AI Master Instruction + 75-Question & 2-Writing-Task JSON Template.
+ * Generates the comprehensive VSTEP B1-B2-C1 AI Master Instruction + 4-Skill (75 Qs + 2 Writing + 3 Speaking) JSON Template.
  */
 export function getSampleTestJsonTemplate(): string {
   const masterGuideAndTemplate = {
     _AI_MASTER_EXTRACTION_PROMPT_AND_RULES: {
       DIRECTIVE_FOR_ANY_AI_MODEL:
-        'QUAN TRỌNG — ĐỌC ĐẦU TIÊN: Khi người dùng tải file JSON này lên kèm theo file PDF/Word/ảnh chụp của đề thi VSTEP B1-B2-C1 (gồm Đề thi, Đáp án Answer Key, Lời thoại Tapescript), BẠN PHẢI ĐÓNG VAI CHUYÊN GIA KHẢO THÍ VSTEP CỦA BỘ GD&ĐT VÀ TRÍCH XUẤT TOÀN BỘ ĐỀ THI THÀNH 1 FILE JSON HOÀN CHỈNH KHỚP 100% VỚI CẤU TRÚC CỦA FILE NÀY.',
+        'QUAN TRỌNG — ĐỌC ĐẦU TIÊN: Khi người dùng tải file JSON này lên kèm theo file PDF/Word/ảnh chụp của đề thi VSTEP B1-B2-C1 4 kỹ năng (Listening, Reading, Writing, Speaking), BẠN PHẢI ĐÓNG VAI CHUYÊN GIA KHẢO THÍ VSTEP CỦA BỘ GD&ĐT VÀ TRÍCH XUẤT TOÀN BỘ ĐỀ THI THÀNH 1 FILE JSON HOÀN CHỈNH KHỚP 100% VỚI CẤU TRÚC CỦA FILE NÀY.',
       STEP_BY_STEP_VSTEP_EXTRACTION_RULES: {
         RULE_1_75_QUESTION_ID_MAPPING:
           'Hệ thống sử dụng ID liên tục từ 1 đến 75: [Listening Part 1 (8 thông báo ngắn): id 1..8, partNumber: 1] | [Listening Part 2 (3 hội thoại × 4 câu): id 9..20, partNumber: 2] | [Listening Part 3 (3 bài giảng × 5 câu): id 21..35, partNumber: 3] | [Reading Passage 1 (Câu 1-10): id 36..45, partNumber: 1] | [Reading Passage 2 (Câu 11-20): id 46..55, partNumber: 2] | [Reading Passage 3 (Câu 21-30): id 56..65, partNumber: 3] | [Reading Passage 4 (Câu 31-40): id 66..75, partNumber: 4]. Mọi câu hỏi đều có 4 phương án options: A, B, C, D.',
         RULE_2_UNDERLINED_AND_HIGHLIGHTED_WORDS_IN_READING:
-          'Đề thi VSTEP Reading có đặc trưng là gạch chân/in đậm các từ vựng và đại từ được hỏi trong bài đọc. Khi trích xuất mảng "readingArticle.paragraphs" và "prompt", BẮT BUỘC giữ nguyên định dạng gạch chân bằng thẻ <u><b>word</b></u> (ví dụ: "bill design is a prime example of <u><b>evolutionary fine-tuning</b></u>", "in <u><b>which</b></u> new stars form"). Với câu hỏi chèn câu vào đoạn văn, giữ nguyên ký hiệu [A], [B], [C], [D].',
+          'Đề thi VSTEP Reading có đặc trưng là gạch chân/in đậm các từ vựng và đại từ được hỏi trong bài đọc. Khi trích xuất mảng "readingArticle.paragraphs" và "prompt", BẮT BUỘC giữ nguyên định dạng gạch chân bằng thẻ <u><b>word</b></u>. Với câu hỏi chèn câu vào đoạn văn, giữ nguyên ký hiệu [A], [B], [C], [D].',
         RULE_3_VERBATIM_EVIDENCE_QUOTE_AND_EXPLANATION:
-          'Mọi câu hỏi từ 1 đến 75 BẮT BUỘC phải có: 1) "evidenceQuote": câu trích dẫn NGUYÊN VĂN 100% từ bài đọc hoặc script chứng minh đáp án đúng (không thêm dấu ... ở giữa câu để hệ thống highlight chính xác). 2) "explanation": giải thích rõ ràng bằng tiếng Việt. 3) "vietnameseTranslation": bản dịch tiếng Việt của câu hỏi và 4 đáp án A, B, C, D.',
+          'Mọi câu hỏi từ 1 đến 75 BẮT BUỘC phải có: 1) "evidenceQuote": câu trích dẫn NGUYÊN VĂN 100% từ bài đọc hoặc script chứng minh đáp án đúng. 2) "explanation": giải thích rõ ràng bằng tiếng Việt. 3) "vietnameseTranslation": bản dịch tiếng Việt của câu hỏi và 4 đáp án A, B, C, D.',
         RULE_4_LISTENING_SCRIPTS_AND_READING_PASSAGES:
-          '1) Với Listening (id: 1..35): Điền đầy đủ "audioScript" và "audioScriptTranslation". Với Part 2 (nhóm 9-12, 13-16, 17-20) và Part 3 (nhóm 21-25, 26-30, 31-35), ghi rõ subInstruction (ví dụ: "Questions 9 to 12 refer to the following conversation"). 2) Với Reading (id: 36..75): Đặt object "readingArticle": { "title": "...", "paragraphs": ["Đoạn 1...", "Đoạn 2..."] } và "readingArticleTranslation": { "title": "...", "paragraphs": ["Dịch đoạn 1...", "Dịch đoạn 2..."] } vào câu đầu tiên của mỗi Passage (id: 36, 46, 56, 66).',
-        RULE_5_WRITING_TASKS_AND_VOCABULARY:
-          'Trích xuất đủ 2 bài viết VSTEP vào mảng "writingTasks": Task 1 (Thư/Email >= 120 từ, 20 phút, trọng số 1/3) và Task 2 (Bài luận Essay >= 250 từ, 40 phút, trọng số 2/3) kèm bài mẫu "sampleAnswer". Trích xuất 15-25 từ vựng B1-B2-C1 quan trọng vào mảng "vocabulary".',
+          '1) Với Listening (id: 1..35): Điền đầy đủ "audioScript" và "audioScriptTranslation". 2) Với Reading (id: 36..75): Đặt object "readingArticle" và "readingArticleTranslation" vào câu đầu tiên của mỗi Passage (id: 36, 46, 56, 66).',
+        RULE_5_WRITING_SPEAKING_AND_VOCABULARY:
+          '1) Trích xuất đủ 2 bài viết VSTEP vào mảng "writingTasks": Task 1 (Thư/Email >= 120 từ) và Task 2 (Bài luận Essay >= 250 từ). 2) Trích xuất đủ 3 phần Nói VSTEP vào mảng "speakingTasks": Part 1 (Social Interaction 2 chủ đề), Part 2 (Solution Discussion tình huống + 3 lựa chọn), Part 3 (Topic Development kèm sơ đồ tư duy "mindMap": { "centralIdea": "...", "nodes": ["...", "...", "..."] } và 3 câu hỏi "followUpQuestions"). 3) Trích xuất 15-25 từ vựng B1-B2-C1 quan trọng vào mảng "vocabulary".',
       },
     },
     id: `vstep-custom-${Date.now()}`,
-    title: 'VSTEP B1-B2-C1 Official Practice Test (Extracted by AI)',
-    subtitle: 'Chuẩn cấu trúc Bộ GD&ĐT (Listening 35 câu · Reading 40 câu · Writing 2 bài · Đầy đủ Script, Dịch & Dẫn chứng)',
+    title: 'VSTEP B1-B2-C1 Official 4-Skill Practice Test (Extracted by AI)',
+    subtitle: 'Chuẩn cấu trúc 4 kỹ năng Bộ GD&ĐT (Listening 35 câu · Reading 40 câu · Writing 2 bài · Speaking 3 phần)',
     totalQuestions: 75,
-    durationMinutes: 100,
+    durationMinutes: 172,
     isAvailable: true,
     isCustom: true,
     createdAt: Date.now(),
+    updatedAt: Date.now(),
     creatorId: 'admin',
     creatorEmail: 'admin@vsteptutor.vn',
     audioMode: 'single',
     audioUrl: '',
     audioFileName: 'vstep_full_listening_audio.mp3',
     writingTasks: SAMPLE_B1_WRITING_TASKS,
+    speakingTasks: SAMPLE_VSTEP_SPEAKING_TASKS,
     questions: compactQuestionsForStorage(TEST_1_QUESTIONS),
   };
 

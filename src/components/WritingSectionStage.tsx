@@ -70,61 +70,82 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
 
   return (
     <div className="mx-auto max-w-6xl px-4 sm:px-6 py-8">
-      {/* Task Selector Tabs */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
-        <div className="flex items-center gap-2">
-          {activeTasks.map((t, idx) => {
-            const words = idx === 0 ? submission.task1WordCount : submission.task2WordCount;
-            const meetsCriteria = words >= t.minWords && words <= t.maxWords;
-
-            return (
-              <button
-                key={t.id || idx}
-                type="button"
-                onClick={() => setActiveTaskIndex(idx === 0 ? 0 : 1)}
-                className={`flex items-center gap-2 rounded-2xl px-4 py-2.5 text-xs font-black transition-all cursor-pointer ${
-                  activeTaskIndex === idx
-                    ? 'bg-[#2E7D32] text-white shadow-sm'
-                    : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
-                }`}
-              >
-                <span>
-                  Writing Part {t.partNumber} ({t.minWords}–{t.maxWords} từ)
-                </span>
-                {meetsCriteria && (
-                  <CheckCircle2
-                    className={`h-4 w-4 ${
-                      activeTaskIndex === idx ? 'text-lime-200' : 'text-emerald-500'
-                    }`}
-                  />
-                )}
-              </button>
-            );
-          })}
+      {/* Official VSTEP Writing Paper Header Banner */}
+      <div className="mb-6 rounded-3xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-5 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="text-center sm:text-left">
+          <div className="inline-block border-y-2 border-slate-800 dark:border-slate-200 px-8 py-1 mb-2">
+            <h2 className="text-xl sm:text-2xl font-black tracking-[0.2em] text-slate-900 dark:text-white uppercase">
+              WRITING
+            </h2>
+          </div>
+          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 text-xs font-extrabold text-slate-700 dark:text-slate-300">
+            <span>Time allotted: 60 minutes</span>
+            <span className="text-slate-300 dark:text-slate-700">•</span>
+            <span>Number of tasks: 2</span>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
-          <Info className="h-4 w-4 text-[#58CC02]" />
-          <span>Tổng 2 bài viết: 24 điểm raw → Quy đổi thang 50 điểm chuẩn LanguageCert</span>
+        {/* Task Selector Tabs */}
+        <div className="flex flex-col sm:items-end gap-2">
+          <div className="flex items-center gap-2">
+            {activeTasks.map((t, idx) => {
+              const words = idx === 0 ? submission.task1WordCount : submission.task2WordCount;
+              const meetsCriteria = words >= t.minWords;
+
+              return (
+                <button
+                  key={t.id || idx}
+                  type="button"
+                  onClick={() => setActiveTaskIndex(idx === 0 ? 0 : 1)}
+                  className={`flex items-center gap-2 rounded-2xl px-4 py-2.5 text-xs font-black transition-all cursor-pointer ${
+                    activeTaskIndex === idx
+                      ? 'bg-[#2E7D32] text-white shadow-sm'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  <span>
+                    Task {t.partNumber} ({t.partNumber === 1 ? '20 phút · ≥120 từ' : '40 phút · ≥250 từ'})
+                  </span>
+                  {meetsCriteria && (
+                    <CheckCircle2
+                      className={`h-4 w-4 ${
+                        activeTaskIndex === idx ? 'text-lime-200' : 'text-emerald-500'
+                      }`}
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400">
+            <Info className="h-3.5 w-3.5 text-[#58CC02]" />
+            <span>Công thức VSTEP Thang 10: Điểm Writing = (Task 1 + Task 2 × 2) / 3</span>
+          </div>
         </div>
       </div>
 
       {/* Main Task Arena */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column: Task Prompt & Guidance */}
-        <div className="lg:col-span-5 rounded-3xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-            <span className="rounded-lg bg-lime-100 dark:bg-lime-950/60 px-2.5 py-0.5 text-xs font-black text-lime-900 dark:text-lime-200">
-              Writing Part {task.partNumber} · {task.marks || 12} Marks
-            </span>
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-              Mục tiêu: {task.minWords}–{task.maxWords} từ
+        {/* Left Column: Authentic VSTEP Paper Task Prompt & Dashed Stimulus Box */}
+        <div className="lg:col-span-5 rounded-3xl border-2 border-slate-200 dark:border-slate-800 bg-[#FCFDFD] dark:bg-slate-900 p-6 shadow-xs space-y-4">
+          {/* Official VSTEP Book Task Badge */}
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+            <div className="inline-flex items-center gap-2 rounded-r-full rounded-l-md bg-slate-800 dark:bg-slate-700 pl-3 pr-4 py-1 text-white shadow-xs">
+              <span className="italic font-serif font-bold text-sm tracking-wide">Task</span>
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-slate-900 font-black text-xs">
+                {task.partNumber}
+              </span>
+            </div>
+            <span className="text-xs font-extrabold text-slate-600 dark:text-slate-300">
+              {task.partNumber === 1 ? 'Trọng số 1/3 · ~20 phút' : 'Trọng số 2/3 · ~40 phút'}
             </span>
           </div>
 
-          <div>
-            <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-white mb-2">{task.title}</h3>
-            <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300 font-medium">
+          <div className="space-y-2 font-serif text-slate-900 dark:text-slate-100">
+            <p className="text-sm font-bold leading-relaxed">
+              You should spend about {task.partNumber === 1 ? '20' : '40'} minutes on this task.
+            </p>
+            <p className="text-sm leading-relaxed text-slate-800 dark:text-slate-200">
               {task.instruction}
             </p>
           </div>
@@ -145,18 +166,23 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
             </div>
           )}
 
-          {/* Stimulus Context Box */}
+          {/* Authentic VSTEP Dashed Gray Box (matches official exam paper image) */}
           {task.stimulusText && (
-            <div className="rounded-2xl border-2 border-lime-200 dark:border-lime-800 bg-lime-50/50 dark:bg-lime-950/30 p-4 text-xs font-sans text-slate-800 dark:text-slate-200 leading-relaxed whitespace-pre-line">
+            <div className="rounded-none border-2 border-dashed border-slate-500 dark:border-slate-500 bg-slate-100/90 dark:bg-slate-800/80 p-5 text-sm font-serif italic text-slate-900 dark:text-slate-100 leading-relaxed whitespace-pre-line shadow-2xs">
               {task.stimulusText}
             </div>
           )}
 
-          {/* Mandatory Content Points */}
+          {/* Official Footer Requirement Line */}
+          <p className="font-serif text-sm font-bold text-slate-900 dark:text-white pt-1">
+            You should write at least {task.minWords} words.
+          </p>
+
+          {/* Mandatory Content Points / Guidance */}
           {task.bulletPoints && task.bulletPoints.some((b) => b.trim().length > 0) && (
-            <div>
+            <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800">
               <h4 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200 mb-2">
-                Các ý bắt buộc phải có trong bài viết:
+                Gợi ý triển khai ý (Checklist chấm điểm VSTEP):
               </h4>
               <ul className="space-y-2 text-xs text-slate-700 dark:text-slate-300">
                 {task.bulletPoints
@@ -183,7 +209,7 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
               >
                 <span className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                  <span>{showSampleAnswer ? 'Ẩn bài viết mẫu' : 'Xem bài viết mẫu chuẩn B1 (Sample Answer)'}</span>
+                  <span>{showSampleAnswer ? 'Ẩn bài viết mẫu' : 'Xem bài viết mẫu chuẩn VSTEP B2–C1'}</span>
                 </span>
                 <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 underline">
                   {showSampleAnswer ? 'Thu gọn' : 'Bấm để xem'}
@@ -195,10 +221,10 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
                   <div className="flex items-center justify-between font-black text-emerald-800 dark:text-emerald-300 uppercase tracking-wider text-[11px]">
                     <span className="flex items-center gap-1.5">
                       <Sparkles className="h-4 w-4 text-emerald-600" />
-                      Bài viết mẫu chuẩn B1 High Pass
+                      Bài viết mẫu chuẩn VSTEP (Sample Answer)
                     </span>
                     <span className="rounded-md bg-emerald-200 dark:bg-emerald-800 px-2 py-0.5 text-[10px] font-mono text-emerald-900 dark:text-emerald-100">
-                      Chuẩn CEFR B1
+                      B2 – C1 Band
                     </span>
                   </div>
                   <p className="whitespace-pre-line leading-relaxed font-medium bg-white/70 dark:bg-slate-900/70 p-3 rounded-xl border border-emerald-200 dark:border-emerald-800">
@@ -217,33 +243,33 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
               <span className="text-xs font-black text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
                 <PenTool className="h-4 w-4 text-[#58CC02]" />
-                <span>Nội dung bài viết của bạn (Your Composition)</span>
+                <span>Bài làm Writing Task {task.partNumber} của bạn</span>
               </span>
 
               <div className="flex items-center gap-2">
                 <span
                   className={`rounded-xl px-3 py-1 font-mono text-xs font-black ${
-                    isOptimal
+                    wordCount >= task.minWords
                       ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
                       : isUnder
                       ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
                       : 'bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
                   }`}
                 >
-                  {wordCount} / {task.minWords}–{task.maxWords} từ
+                  {wordCount} / tối thiểu {task.minWords} từ
                 </span>
               </div>
             </div>
 
             <textarea
-              rows={14}
+              rows={15}
               readOnly={isReviewMode}
               value={currentText}
               onChange={handleTextChange}
               placeholder={
                 activeTaskIndex === 0
-                  ? 'Dear Mr. Taylor,\n\nI am writing in response to the notice...'
-                  : 'Hi Jamie,\n\nThanks for your email! I am really excited about...'
+                  ? 'Dear Uncle Hung,\n\nI hope you and your family are doing well. I am writing this email in response to...'
+                  : 'In recent years, traffic congestion in major Vietnamese cities has become a pressing issue...'
               }
               className="w-full rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-4 font-sans text-sm leading-relaxed text-slate-800 dark:text-slate-100 outline-hidden transition-all focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-900 resize-none"
             />
@@ -257,7 +283,7 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
                   onClick={() => setActiveTaskIndex(1)}
                   className="ml-auto inline-flex items-center gap-1.5 rounded-2xl bg-[#58CC02] px-5 py-2.5 text-xs font-black text-white shadow-xs hover:bg-[#46a302] active:scale-95 transition-all cursor-pointer"
                 >
-                  <span>Chuyển sang Writing Part 2</span>
+                  <span>Chuyển sang Writing Task 2</span>
                   <ChevronRight className="h-4 w-4" />
                 </button>
               ) : (
@@ -267,7 +293,7 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
                     onClick={() => setActiveTaskIndex(0)}
                     className="rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
                   >
-                    Quay lại Writing Part 1
+                    Quay lại Writing Task 1
                   </button>
                   <button
                     type="button"
@@ -275,7 +301,7 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
                     className="inline-flex items-center gap-1.5 rounded-2xl bg-[#2E7D32] px-6 py-2.5 text-xs font-black text-white shadow-xs hover:bg-[#1B5E20] active:scale-95 transition-all cursor-pointer"
                   >
                     <CheckCircle2 className="h-4 w-4" />
-                    <span>Nộp bài & Chấm điểm AI</span>
+                    <span>Hoàn tất Writing / Chuyển tiếp</span>
                   </button>
                 </div>
               )}

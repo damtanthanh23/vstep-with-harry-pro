@@ -18,6 +18,8 @@ import {
   MessageSquareWarning,
   Bell,
   GraduationCap,
+  Users,
+  LogOut,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -30,6 +32,7 @@ export type NavTabType =
   | 'reading'
   | 'vocab'
   | 'leaderboard'
+  | 'students'
   | 'admin';
 
 interface SidebarProps {
@@ -61,7 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   unreadFeedbackCount = 0,
   userPoints = 650,
 }) => {
-  const { currentUser, isAdmin, isSuperAdmin, isCoTeacher, canManageExams } = useAuth();
+  const { currentUser, userProfile, isAdmin, isSuperAdmin, isCoTeacher, canManageExams, signOutUser } = useAuth();
   const { theme, themeMode, setThemeMode, toggleTheme } = useTheme();
 
   const navItems = [
@@ -206,6 +209,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Admin Management Tab & Notification Inbox - Gated to Admins & Teachers */}
         {canManageExams && (
           <div className="pt-3 mt-3 border-t border-slate-100 dark:border-slate-800/80 space-y-1.5">
+            {/* Quản lý học viên */}
+            <button
+              type="button"
+              onClick={() => onSelectTab('students')}
+              className={`w-full flex items-center gap-3.5 px-3 py-2.5 rounded-2xl text-xs font-bold transition-all group ${
+                activeTab === 'students'
+                  ? 'bg-[#E5F9D6] dark:bg-emerald-950/60 text-[#3C8C02] dark:text-[#58CC02] shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/70'
+              } ${isCollapsed ? 'justify-center px-2' : ''}`}
+              title="Quản lý học viên & Tiến trình VSTEP"
+            >
+              <Users className="h-5 w-5 shrink-0 text-[#3C8C02] dark:text-[#58CC02] group-hover:scale-110 transition-transform" />
+              {!isCollapsed && (
+                <span className="truncate flex-1 text-left">Quản lý học viên</span>
+              )}
+              {!isCollapsed && (
+                <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.5 rounded">
+                  Học viên
+                </span>
+              )}
+            </button>
+
             {onOpenAdminFeedback && (
               <button
                 type="button"
@@ -296,40 +321,73 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
         </button>
 
-        {/* User Profile Card */}
-        <div
-          onClick={currentUser ? onOpenHistory : onOpenLogin}
-          className={`flex items-center gap-2.5 p-2 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors border border-slate-200/80 dark:border-slate-800 ${
-            isCollapsed ? 'justify-center p-1.5' : ''
-          }`}
-          title={currentUser ? 'Xem lịch sử & thông tin' : 'Đăng nhập tài khoản'}
-        >
-          <div className="relative shrink-0">
-            {currentUser?.photoURL ? (
-              <img
-                src={currentUser.photoURL}
-                alt="Avatar"
-                className="h-9 w-9 rounded-full object-cover ring-2 ring-[#58CC02]"
-              />
-            ) : (
-              <div className="h-9 w-9 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-300">
-                <User className="h-4 w-4" />
+        {/* User Profile Card & Sign Out Button */}
+        {currentUser ? (
+          <div className="space-y-1.5">
+            <div
+              onClick={onOpenHistory}
+              className={`flex items-center gap-2.5 p-2 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors border border-slate-200/80 dark:border-slate-800 ${
+                isCollapsed ? 'justify-center p-1.5' : ''
+              }`}
+              title="Nhấn để xem hồ sơ & lịch sử thi"
+            >
+              <div className="relative shrink-0">
+                {currentUser?.photoURL ? (
+                  <img
+                    src={currentUser.photoURL}
+                    alt="Avatar"
+                    className="h-9 w-9 rounded-full object-cover ring-2 ring-[#58CC02]"
+                  />
+                ) : (
+                  <div className="h-9 w-9 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-300">
+                    <User className="h-4 w-4" />
+                  </div>
+                )}
+                <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-[#58CC02] ring-2 ring-white dark:ring-slate-900" />
               </div>
-            )}
-            <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-[#58CC02] ring-2 ring-white dark:ring-slate-900" />
-          </div>
 
-          {!isCollapsed && (
-            <div className="overflow-hidden flex-1">
-              <div className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
-                {currentUser?.displayName || (currentUser ? 'Học viên LanguageCert' : 'Khách vãng lai')}
-              </div>
-              <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                {currentUser ? 'Nhấn để xem hồ sơ' : 'Nhấn để đăng nhập'}
-              </div>
+              {!isCollapsed && (
+                <div className="overflow-hidden flex-1 min-w-0">
+                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                    {userProfile?.nickname || currentUser.displayName || 'Học viên VSTEP'}
+                  </div>
+                  <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                    {currentUser.email || 'Xem hồ sơ'}
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+
+            {/* Dedicated Sign Out Button */}
+            <button
+              type="button"
+              onClick={() => signOutUser()}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black text-rose-600 hover:text-rose-700 bg-rose-50/90 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 border border-rose-200/80 dark:border-rose-900/50 transition-all cursor-pointer ${
+                isCollapsed ? 'justify-center px-1.5' : ''
+              }`}
+              title="Đăng xuất khỏi tài khoản"
+            >
+              <LogOut className="h-3.5 w-3.5 shrink-0" />
+              {!isCollapsed && <span>Đăng xuất</span>}
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <button
+              type="button"
+              onClick={onOpenLogin}
+              className={`w-full flex items-center gap-2 p-2.5 rounded-2xl bg-[#58CC02] hover:bg-[#46a302] text-white cursor-pointer transition-all shadow-xs ${
+                isCollapsed ? 'justify-center p-2' : ''
+              }`}
+              title="Đăng nhập tài khoản"
+            >
+              <User className="h-4 w-4 shrink-0" />
+              {!isCollapsed && (
+                <span className="text-xs font-black truncate">Đăng nhập tài khoản</span>
+              )}
+            </button>
+          </div>
+        )}
 
         {/* 3-Mode Theme Switcher (Sáng / Tối / Hệ thống) */}
         {!isCollapsed ? (

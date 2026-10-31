@@ -1,7 +1,8 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight, Headphones, BookOpen, PenTool } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Headphones, BookOpen, PenTool, Mic } from 'lucide-react';
 import { ExamSection, Question, getPartRelativeNumber } from '../types/exam';
 import { WritingSubmission } from '../types/writing';
+import { SpeakingSubmission } from '../types/speaking';
 
 interface ExamFooterProps {
   progressPercent: number;
@@ -17,6 +18,9 @@ interface ExamFooterProps {
   activeWritingTaskIndex?: 0 | 1;
   writingSubmission?: WritingSubmission;
   onSelectWritingTask?: (taskIndex: 0 | 1) => void;
+  activeSpeakingPartIndex?: 0 | 1 | 2;
+  speakingSubmission?: SpeakingSubmission;
+  onSelectSpeakingPart?: (partIndex: 0 | 1 | 2) => void;
   canGoPrev: boolean;
   canGoNext: boolean;
   onPrev: () => void;
@@ -36,6 +40,9 @@ export const ExamFooter: React.FC<ExamFooterProps> = ({
   activeWritingTaskIndex = 0,
   writingSubmission,
   onSelectWritingTask,
+  activeSpeakingPartIndex = 0,
+  speakingSubmission,
+  onSelectSpeakingPart,
   canGoPrev,
   canGoNext,
   onPrev,
@@ -62,15 +69,22 @@ export const ExamFooter: React.FC<ExamFooterProps> = ({
       ? `Listening Part ${partNumber}`
       : section === 'READING'
       ? `Reading Passage ${partNumber}`
-      : `Writing Task ${(activeWritingTaskIndex ?? 0) + 1}`;
+      : section === 'WRITING'
+      ? `Writing Task ${(activeWritingTaskIndex ?? 0) + 1}`
+      : `Speaking Part ${(activeSpeakingPartIndex ?? 0) + 1}`;
 
   const answeredInCurrentPart =
     section === 'WRITING'
       ? ((writingSubmission?.task1WordCount || 0) > 0 ? 1 : 0) +
         ((writingSubmission?.task2WordCount || 0) > 0 ? 1 : 0)
+      : section === 'SPEAKING'
+      ? ((speakingSubmission?.part1WordCount || 0) > 0 || speakingSubmission?.part1AudioUrl ? 1 : 0) +
+        ((speakingSubmission?.part2WordCount || 0) > 0 || speakingSubmission?.part2AudioUrl ? 1 : 0) +
+        ((speakingSubmission?.part3WordCount || 0) > 0 || speakingSubmission?.part3AudioUrl ? 1 : 0)
       : partQuestions.filter((q) => isAnswered(q.id)).length;
 
-  const totalInCurrentPart = section === 'WRITING' ? 2 : partQuestions.length;
+  const totalInCurrentPart =
+    section === 'WRITING' ? 2 : section === 'SPEAKING' ? 3 : partQuestions.length;
 
   return (
     <footer className="fixed bottom-0 left-0 right-0 z-30 h-14 bg-[#58CC02] text-white shadow-lg border-t-2 border-[#46a302] flex items-center justify-between gap-2 sm:gap-4 px-3 sm:px-6 select-none">
@@ -86,8 +100,10 @@ export const ExamFooter: React.FC<ExamFooterProps> = ({
             <Headphones className="h-3.5 w-3.5 text-lime-300 shrink-0" />
           ) : section === 'READING' ? (
             <BookOpen className="h-3.5 w-3.5 text-lime-300 shrink-0" />
-          ) : (
+          ) : section === 'WRITING' ? (
             <PenTool className="h-3.5 w-3.5 text-lime-300 shrink-0" />
+          ) : (
+            <Mic className="h-3.5 w-3.5 text-lime-300 shrink-0" />
           )}
           <span className="whitespace-nowrap">{sectionLabel}</span>
           {totalInCurrentPart > 0 && (
@@ -123,6 +139,37 @@ export const ExamFooter: React.FC<ExamFooterProps> = ({
                       : ''
                   }`}
                   title={`Writing Task ${relNum} (${done ? 'Đã viết' : 'Chưa viết'})`}
+                >
+                  <span>{relNum}</span>
+                </button>
+              );
+            })
+          ) : section === 'SPEAKING' ? (
+            ([0, 1, 2] as const).map((partIdx) => {
+              const relNum = partIdx + 1;
+              const isCurrent = activeSpeakingPartIndex === partIdx;
+              const done =
+                partIdx === 0
+                  ? (speakingSubmission?.part1WordCount || 0) > 0 || Boolean(speakingSubmission?.part1AudioUrl)
+                  : partIdx === 1
+                  ? (speakingSubmission?.part2WordCount || 0) > 0 || Boolean(speakingSubmission?.part2AudioUrl)
+                  : (speakingSubmission?.part3WordCount || 0) > 0 || Boolean(speakingSubmission?.part3AudioUrl);
+
+              return (
+                <button
+                  key={partIdx}
+                  type="button"
+                  onClick={() => onSelectSpeakingPart && onSelectSpeakingPart(partIdx)}
+                  className={`relative shrink-0 flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-xl text-xs transition-all cursor-pointer ${
+                    done
+                      ? 'bg-[#1B5E20] text-white border-2 border-white/80 font-black'
+                      : 'bg-white/95 text-[#1B5E20] border-2 border-[#1B5E20]/40 hover:bg-white font-bold'
+                  } ${
+                    isCurrent
+                      ? 'ring-3 ring-amber-300 scale-105 z-10 font-black shadow-md border-amber-300'
+                      : ''
+                  }`}
+                  title={`Speaking Part ${relNum} (${done ? 'Đã trả lời / ghi âm' : 'Chưa làm'})`}
                 >
                   <span>{relNum}</span>
                 </button>

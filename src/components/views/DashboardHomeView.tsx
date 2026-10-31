@@ -676,7 +676,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
             </div>
             <div className="font-black text-sm text-slate-800 dark:text-white">Luyện đề</div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-              {tests.length} bộ đề chuẩn Nghe - Đọc - Viết
+              {tests.length} bộ đề chuẩn 4 kỹ năng L-R-W-S
             </div>
           </div>
 
@@ -891,14 +891,14 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                         <strong className="font-black text-slate-900 dark:text-white">
                           {test.totalQuestions || 75}
                         </strong>{' '}
-                        câu
+                        câu + 2W + 3S
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <Clock className="h-4 w-4 text-slate-400" />
                       <span>
                         <strong className="font-black text-slate-900 dark:text-white">
-                          {test.durationMinutes || 160}
+                          {test.durationMinutes || 172}
                         </strong>{' '}
                         phút
                       </span>
@@ -918,6 +918,10 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                     <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold">
                       <PenTool className="h-3.5 w-3.5 text-slate-500" />
                       <span>2 Writing</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-xs font-bold border border-rose-200/70 dark:border-rose-800/50">
+                      <Mic className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" />
+                      <span>3 Speaking</span>
                     </span>
                   </div>
                 </div>

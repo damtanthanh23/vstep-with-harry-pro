@@ -20,6 +20,7 @@ import {
   ArrowRight,
   AlertTriangle,
   Tag,
+  Mic,
 } from 'lucide-react';
 import { TestMetadata, ExamSection, InProgressAttempt, isDraftTest } from '../types/exam';
 import { Sidebar, NavTabType } from './navigation/Sidebar';
@@ -30,6 +31,7 @@ import { ListeningPracticeView } from './views/ListeningPracticeView';
 import { ReadingPracticeView } from './views/ReadingPracticeView';
 import { VocabularyB1View } from './views/VocabularyB1View';
 import { LeaderboardView } from './views/LeaderboardView';
+import { StudentManagementView } from './views/admin/StudentManagementView';
 import { useAuth } from '../context/AuthContext';
 import {
   getStreakStatus,
@@ -43,7 +45,7 @@ import {
   subscribeToCustomExamTags,
 } from '../services/categoryTagService';
 
-export type SkillPackageType = 'LR' | 'LRW' | 'W';
+export type SkillPackageType = 'LRWS' | 'LRW' | 'LR' | 'W' | 'S';
 
 interface TestSelectionViewProps {
   tests: TestMetadata[];
@@ -66,6 +68,7 @@ interface TestSelectionViewProps {
   onOpenAdminFeedback?: () => void;
   unreadFeedbackCount?: number;
   onDeleteCustomTest?: (testId: string) => void;
+  onPublishDraftTest?: (testId: string) => void;
   inProgressMap?: Record<string, InProgressAttempt>;
   completedScoresMap?: Record<string, number>;
 }
@@ -91,6 +94,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
   onOpenAdminFeedback,
   unreadFeedbackCount = 0,
   onDeleteCustomTest,
+  onPublishDraftTest,
   inProgressMap = {},
   completedScoresMap = {},
 }) => {
@@ -171,6 +175,8 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
         return 'Từ vựng B1';
       case 'leaderboard':
         return 'Bảng xếp hạng';
+      case 'students':
+        return 'Quản lý học viên';
       default:
         return 'Trang chủ';
     }
@@ -302,37 +308,41 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
       case 'home':
         return 'Trang chủ';
       case 'tests':
-        return 'Luyện đề LanguageCert B1';
+        return 'Kho Đề Thi VSTEP 4 Kỹ Năng (B1–B2–C1)';
       case 'listening':
-        return 'Luyện nghe (Listening)';
+        return 'Luyện nghe (Listening · 35 câu)';
       case 'reading':
-        return 'Luyện đọc (Reading)';
+        return 'Luyện đọc (Reading · 40 câu)';
       case 'vocab':
         if (vocabWorkspace === 'study_hub') {
           return 'Phòng Luyện Tập Từ Vựng';
         }
-        return 'Kho Từ Vựng B1';
+        return 'Kho Từ Vựng VSTEP B1–B2';
       case 'leaderboard':
-        return 'Bảng xếp hạng';
+        return 'Bảng xếp hạng VSTEP';
+      case 'students':
+        return 'Quản lý học viên VSTEP';
       default:
-        return 'Luyện thi LanguageCert B1';
+        return 'Luyện thi VSTEP B1–B2–C1';
     }
   };
 
   const getTabSubtitle = () => {
     switch (activeTab) {
       case 'home':
-        return 'Tổng quan tiến độ và lộ trình ôn thi LanguageCert B1 · Created by Mr.Harry (English Lecturer and Instructor)';
+        return 'Tổng quan tiến độ và lộ trình ôn thi VSTEP 4 Kỹ năng (B1–B2–C1) · Created by Mr.Harry';
       case 'tests':
-        return 'Kho bộ đề thi mẫu và đề thi tạo bằng AI kèm lời giải chi tiết · Mr.Harry';
+        return 'Kho bộ đề thi chuẩn cấu trúc VSTEP Bộ GD&ĐT (Listening, Reading, Writing & Speaking)';
       case 'listening':
-        return 'Luyện nghe 4 Part với trình phát audio đa tốc độ và transcript';
+        return 'Luyện nghe 3 Part (35 câu) với trình phát audio đa tốc độ và transcript song ngữ';
       case 'reading':
-        return 'Luyện đọc 4 Part với giao diện chia đôi màn hình đối chiếu';
+        return 'Luyện đọc 4 Passages (40 câu) với giao diện chia đôi màn hình đối chiếu';
       case 'vocab':
-        return 'Hệ thống học từ vựng B1 kiểu Quizlet + Lặp lại ngắt quãng Anki (SM-2)';
+        return 'Hệ thống học từ vựng VSTEP đồng bộ Cloud Firestore + Lặp lại ngắt quãng Anki (SM-2)';
       case 'leaderboard':
-        return 'Vinh danh học viên có điểm số và chuỗi học tập cao nhất';
+        return 'Bảng vinh danh học viên theo điểm VSTEP thang 10 và chuỗi ngày học thật trên hệ thống';
+      case 'students':
+        return 'Theo dõi hồ sơ cá nhân, lịch sử thi và thang điểm mục tiêu 4 kỹ năng của học viên';
       default:
         return undefined;
     }
@@ -430,13 +440,13 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                 <div>
                   <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 text-white font-black text-xs mb-2 backdrop-blur-xs">
                     <BookOpen className="h-3.5 w-3.5" />
-                    <span>BỘ ĐỀ CHUẨN ĐỀ THI THẬT PEOPLECERT</span>
+                    <span>BỘ ĐỀ CHUẨN CẤU TRÚC VSTEP BỘ GD&ĐT (4 KỸ NĂNG)</span>
                   </div>
                   <h2 className="text-2xl sm:text-3xl font-black tracking-tight">
-                    Kho Đề Thi LanguageCert B1
+                    Kho Đề Thi VSTEP B1–B2–C1
                   </h2>
                   <p className="mt-1 text-xs sm:text-sm text-lime-100 max-w-xl">
-                    Mỗi bộ đề gồm đầy đủ 3 kỹ năng Listening (4 Part), Reading (4 Part) và Writing (2 Part). Bạn có thể bấm [Thi thử] hoặc [Luyện tập] từng Part linh hoạt.
+                    Mỗi bộ đề gồm đầy đủ 4 kỹ năng: Listening (3 Part · 35 câu), Reading (4 Passage · 40 câu), Writing (2 Task) và Speaking (3 Part · Sơ đồ tư duy Mind-map).
                   </p>
                 </div>
 
@@ -522,34 +532,34 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                      Gói kỹ năng làm bài:
+                      Gói kỹ năng làm bài VSTEP:
                     </span>
                     <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Thang chuẩn 50 điểm/kỹ năng (Pass: ≥ 25 điểm)
+                      Thang chuẩn 10.0 điểm Bộ GD&ĐT (B1: ≥ 4.0 · B2: ≥ 6.0 · C1: ≥ 8.5)
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     <button
                       type="button"
-                      onClick={() => onSelectSkillPackage('LR')}
+                      onClick={() => onSelectSkillPackage('LRWS')}
                       className={`flex flex-col text-left rounded-2xl p-3.5 transition-all border cursor-pointer ${
-                        selectedSkillPackage === 'LR'
+                        selectedSkillPackage === 'LRWS'
                           ? 'border-[#58CC02] bg-[#E5F9D6]/60 dark:bg-emerald-950/40 ring-2 ring-[#58CC02]/30 shadow-xs'
                           : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-100/70'
                       }`}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <span className="flex items-center gap-1.5 text-xs font-black text-slate-800 dark:text-white">
-                          <Headphones className="h-4 w-4 text-[#58CC02]" />
-                          <span>Nghe & Đọc (LR)</span>
+                          <Layers className="h-4 w-4 text-[#58CC02]" />
+                          <span>Đủ 4 Kỹ năng (L-R-W-S)</span>
                         </span>
-                        {selectedSkillPackage === 'LR' && (
+                        {selectedSkillPackage === 'LRWS' && (
                           <CheckCircle2 className="h-4 w-4 text-[#58CC02]" />
                         )}
                       </div>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        52 câu hỏi · 90 phút thi · Thang 100 điểm
+                        75 câu + 2 Writing + 3 Speaking · 172p
                       </p>
                     </button>
 
@@ -558,21 +568,44 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                       onClick={() => onSelectSkillPackage('LRW')}
                       className={`flex flex-col text-left rounded-2xl p-3.5 transition-all border cursor-pointer ${
                         selectedSkillPackage === 'LRW'
-                          ? 'border-[#58CC02] bg-[#E5F9D6]/60 dark:bg-emerald-950/40 ring-2 ring-[#58CC02]/30 shadow-xs'
+                          ? 'border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/40 ring-2 ring-emerald-500/30 shadow-xs'
                           : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-100/70'
                       }`}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <span className="flex items-center gap-1.5 text-xs font-black text-slate-800 dark:text-white">
-                          <Layers className="h-4 w-4 text-emerald-500" />
-                          <span>Trọn gói Nghe + Đọc + Viết</span>
+                          <Headphones className="h-4 w-4 text-emerald-500" />
+                          <span>3 Kỹ năng (Nghe-Đọc-Viết)</span>
                         </span>
                         {selectedSkillPackage === 'LRW' && (
                           <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                         )}
                       </div>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        Nghe + Đọc + 2 Part Viết · Thang 150 điểm
+                        75 câu trắc nghiệm + 2 Task Viết · 160p
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => onSelectSkillPackage('S')}
+                      className={`flex flex-col text-left rounded-2xl p-3.5 transition-all border cursor-pointer ${
+                        selectedSkillPackage === 'S'
+                          ? 'border-rose-500 bg-rose-50/70 dark:bg-rose-950/40 ring-2 ring-rose-500/30 shadow-xs'
+                          : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-100/70'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="flex items-center gap-1.5 text-xs font-black text-slate-800 dark:text-white">
+                          <Mic className="h-4 w-4 text-rose-500" />
+                          <span>Luyện Nói Riêng (Speaking)</span>
+                        </span>
+                        {selectedSkillPackage === 'S' && (
+                          <CheckCircle2 className="h-4 w-4 text-rose-500" />
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Part 1, 2 & Part 3 Mind-map · 12 phút
                       </p>
                     </button>
 
@@ -595,7 +628,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                         )}
                       </div>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        Writing Part 1 (70-100 từ) & Part 2 (100-120 từ)
+                        Task 1 (≥120 từ) & Task 2 (≥250 từ) · 60p
                       </p>
                     </button>
                   </div>
@@ -680,9 +713,22 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                         <div className="flex items-start justify-between gap-3 mb-3">
                           <div className="flex-1 min-w-0">
                             {isDraft && (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider mb-1.5 shadow-2xs">
-                                <span>BẢN NHÁP (CHƯA XUẤT BẢN)</span>
-                              </span>
+                              <div className="mb-2 rounded-xl bg-amber-100 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-700 p-2 flex flex-wrap items-center justify-between gap-2">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-amber-900 dark:text-amber-300">
+                                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                                  <span>ĐỀ NHÁP (Học viên chưa thấy)</span>
+                                </span>
+                                {canManageExams && onPublishDraftTest && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onPublishDraftTest(test.id)}
+                                    className="inline-flex items-center gap-1 rounded-lg bg-[#58CC02] hover:bg-[#46A302] px-2.5 py-1 text-[10px] font-black text-white shadow-2xs cursor-pointer"
+                                  >
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    <span>Xuất bản ngay</span>
+                                  </button>
+                                )}
+                              </div>
                             )}
                             <h3
                               className="font-black text-xl sm:text-2xl text-slate-900 dark:text-white tracking-tight leading-snug break-words"
@@ -748,7 +794,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                           >
                             <Award className="h-3.5 w-3.5 text-amber-600" />
                             <span>
-                              {bestScore !== undefined ? `Điểm số: ${bestScore}/52` : 'Điểm số'}
+                              {bestScore !== undefined ? `Điểm cao nhất: ${bestScore}/75` : 'Thang 10 VSTEP'}
                             </span>
                           </button>
                         </div>
@@ -759,7 +805,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                             <Music className="h-3 w-3 shrink-0" />
                             <span className="truncate">
                               {test.audioMode === 'per_part'
-                                ? 'Chế độ 4 file Audio riêng cho từng Part'
+                                ? 'Chế độ file Audio riêng cho từng Part'
                                 : test.audioFileName}
                             </span>
                           </div>
@@ -771,35 +817,39 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                             <FileText className="h-4 w-4 text-slate-400" />
                             <span>
                               <strong className="font-black text-slate-900 dark:text-white">
-                                {test.totalQuestions || 52}
+                                {test.totalQuestions || 75}
                               </strong>{' '}
-                              câu
+                              câu + 2W + 3S
                             </span>
                           </div>
                           <div className="flex items-center gap-1.5">
                             <Clock className="h-4 w-4 text-slate-400" />
                             <span>
                               <strong className="font-black text-slate-900 dark:text-white">
-                                {test.durationMinutes || 90}
+                                {test.durationMinutes || 172}
                               </strong>{' '}
                               phút
                             </span>
                           </div>
                         </div>
 
-                        {/* Row 4: Skill Breakdown Pills */}
-                        <div className="flex flex-wrap items-center gap-2 mb-5">
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold">
-                            <Headphones className="h-3.5 w-3.5 text-slate-500" />
-                            <span>26 Listening</span>
+                        {/* Row 4: Skill Breakdown Pills (4 Skills L-R-W-S) */}
+                        <div className="flex flex-wrap items-center gap-1.5 mb-5">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 text-[11px] font-bold border border-sky-200/60 dark:border-sky-800/50">
+                            <Headphones className="h-3 w-3 text-sky-600" />
+                            <span>35 Listening</span>
                           </span>
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold">
-                            <BookOpen className="h-3.5 w-3.5 text-slate-500" />
-                            <span>26 Reading</span>
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[11px] font-bold border border-amber-200/60 dark:border-amber-800/50">
+                            <BookOpen className="h-3 w-3 text-amber-600" />
+                            <span>40 Reading</span>
                           </span>
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold">
-                            <PenTool className="h-3.5 w-3.5 text-slate-500" />
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold border border-emerald-200/60 dark:border-emerald-800/50">
+                            <PenTool className="h-3 w-3 text-emerald-600" />
                             <span>2 Writing</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 text-[11px] font-bold border border-rose-200/60 dark:border-rose-800/50">
+                            <Mic className="h-3 w-3 text-rose-600" />
+                            <span>3 Speaking</span>
                           </span>
                         </div>
                       </div>
@@ -810,12 +860,12 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                           {inProgress ? (
                             <div className="flex items-center gap-2 text-xs font-extrabold text-amber-600 dark:text-amber-400">
                               <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                              <span>Đang làm bài ({answeredInProgressCount}/52 câu)</span>
+                              <span>Đang làm bài ({answeredInProgressCount}/{test.totalQuestions || 75} câu)</span>
                             </div>
                           ) : bestScore !== undefined ? (
                             <div className="flex items-center gap-2 text-xs font-extrabold text-emerald-600 dark:text-emerald-400">
                               <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                              <span>Đã hoàn thành ({bestScore}/52 câu đúng)</span>
+                              <span>Đã hoàn thành ({bestScore}/{test.totalQuestions || 75} câu đúng)</span>
                             </div>
                           ) : (
                             <div className="flex items-center gap-2 text-xs font-extrabold text-slate-500 dark:text-slate-400">
@@ -933,6 +983,11 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
 
           {/* TAB 6: Bảng xếp hạng */}
           {activeTab === 'leaderboard' && <LeaderboardView />}
+
+          {/* TAB 7: Quản lý học viên (Gated to Admin & Teachers) */}
+          {activeTab === 'students' && (
+            <StudentManagementView onOpenTest={(testId) => onStartTest(testId)} />
+          )}
         </main>
       </div>
 

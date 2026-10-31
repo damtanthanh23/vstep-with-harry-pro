@@ -1,23 +1,27 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight, Headphones, BookOpen, PenTool, CheckCircle2, X, Check, Save } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Headphones, BookOpen, PenTool, Mic, CheckCircle2, X, Check, Save } from 'lucide-react';
 import { Question } from '../types/exam';
 import { WritingSubmission } from '../types/writing';
+import { SpeakingSubmission } from '../types/speaking';
 
 interface SummaryBoardDrawerProps {
   isOpen: boolean;
   onToggle: () => void;
   testTitle: string;
   activeQuestionId: number;
-  activeSection?: 'LISTENING' | 'READING' | 'WRITING';
+  activeSection?: 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING';
   activeWritingTaskIndex?: number;
+  activeSpeakingPartIndex?: number;
   answers: Record<number, string>;
   flagged: Record<number, boolean>;
   writingSubmission?: WritingSubmission;
-  selectedParts?: string[]; // e.g. ['L1','L2','L3','L4','R1','R2','R3','R4','W1','W2']
+  speakingSubmission?: SpeakingSubmission;
+  selectedParts?: string[]; // e.g. ['L1','L2','L3','R1','R2','R3','R4','W1','W2','S1','S2','S3']
   isPracticeMode?: boolean;
   questions?: Question[];
   onSelectQuestion: (questionId: number) => void;
   onSelectWritingTask?: (taskIndex: 0 | 1) => void;
+  onSelectSpeakingPart?: (partIndex: 0 | 1 | 2) => void;
   onSubmitClick?: () => void;
   onSaveAndExitPractice?: () => void;
 }
@@ -92,14 +96,17 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
   activeQuestionId,
   activeSection = 'LISTENING',
   activeWritingTaskIndex = 0,
+  activeSpeakingPartIndex = 0,
   answers,
   flagged,
   writingSubmission,
+  speakingSubmission,
   selectedParts,
   isPracticeMode = false,
   questions = [],
   onSelectQuestion,
   onSelectWritingTask,
+  onSelectSpeakingPart,
   onSubmitClick,
   onSaveAndExitPractice,
 }) => {
@@ -112,6 +119,9 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
   const activeReadingClusters = READING_CLUSTERS.filter((c) => isPartEnabled(c.code));
   const showWritingPart1 = isPartEnabled('W1');
   const showWritingPart2 = isPartEnabled('W2');
+  const showSpeakingPart1 = isPartEnabled('S1');
+  const showSpeakingPart2 = isPartEnabled('S2');
+  const showSpeakingPart3 = isPartEnabled('S3');
 
   const isAnswered = (qId: number) => {
     const val = answers[qId];
@@ -125,7 +135,10 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
     section: 'LISTENING' | 'READING'
   ) => {
     const answered = isAnswered(qId);
-    const isCurrent = activeSection !== 'WRITING' && activeQuestionId === qId;
+    const isCurrent =
+      activeSection !== 'WRITING' &&
+      activeSection !== 'SPEAKING' &&
+      activeQuestionId === qId;
     const isFlagged = !!flagged[qId];
 
     const targetQ = questions.find((q) => q.id === qId);
@@ -253,6 +266,15 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
 
   const task1Done = (writingSubmission?.task1WordCount || 0) > 0;
   const task2Done = (writingSubmission?.task2WordCount || 0) > 0;
+  const speaking1Done =
+    (speakingSubmission?.part1WordCount || 0) > 0 ||
+    Boolean(speakingSubmission?.part1AudioUrl || speakingSubmission?.part1AudioDataUrl);
+  const speaking2Done =
+    (speakingSubmission?.part2WordCount || 0) > 0 ||
+    Boolean(speakingSubmission?.part2AudioUrl || speakingSubmission?.part2AudioDataUrl);
+  const speaking3Done =
+    (speakingSubmission?.part3WordCount || 0) > 0 ||
+    Boolean(speakingSubmission?.part3AudioUrl || speakingSubmission?.part3AudioDataUrl);
 
   return (
     <>
@@ -476,10 +498,118 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
             </div>
           )}
 
+          {/* 4. MAJOR SECTION: SPEAKING */}
+          {(showSpeakingPart1 || showSpeakingPart2 || showSpeakingPart3) && (
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h4 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                  <Mic className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                  <span>Speaking</span>
+                </h4>
+                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                  {(speaking1Done ? 1 : 0) + (speaking2Done ? 1 : 0) + (speaking3Done ? 1 : 0)}/
+                  {(showSpeakingPart1 ? 1 : 0) + (showSpeakingPart2 ? 1 : 0) + (showSpeakingPart3 ? 1 : 0)} phần
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {showSpeakingPart1 && (
+                  <button
+                    type="button"
+                    onClick={() => onSelectSpeakingPart && onSelectSpeakingPart(0)}
+                    className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-xs font-black transition-all cursor-pointer border-2 ${
+                      activeSection === 'SPEAKING' && activeSpeakingPartIndex === 0
+                        ? 'bg-[#0D9488] text-white border-[#0F766E] ring-4 ring-amber-400 ring-offset-1 dark:ring-offset-slate-900 shadow-md scale-[1.01]'
+                        : speaking1Done
+                        ? 'bg-[#0D9488] text-white border-[#0F766E]'
+                        : 'bg-teal-50/60 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-teal-300 dark:border-slate-700 hover:border-[#0D9488] dark:hover:border-teal-500'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/20 dark:bg-black/25 text-[11px] font-mono">
+                        1
+                      </span>
+                      <span>Speaking Part 1 (Social Interaction)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-mono opacity-85">
+                        {speakingSubmission?.part1AudioDataUrl
+                          ? 'Ghi âm + '
+                          : ''}
+                        {speakingSubmission?.part1WordCount || 0} từ
+                      </span>
+                      {speaking1Done && <CheckCircle2 className="h-4 w-4 text-teal-200" />}
+                    </div>
+                  </button>
+                )}
+
+                {showSpeakingPart2 && (
+                  <button
+                    type="button"
+                    onClick={() => onSelectSpeakingPart && onSelectSpeakingPart(1)}
+                    className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-xs font-black transition-all cursor-pointer border-2 ${
+                      activeSection === 'SPEAKING' && activeSpeakingPartIndex === 1
+                        ? 'bg-[#0D9488] text-white border-[#0F766E] ring-4 ring-amber-400 ring-offset-1 dark:ring-offset-slate-900 shadow-md scale-[1.01]'
+                        : speaking2Done
+                        ? 'bg-[#0D9488] text-white border-[#0F766E]'
+                        : 'bg-teal-50/60 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-teal-300 dark:border-slate-700 hover:border-[#0D9488] dark:hover:border-teal-500'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/20 dark:bg-black/25 text-[11px] font-mono">
+                        2
+                      </span>
+                      <span>Speaking Part 2 (Solution Discussion)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-mono opacity-85">
+                        {speakingSubmission?.part2AudioDataUrl
+                          ? 'Ghi âm + '
+                          : ''}
+                        {speakingSubmission?.part2WordCount || 0} từ
+                      </span>
+                      {speaking2Done && <CheckCircle2 className="h-4 w-4 text-teal-200" />}
+                    </div>
+                  </button>
+                )}
+
+                {showSpeakingPart3 && (
+                  <button
+                    type="button"
+                    onClick={() => onSelectSpeakingPart && onSelectSpeakingPart(2)}
+                    className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-xs font-black transition-all cursor-pointer border-2 ${
+                      activeSection === 'SPEAKING' && activeSpeakingPartIndex === 2
+                        ? 'bg-[#0D9488] text-white border-[#0F766E] ring-4 ring-amber-400 ring-offset-1 dark:ring-offset-slate-900 shadow-md scale-[1.01]'
+                        : speaking3Done
+                        ? 'bg-[#0D9488] text-white border-[#0F766E]'
+                        : 'bg-teal-50/60 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-teal-300 dark:border-slate-700 hover:border-[#0D9488] dark:hover:border-teal-500'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/20 dark:bg-black/25 text-[11px] font-mono">
+                        3
+                      </span>
+                      <span>Speaking Part 3 (Topic Development)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-mono opacity-85">
+                        {speakingSubmission?.part3AudioDataUrl
+                          ? 'Ghi âm + '
+                          : ''}
+                        {speakingSubmission?.part3WordCount || 0} từ
+                      </span>
+                      {speaking3Done && <CheckCircle2 className="h-4 w-4 text-teal-200" />}
+                    </div>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Legend */}
           <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/70 p-3.5 border border-slate-200 dark:border-slate-700/80 text-xs text-slate-600 dark:text-slate-300 space-y-2">
             <div className="font-black text-slate-800 dark:text-slate-100 uppercase text-[10px] tracking-wider mb-1">
-              Chú giải màu sắc theo kỹ năng
+              Chú giải màu sắc theo 4 kỹ năng VSTEP
             </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -508,6 +638,15 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
               </div>
               <span className="font-bold text-slate-800 dark:text-slate-100">
                 {(task1Done ? 1 : 0) + (task2Done ? 1 : 0)}/2
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="h-4 w-4 rounded-md bg-[#0D9488]" />
+                <span>Speaking Part 1–3 (3 phần nói)</span>
+              </div>
+              <span className="font-bold text-slate-800 dark:text-slate-100">
+                {(speaking1Done ? 1 : 0) + (speaking2Done ? 1 : 0) + (speaking3Done ? 1 : 0)}/3
               </span>
             </div>
             <div className="flex items-center justify-between">

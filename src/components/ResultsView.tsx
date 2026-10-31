@@ -30,6 +30,8 @@ import {
   Check,
   QrCode,
   RefreshCw,
+  Mic,
+  Volume2,
 } from 'lucide-react';
 import { Question, StimulusCard, getPartRelativeNumber } from '../types/exam';
 import {
@@ -37,11 +39,20 @@ import {
   ComprehensiveExamResult,
   evaluateWritingStrictRubric,
   DetailedWritingEvaluation,
+  evaluateSpeakingStrictRubric,
+  DetailedSpeakingEvaluation,
 } from '../utils/scoringEngine';
 import { WritingSubmission, WritingTask, SAMPLE_B1_WRITING_TASKS } from '../types/writing';
+import {
+  SpeakingSubmission,
+  SpeakingTask,
+  EMPTY_SPEAKING_SUBMISSION,
+  SAMPLE_VSTEP_SPEAKING_TASKS,
+} from '../types/speaking';
 import { generateSmartDiagnosticReport } from '../utils/aiDiagnosticFallback';
 import { QuestionStage } from './QuestionStage';
 import { WritingSectionStage } from './WritingSectionStage';
+import { SpeakingSectionStage } from './SpeakingSectionStage';
 import { ImageZoomModal } from './ImageZoomModal';
 import { StructuredExplanationBox } from './StructuredExplanationBox';
 import { useAuth } from '../context/AuthContext';
@@ -55,6 +66,20 @@ interface ResultsViewProps {
   writingTasks?: WritingTask[];
   writingScores?: { task1Score: number; task2Score: number };
   onWritingGraded?: (scores: { task1Score: number; task2Score: number }) => void;
+  speakingSubmission?: SpeakingSubmission;
+  speakingTasks?: SpeakingTask[];
+  speakingScores?: {
+    part1Score: number;
+    part2Score: number;
+    part3Score: number;
+    overallBand10: number;
+  };
+  onSpeakingGraded?: (scores: {
+    part1Score: number;
+    part2Score: number;
+    part3Score: number;
+    overallBand10: number;
+  }) => void;
   onRetake: () => void;
   onBackToTests: () => void;
   onOpenFeedback?: () => void;
@@ -84,7 +109,7 @@ interface AIDiagnosticData {
 const REVIEW_PARTS: Array<{
   id: string;
   label: string;
-  section: 'LISTENING' | 'READING' | 'WRITING';
+  section: 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING';
   partNumber: 1 | 2 | 3 | 4;
 }> = [
   { id: 'L1', label: 'Listening Part 1 (Q1–8)', section: 'LISTENING', partNumber: 1 },
@@ -96,6 +121,9 @@ const REVIEW_PARTS: Array<{
   { id: 'R4', label: 'Reading Passage 4 (Q31–40)', section: 'READING', partNumber: 4 },
   { id: 'W1', label: 'Writing Task 1 (Thư/Email)', section: 'WRITING', partNumber: 1 },
   { id: 'W2', label: 'Writing Task 2 (Bài luận Essay)', section: 'WRITING', partNumber: 2 },
+  { id: 'S1', label: 'Speaking Part 1 (Social Interaction)', section: 'SPEAKING', partNumber: 1 },
+  { id: 'S2', label: 'Speaking Part 2 (Solution Discussion)', section: 'SPEAKING', partNumber: 2 },
+  { id: 'S3', label: 'Speaking Part 3 (Topic Development Mind-map)', section: 'SPEAKING', partNumber: 3 },
 ];
 
 export const ResultsView: React.FC<ResultsViewProps> = ({
@@ -107,6 +135,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   writingTasks = SAMPLE_B1_WRITING_TASKS,
   writingScores,
   onWritingGraded,
+  speakingSubmission,
+  speakingTasks = SAMPLE_VSTEP_SPEAKING_TASKS,
+  speakingScores,
   onRetake,
   onBackToTests,
   onOpenFeedback,
@@ -139,11 +170,21 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   );
   const [isGradingWritingAi, setIsGradingWritingAi] = useState(false);
 
-  // Keep deterministic rubric in sync if writingSubmission changes
+  // Strict Speaking Evaluation State (VSTEP 5-criteria rubric on 10-point scale)
+  const [speakingEvaluation, setSpeakingEvaluation] = useState<DetailedSpeakingEvaluation>(() =>
+    evaluateSpeakingStrictRubric(speakingSubmission, speakingTasks)
+  );
+
+  // Keep deterministic rubric in sync if writingSubmission or speakingSubmission changes
   useEffect(() => {
     const baseEval = evaluateWritingStrictRubric(writingSubmission, writingTasks);
     setWritingEvaluation(baseEval);
   }, [writingSubmission, writingTasks]);
+
+  useEffect(() => {
+    const baseSpeakEval = evaluateSpeakingStrictRubric(speakingSubmission, speakingTasks);
+    setSpeakingEvaluation(baseSpeakEval);
+  }, [speakingSubmission, speakingTasks]);
 
   const handleTriggerAiWritingGrader = async () => {
     if (!writingSubmission) return;
@@ -196,7 +237,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Effective writing scores passed into official LanguageCert scaling engine
+  // Effective writing & speaking scores passed into official VSTEP scaling engine
   const effectiveWritingScores = useMemo(() => {
     if (writingSubmission) {
       return {
@@ -206,6 +247,25 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
     }
     return writingScores;
   }, [writingSubmission, writingEvaluation.task1Score, writingEvaluation.task2Score, writingScores]);
+
+  const effectiveSpeakingScores = useMemo(() => {
+    if (speakingSubmission) {
+      return {
+        part1Score: speakingEvaluation.part1Score,
+        part2Score: speakingEvaluation.part2Score,
+        part3Score: speakingEvaluation.part3Score,
+        overallBand10: speakingEvaluation.overallBand10,
+      };
+    }
+    return speakingScores;
+  }, [
+    speakingSubmission,
+    speakingEvaluation.part1Score,
+    speakingEvaluation.part2Score,
+    speakingEvaluation.part3Score,
+    speakingEvaluation.overallBand10,
+    speakingScores,
+  ]);
 
   // AI Diagnostic State
   const [aiData, setAiData] = useState<AIDiagnosticData | null>(null);
@@ -217,12 +277,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
   const printAreaRef = useRef<HTMLDivElement | null>(null);
 
-  // Compute official LanguageCert scaled results and CEFR
+  // Compute official VSTEP 4-skill scaled results and CEFR
   const results: ComprehensiveExamResult = calculateExamResults(
     questions,
     answers,
     timeSpentSeconds,
-    effectiveWritingScores
+    effectiveWritingScores,
+    effectiveSpeakingScores
   );
 
   const isQuestionCorrect = (q: Question) => {
@@ -242,7 +303,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
   const availableReviewParts = useMemo(() => {
     return REVIEW_PARTS.filter((part) => {
-      if (part.section === 'WRITING') return true;
+      if (part.section === 'WRITING' || part.section === 'SPEAKING') return true;
       return questions.some(
         (q) => q.section === part.section && q.partNumber === part.partNumber
       );
@@ -258,7 +319,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   }, [availableReviewParts, selectedReviewPartId]);
 
   const currentReviewPartQuestions = useMemo(() => {
-    if (currentReviewPart.section === 'WRITING') return [];
+    if (currentReviewPart.section === 'WRITING' || currentReviewPart.section === 'SPEAKING') return [];
     return questions.filter(
       (q) =>
         q.section === currentReviewPart.section &&
@@ -304,7 +365,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
     year: 'numeric',
   });
 
-  // Calculate 10-part breakdown metrics for Part-by-Part Matrix
+  // Calculate 12-part breakdown metrics for Part-by-Part Matrix
   const partMatrixRows = useMemo(() => {
     return REVIEW_PARTS.map((part) => {
       if (part.section === 'WRITING') {
@@ -323,6 +384,27 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
           total: maxMarks,
           correct: taskScore,
           wrong: maxMarks - taskScore,
+          blank: 0,
+          percentage: pct,
+          statusLabel: pct >= 75 ? 'Xuất sắc (High Pass)' : pct >= 50 ? 'Đạt chuẩn (Pass)' : 'Cần ôn thêm',
+        };
+      }
+
+      if (part.section === 'SPEAKING') {
+        const partScore10 =
+          part.partNumber === 1
+            ? effectiveSpeakingScores?.part1Score ?? 0
+            : part.partNumber === 2
+            ? effectiveSpeakingScores?.part2Score ?? 0
+            : effectiveSpeakingScores?.part3Score ?? 0;
+        const pct = Math.round((partScore10 / 10) * 100);
+        return {
+          id: part.id,
+          name: part.label,
+          section: 'SPEAKING',
+          total: 10,
+          correct: Number(partScore10.toFixed(1)),
+          wrong: Number(Math.max(0, 10 - partScore10).toFixed(1)),
           blank: 0,
           percentage: pct,
           statusLabel: pct >= 75 ? 'Xuất sắc (High Pass)' : pct >= 50 ? 'Đạt chuẩn (Pass)' : 'Cần ôn thêm',
@@ -356,13 +438,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
         statusLabel: pct >= 75 ? 'Xuất sắc (High Pass)' : pct >= 50 ? 'Đạt chuẩn (Pass)' : 'Cần ôn thêm',
       };
     });
-  }, [questions, answers, effectiveWritingScores, writingTasks]);
+  }, [questions, answers, effectiveWritingScores, effectiveSpeakingScores, writingTasks]);
 
   // Scaled 0-100 values for official VSTEP 10-point scale
   const listeningScale100 = Math.round(results.listening.percentage);
   const readingScale100 = Math.round(results.reading.percentage);
   const writingScale100 = results.writing
     ? Math.round(results.writing.percentage)
+    : 0;
+  const speakingScale100 = results.speaking
+    ? Math.round(results.speaking.percentage)
     : 0;
 
   const handlePrint = () => {
@@ -617,23 +702,29 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                       </p>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-xl mx-auto text-left">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl mx-auto text-left">
                       <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-3.5">
                         <span className="text-[10px] font-bold uppercase text-slate-400 block">Listening (Nghe)</span>
                         <span className="font-mono text-base font-black text-sky-600 dark:text-sky-400">
-                          {results.listeningScore10.toFixed(2)} / 10 ({results.listening.rawScore}/35 câu)
+                          {results.listeningScore10.toFixed(2)} / 10 ({results.listening.rawScore}/35)
                         </span>
                       </div>
                       <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-3.5">
                         <span className="text-[10px] font-bold uppercase text-slate-400 block">Reading (Đọc)</span>
                         <span className="font-mono text-base font-black text-amber-600 dark:text-amber-400">
-                          {results.readingScore10.toFixed(2)} / 10 ({results.reading.rawScore}/40 câu)
+                          {results.readingScore10.toFixed(2)} / 10 ({results.reading.rawScore}/40)
                         </span>
                       </div>
                       <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-3.5">
                         <span className="text-[10px] font-bold uppercase text-slate-400 block">Writing (Viết)</span>
                         <span className="font-mono text-base font-black text-emerald-600 dark:text-emerald-400">
-                          {results.writing ? `${results.writingScore10.toFixed(2)} / 10` : 'Chưa nộp'}
+                          {results.writing ? `${(results.writingScore10 ?? 0).toFixed(2)} / 10` : 'Chưa nộp'}
+                        </span>
+                      </div>
+                      <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-3.5">
+                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Speaking (Nói)</span>
+                        <span className="font-mono text-base font-black text-rose-600 dark:text-rose-400">
+                          {results.speaking ? `${(results.speakingScore10 ?? 0).toFixed(2)} / 10` : 'Chưa nộp'}
                         </span>
                       </div>
                     </div>
@@ -766,10 +857,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                             Reading: <strong>{results.readingScore10.toFixed(2)}</strong>
                           </div>
                           <div>
-                            Writing: <strong>{results.writing ? results.writingScore10.toFixed(2) : '—'}</strong>
+                            Writing: <strong>{results.writing ? (results.writingScore10 ?? 0).toFixed(2) : '—'}</strong>
                           </div>
                           <div>
-                            Level: <strong>{results.cefr.level}</strong>
+                            Speaking: <strong>{results.speaking ? (results.speakingScore10 ?? 0).toFixed(2) : '—'}</strong>
                           </div>
                         </div>
                       </div>
@@ -807,10 +898,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                             Đọc: <strong>{results.readingScore10.toFixed(2)}</strong>
                           </div>
                           <div>
-                            Viết: <strong>{results.writing ? results.writingScore10.toFixed(2) : '—'}</strong>
+                            Viết: <strong>{results.writing ? (results.writingScore10 ?? 0).toFixed(2) : '—'}</strong>
                           </div>
                           <div>
-                            Xếp bậc: <strong>{results.cefr.name}</strong>
+                            Nói: <strong>{results.speaking ? (results.speakingScore10 ?? 0).toFixed(2) : '—'}</strong>
                           </div>
                         </div>
                       </div>
@@ -990,17 +1081,39 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                                 <PenTool className="h-4 w-4 text-emerald-600" /> Writing (Viết - Task 1 & 2)
                               </td>
                               <td className="p-3 font-mono font-black text-center text-sm border-r border-slate-200 text-emerald-700">
-                                {results.writingScore10.toFixed(2)} / 10
+                                {(results.writingScore10 ?? 0).toFixed(2)} / 10
                               </td>
                               <td className="p-3 font-mono text-center border-r border-slate-200">
                                 {results.writing.rawScore} / 24 (T1 + T2×2)
                               </td>
                               <td className="p-3 text-center font-bold text-emerald-700">
-                                {results.writingScore10 >= 8.5
+                                {(results.writingScore10 ?? 0) >= 8.5
                                   ? 'Bậc 5 (C1)'
-                                  : results.writingScore10 >= 6.0
+                                  : (results.writingScore10 ?? 0) >= 6.0
                                   ? 'Bậc 4 (B2)'
-                                  : results.writingScore10 >= 4.0
+                                  : (results.writingScore10 ?? 0) >= 4.0
+                                  ? 'Bậc 3 (B1)'
+                                  : 'Dưới B1 (< 4.0)'}
+                              </td>
+                            </tr>
+                          )}
+                          {results.speaking && (
+                            <tr className="bg-slate-50/60">
+                              <td className="p-3 font-bold border-r border-slate-200 flex items-center gap-2">
+                                <Mic className="h-4 w-4 text-rose-600" /> Speaking (Nói - Part 1, 2, 3)
+                              </td>
+                              <td className="p-3 font-mono font-black text-center text-sm border-r border-slate-200 text-rose-700">
+                                {(results.speakingScore10 ?? 0).toFixed(2)} / 10
+                              </td>
+                              <td className="p-3 font-mono text-center border-r border-slate-200">
+                                P1: {effectiveSpeakingScores?.part1Score.toFixed(1)} · P2: {effectiveSpeakingScores?.part2Score.toFixed(1)} · P3: {effectiveSpeakingScores?.part3Score.toFixed(1)}
+                              </td>
+                              <td className="p-3 text-center font-bold text-emerald-700">
+                                {(results.speakingScore10 ?? 0) >= 8.5
+                                  ? 'Bậc 5 (C1)'
+                                  : (results.speakingScore10 ?? 0) >= 6.0
+                                  ? 'Bậc 4 (B2)'
+                                  : (results.speakingScore10 ?? 0) >= 4.0
                                   ? 'Bậc 3 (B1)'
                                   : 'Dưới B1 (< 4.0)'}
                               </td>
@@ -1008,7 +1121,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                           )}
                           <tr className="bg-lime-50/80 font-black border-t-2 border-lime-300">
                             <td className="p-3.5 text-slate-900 uppercase border-r border-lime-200 text-sm">
-                              Điểm trung bình VSTEP (Làm tròn 0.5)
+                              Điểm trung bình 4 Kỹ năng VSTEP (Làm tròn 0.5)
                             </td>
                             <td className="p-3.5 font-mono text-center text-lg text-[#2B6601] border-r border-lime-200">
                               {results.overallScore10.toFixed(1)} / 10.0
@@ -1194,12 +1307,28 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                       <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
                         <PenTool className="h-3.5 w-3.5" /> Writing ({results.writing ? 'Task 1 ×1 + Task 2 ×2' : 'Chưa làm'})
                       </span>
-                      <span className="font-mono">{results.writing ? `${results.writingScore10.toFixed(2)} / 10` : '0.0 / 10'}</span>
+                      <span className="font-mono">{results.writing ? `${(results.writingScore10 ?? 0).toFixed(2)} / 10` : '0.0 / 10'}</span>
                     </div>
                     <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
                       <div
                         className="h-full bg-emerald-500 rounded-full transition-all duration-700"
                         style={{ width: `${writingScale100}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Speaking */}
+                  <div>
+                    <div className="flex items-center justify-between text-xs font-bold mb-1">
+                      <span className="flex items-center gap-1.5 text-rose-700 dark:text-rose-300">
+                        <Mic className="h-3.5 w-3.5" /> Speaking ({results.speaking ? 'Part 1 + Part 2 + Part 3' : 'Chưa làm'})
+                      </span>
+                      <span className="font-mono">{results.speaking ? `${(results.speakingScore10 ?? 0).toFixed(2)} / 10` : '0.0 / 10'}</span>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                      <div
+                        className="h-full bg-rose-500 rounded-full transition-all duration-700"
+                        style={{ width: `${speakingScale100}%` }}
                       />
                     </div>
                   </div>
@@ -1374,17 +1503,186 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
               </div>
             )}
 
-            {/* 10-Part Performance Matrix Table */}
+            {/* =================================================================== */}
+            {/* VSTEP SPEAKING EXAMINER RUBRIC CARD (5 CRITERIA · THANG 10)          */}
+            {/* =================================================================== */}
+            {speakingSubmission && (
+              <div className="rounded-3xl bg-white dark:bg-slate-900 border-2 border-rose-200 dark:border-rose-900/70 shadow-sm overflow-hidden">
+                <div className="p-5 sm:p-6 border-b border-rose-100 dark:border-rose-900/60 bg-gradient-to-r from-rose-50/70 via-orange-50/40 to-white dark:from-slate-900 dark:to-rose-950/30 flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-600 text-white shadow-sm">
+                      <Mic className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
+                          Hội Đồng Chấm Speaking Theo Rubrics VSTEP Bộ GD&ĐT (5 Tiêu Chí · Thang 10)
+                        </h3>
+                        <span className="inline-flex items-center gap-1 rounded-lg px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
+                          <Sparkles className="h-3 w-3" />
+                          Chấm Tự Động Theo 5 Tiêu Chí VSTEP
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        5 Tiêu chí VSTEP Speaking: Grammar · Vocabulary · Pronunciation · Fluency · Discourse Management
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-white dark:bg-slate-800 border border-rose-200 dark:border-rose-800 px-3.5 py-1.5 text-right">
+                    <span className="block text-[10px] font-bold uppercase text-slate-400">Điểm Speaking VSTEP</span>
+                    <span className="font-mono text-sm font-black text-rose-700 dark:text-rose-300">
+                      {(results.speakingScore10 ?? speakingEvaluation.overallBand10).toFixed(1)} / 10.0
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-5 sm:p-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
+                  {[
+                    {
+                      partLabel: 'Speaking Part 1 · Social Interaction',
+                      task: speakingTasks[0],
+                      text: speakingSubmission.part1Text,
+                      wordCount: speakingSubmission.part1WordCount,
+                      audioUrl: speakingSubmission.part1AudioUrl,
+                      durationSec: speakingSubmission.part1DurationSeconds,
+                      breakdown: speakingEvaluation.part1Criteria,
+                    },
+                    {
+                      partLabel: 'Speaking Part 2 · Solution Discussion',
+                      task: speakingTasks[1],
+                      text: speakingSubmission.part2Text,
+                      wordCount: speakingSubmission.part2WordCount,
+                      audioUrl: speakingSubmission.part2AudioUrl,
+                      durationSec: speakingSubmission.part2DurationSeconds,
+                      breakdown: speakingEvaluation.part2Criteria,
+                    },
+                    {
+                      partLabel: 'Speaking Part 3 · Topic Development',
+                      task: speakingTasks[2],
+                      text: speakingSubmission.part3Text,
+                      wordCount: speakingSubmission.part3WordCount,
+                      audioUrl: speakingSubmission.part3AudioUrl,
+                      durationSec: speakingSubmission.part3DurationSeconds,
+                      breakdown: speakingEvaluation.part3Criteria,
+                    },
+                  ].map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 p-4 space-y-3.5 flex flex-col justify-between"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2.5">
+                          <div>
+                            <span className="text-[11px] font-black uppercase tracking-wider text-rose-700 dark:text-rose-400 block">
+                              {item.partLabel}
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              {item.wordCount} từ {item.durationSec ? `· Thu âm ${item.durationSec}s` : ''}
+                            </span>
+                          </div>
+                          <div className="rounded-xl bg-rose-100 dark:bg-rose-950 px-2.5 py-1 font-mono text-xs font-black text-rose-800 dark:text-rose-200 border border-rose-300 dark:border-rose-800">
+                            {item.breakdown.total10.toFixed(1)} / 10
+                          </div>
+                        </div>
+
+                        {/* 5 Criteria Rubric Bars */}
+                        <div className="space-y-1.5 text-xs">
+                          {[
+                            { label: 'Grammar', val: item.breakdown.grammar },
+                            { label: 'Vocabulary', val: item.breakdown.vocabulary },
+                            { label: 'Pronunciation', val: item.breakdown.pronunciation },
+                            { label: 'Fluency', val: item.breakdown.fluency },
+                            { label: 'Discourse Mgmt', val: item.breakdown.discourseManagement },
+                          ].map((crit, cIdx) => (
+                            <div
+                              key={cIdx}
+                              className="rounded-lg bg-white dark:bg-slate-900 px-2.5 py-1.5 border border-slate-200/80 dark:border-slate-700/80"
+                            >
+                              <div className="flex items-center justify-between font-bold text-[11px] mb-1">
+                                <span className="text-slate-600 dark:text-slate-300">{crit.label}</span>
+                                <span className="font-mono text-rose-700 dark:text-rose-400">{crit.val}/10</span>
+                              </div>
+                              <div className="h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                                <div
+                                  className="h-full bg-rose-500 rounded-full transition-all"
+                                  style={{ width: `${(crit.val / 10) * 100}%` }}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Audio playback if recorded */}
+                        {item.audioUrl && (
+                          <div className="rounded-xl bg-rose-50/70 dark:bg-rose-950/30 p-2.5 border border-rose-200 dark:border-rose-800">
+                            <span className="block text-[10px] font-black uppercase text-rose-700 dark:text-rose-300 mb-1">
+                              🎙️ Bản thu âm của thí sinh:
+                            </span>
+                            <audio src={item.audioUrl} controls className="h-8 w-full" />
+                          </div>
+                        )}
+
+                        {/* Candidate Submitted Transcript */}
+                        <div className="rounded-xl bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-700 text-xs">
+                          <span className="block text-[10px] font-black uppercase text-slate-400 mb-1">
+                            Nội dung bài nói (Transcript):
+                          </span>
+                          {item.text && item.text.trim().length > 0 ? (
+                            <p className="whitespace-pre-line text-slate-700 dark:text-slate-200 leading-relaxed max-h-32 overflow-y-auto">
+                              {item.text}
+                            </p>
+                          ) : (
+                            <p className="italic text-rose-500">Chưa có nội dung văn bản cho phần này.</p>
+                          )}
+                        </div>
+
+                        {/* Examiner Commentary */}
+                        <div className="rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/80 p-3 text-xs space-y-1.5">
+                          <span className="font-black text-rose-900 dark:text-rose-300 block">
+                            Nhận xét từ Giám khảo VSTEP:
+                          </span>
+                          <p className="text-slate-700 dark:text-slate-200 leading-relaxed">
+                            {item.breakdown.feedbackVi}
+                          </p>
+                          {item.breakdown.improvementsVi && item.breakdown.improvementsVi.length > 0 && (
+                            <ul className="list-disc pl-4 space-y-0.5 text-slate-600 dark:text-slate-300 pt-1">
+                              {item.breakdown.improvementsVi.map((imp: string, i: number) => (
+                                <li key={i}>{imp}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+
+                        {/* Sample Answer */}
+                        {item.task?.sampleAnswer && (
+                          <div className="rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 p-3 text-xs space-y-1">
+                            <span className="font-black text-amber-900 dark:text-amber-300 block">
+                              ✨ Bài nói mẫu B2–C1:
+                            </span>
+                            <p className="whitespace-pre-line text-slate-700 dark:text-slate-200 leading-relaxed max-h-40 overflow-y-auto">
+                              {item.task.sampleAnswer}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 12-Part Performance Matrix Table */}
             <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
               <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Layers className="h-4 w-4 text-[#EA580C]" />
                   <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 dark:text-slate-100">
-                    Bảng Ma Trận Hiệu Suất 10 Phần Thi (Part-by-Part Matrix)
+                    Bảng Ma Trận Hiệu Suất 12 Phần Thi 4 Kỹ Năng (Part-by-Part Matrix)
                   </h3>
                 </div>
                 <span className="text-xs text-slate-500">
-                  Thống kê câu đúng/sai & tỷ lệ hoàn thành
+                  Thống kê L · R · W · S & tỷ lệ hoàn thành
                 </span>
               </div>
 
@@ -1685,7 +1983,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                         type="button"
                         onClick={() => {
                           setSelectedReviewPartId(part.id);
-                          if (part.section !== 'WRITING') {
+                          if (part.section !== 'WRITING' && part.section !== 'SPEAKING') {
                             const firstInPart = questions.find(
                               (q) => q.section === part.section && q.partNumber === part.partNumber
                             );
@@ -1706,16 +2004,41 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                   })}
                 </div>
 
-                {/* Question Stage in Review Mode */}
+                {/* Question / Writing / Speaking Stage in Review Mode */}
                 {currentReviewPart.section === 'WRITING' ? (
                   <WritingSectionStage
                     tasks={writingTasks}
+                    activeTaskIndex={(currentReviewPart.partNumber - 1) as 0 | 1}
+                    onTaskIndexChange={(idx) =>
+                      setSelectedReviewPartId(idx === 1 ? 'W2' : 'W1')
+                    }
                     submission={
                       writingSubmission || {
                         task1Text: '',
                         task2Text: '',
                         task1WordCount: 0,
                         task2WordCount: 0,
+                      }
+                    }
+                    isReviewMode={true}
+                    onChange={() => {}}
+                    onProceedToReview={() => {}}
+                  />
+                ) : currentReviewPart.section === 'SPEAKING' ? (
+                  <SpeakingSectionStage
+                    tasks={speakingTasks}
+                    activePartIndex={(currentReviewPart.partNumber - 1) as 0 | 1 | 2}
+                    onPartIndexChange={(idx) =>
+                      setSelectedReviewPartId(idx === 0 ? 'S1' : idx === 1 ? 'S2' : 'S3')
+                    }
+                    submission={
+                      speakingSubmission || {
+                        part1Text: '',
+                        part2Text: '',
+                        part3Text: '',
+                        part1WordCount: 0,
+                        part2WordCount: 0,
+                        part3WordCount: 0,
                       }
                     }
                     isReviewMode={true}

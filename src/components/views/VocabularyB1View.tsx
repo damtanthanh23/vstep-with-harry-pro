@@ -392,23 +392,20 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
     localStorage.setItem(LOCAL_COINS_KEY, String(coinCount));
   }, [coinCount]);
 
-  // Load user's saved vocabulary decks, folders & SRS progress from Firestore when logged in
-  const hasLoadedRemoteVocabRef = React.useRef<string | null>(null);
+  // Subscribe to user's saved vocabulary decks, folders & SRS progress from Firestore in real time
   useEffect(() => {
-    if (!currentUser?.uid) {
-      hasLoadedRemoteVocabRef.current = null;
-      return;
-    }
-    if (hasLoadedRemoteVocabRef.current === currentUser.uid) return;
+    if (!currentUser?.uid) return;
 
+    let unsub: (() => void) | undefined;
     let cancelled = false;
-    import('firebase/firestore').then(({ getDoc }) => {
+
+    import('firebase/firestore').then(({ onSnapshot }) => {
+      if (cancelled) return;
       const userRef = doc(db, 'users', currentUser.uid);
-      getDoc(userRef)
-        .then((snap) => {
-          if (cancelled) return;
-          hasLoadedRemoteVocabRef.current = currentUser.uid;
-          if (!snap.exists()) return;
+      unsub = onSnapshot(
+        userRef,
+        (snap) => {
+          if (cancelled || !snap.exists()) return;
           const data = snap.data() as {
             vocabDecksBackup?: UserVocabDeck[];
             vocabFoldersBackup?: UserVocabFolder[];
@@ -447,14 +444,14 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
               ...prev,
             }));
           }
-        })
-        .catch(() => {
-          hasLoadedRemoteVocabRef.current = currentUser.uid;
-        });
+        },
+        () => {}
+      );
     });
 
     return () => {
       cancelled = true;
+      if (unsub) unsub();
     };
   }, [currentUser?.uid]);
 

@@ -1,5 +1,11 @@
 import { Question, ExamSection } from '../types/exam';
 import { WritingSubmission, WritingTask, SAMPLE_B1_WRITING_TASKS } from '../types/writing';
+import {
+  SpeakingSubmission,
+  SpeakingTask,
+  SAMPLE_VSTEP_SPEAKING_TASKS,
+  EMPTY_SPEAKING_SUBMISSION,
+} from '../types/speaking';
 
 export interface CEFRLevelInfo {
   level: 'Below A1' | 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
@@ -39,6 +45,34 @@ export interface DetailedWritingEvaluation {
   isAiGraded?: boolean;
 }
 
+export interface SpeakingCriterionScore {
+  grammar: number; // 0-2
+  vocabulary: number; // 0-2
+  pronunciation: number; // 0-2
+  fluency: number; // 0-2
+  discourseManagement: number; // 0-2
+  total10: number; // 0-10 VSTEP scale
+  feedbackVi: string;
+  strengthsVi?: string[];
+  improvementsVi?: string[];
+}
+
+export interface DetailedSpeakingEvaluation {
+  part1Score10: number; // 0-10
+  part2Score10: number; // 0-10
+  part3Score10: number; // 0-10
+  vstepSpeakingScore10: number; // 0-10 rounded to 0.5
+  part1Score: number; // alias for part1Score10
+  part2Score: number; // alias for part2Score10
+  part3Score: number; // alias for part3Score10
+  overallBand10: number; // alias for vstepSpeakingScore10
+  part1Criteria: SpeakingCriterionScore;
+  part2Criteria: SpeakingCriterionScore;
+  part3Criteria: SpeakingCriterionScore;
+  overallBandComment: string;
+  isAiGraded?: boolean;
+}
+
 export interface SkillScoreReport {
   rawScore: number;
   maxRawScore: number;
@@ -49,7 +83,7 @@ export interface SkillScoreReport {
 
 export interface PartPerformance {
   partNumber: number;
-  section: ExamSection | 'WRITING';
+  section: ExamSection | 'WRITING' | 'SPEAKING';
   name: string;
   correct: number;
   total: number;
@@ -62,14 +96,17 @@ export interface ComprehensiveExamResult {
   listeningScore10: number; // Listening score on 10-point scale (e.g. (correct/35)*10)
   readingScore10: number; // Reading score on 10-point scale (e.g. (correct/40)*10)
   writingScore10: number; // Writing score on 10-point scale (e.g. (Task1 + Task2*2)/3)
+  speakingScore10: number; // Speaking score on 10-point scale (0-10)
   maxScaledScore: number; // 10
   normalizedScore100: number; // Equivalent 0-100 scale
   percentage: number;
+  overallPercentage: number;
   grade: 'High Pass' | 'Pass' | 'Fail';
   cefr: CEFRLevelInfo;
   listening: SkillScoreReport;
   reading: SkillScoreReport;
   writing?: SkillScoreReport;
+  speaking?: SkillScoreReport;
   parts: PartPerformance[];
   timeSpentSeconds: number;
 }
@@ -369,17 +406,251 @@ export function evaluateWritingStrictRubric(
 }
 
 /**
- * Calculates official VSTEP B1-B2-C1 exam results on the 10-point scale:
+ * Evaluates a single VSTEP Speaking Part (0-10 scale) across 5 official VSTEP Speaking criteria:
+ * 1. Grammar (Ngữ pháp: 0-2)
+ * 2. Vocabulary (Từ vựng: 0-2)
+ * 3. Pronunciation / Delivery (Phát âm & Ngữ điệu: 0-2)
+ * 4. Fluency (Độ trôi chảy: 0-2)
+ * 5. Discourse Management / Coherence (Tổ chức diễn ngôn & Liên kết ý: 0-2)
+ */
+function scoreSingleSpeakingPartStrict(
+  text: string,
+  hasAudio: boolean,
+  durationSec: number,
+  task: SpeakingTask
+): SpeakingCriterionScore {
+  const clean = (text || '').trim();
+  const words = clean
+    .split(/\s+/)
+    .map((w) => w.replace(/[^a-zA-Z']/g, '').toLowerCase())
+    .filter((w) => w.length > 0);
+  const wordCount = words.length;
+
+  const targetMinWords = task.partNumber === 1 ? 50 : task.partNumber === 2 ? 80 : 110;
+
+  if (wordCount === 0 && !hasAudio) {
+    return {
+      grammar: 0,
+      vocabulary: 0,
+      pronunciation: 0,
+      fluency: 0,
+      discourseManagement: 0,
+      total10: 0,
+      feedbackVi: `Thí sinh chưa ghi âm hoặc nhập câu trả lời cho Speaking Part ${task.partNumber} (0/10 điểm).`,
+      strengthsVi: [],
+      improvementsVi: [
+        `Hãy bấm nút Ghi âm (Micro) hoặc bật Nhận diện giọng nói (Speech-to-Text) để trả lời đầy đủ yêu cầu của Part ${task.partNumber}.`,
+      ],
+    };
+  }
+
+  // If candidate recorded audio without Speech-to-Text transcript, estimate baseline from recording duration
+  if (wordCount < 10 && hasAudio) {
+    const estScore = durationSec >= 60 ? 6.5 : durationSec >= 30 ? 5.5 : 4.5;
+    const perCrit = roundToHalf(estScore / 5);
+    return {
+      grammar: perCrit,
+      vocabulary: perCrit,
+      pronunciation: perCrit,
+      fluency: perCrit,
+      discourseManagement: perCrit,
+      total10: estScore,
+      feedbackVi: `Đã ghi nhận bản thu âm Micro (${durationSec || 35} giây) cho Speaking Part ${task.partNumber}. Để nhận phân tích chi tiết từng câu chữ và lỗi ngữ pháp, hãy bật chế độ Speech-to-Text khi nói hoặc nhập nội dung câu trả lời.`,
+      strengthsVi: ['Đã hoàn thành ghi âm giọng nói trực tiếp trên hệ thống.'],
+      improvementsVi: [
+        'Kết hợp bật Nhận diện giọng nói (Speech-to-Text) khi thu âm để hệ thống chấm chi tiết từ vựng và cấu trúc ngữ pháp.',
+      ],
+    };
+  }
+
+  const uniqueWords = new Set(words);
+  const academicWords = words.filter((w) => w.length >= 7);
+  const connectors = [
+    'because',
+    'however',
+    'therefore',
+    'although',
+    'furthermore',
+    'moreover',
+    'addition',
+    'firstly',
+    'secondly',
+    'finally',
+    'personally',
+    'opinion',
+    'believe',
+    'prefer',
+    'example',
+    'instance',
+    'conclusion',
+    'on the other hand',
+  ];
+  const usedConnectors = connectors.filter((c) => new RegExp(`\\b${c}\\b`, 'i').test(clean));
+  const complexMarkers = [
+    'which',
+    'who',
+    'where',
+    'when',
+    'if',
+    'would',
+    'could',
+    'should',
+    'not only',
+    'although',
+    'while',
+    'compared',
+  ];
+  const usedComplex = complexMarkers.filter((m) => new RegExp(`\\b${m}\\b`, 'i').test(clean));
+
+  const grammar =
+    usedComplex.length >= 3 && wordCount >= targetMinWords * 0.85
+      ? 1.75
+      : usedComplex.length >= 1 && wordCount >= targetMinWords * 0.5
+      ? 1.25
+      : 0.75;
+
+  const vocabulary =
+    uniqueWords.size >= 45 && academicWords.length >= 8
+      ? 1.75
+      : uniqueWords.size >= 25 && academicWords.length >= 4
+      ? 1.25
+      : 0.75;
+
+  const discourseManagement =
+    usedConnectors.length >= 3 && wordCount >= targetMinWords * 0.85
+      ? 1.75
+      : usedConnectors.length >= 1 && wordCount >= targetMinWords * 0.5
+      ? 1.25
+      : 0.75;
+
+  const fluency =
+    wordCount >= targetMinWords
+      ? 1.75
+      : wordCount >= targetMinWords * 0.65
+      ? 1.25
+      : 0.75;
+
+  const pronunciation = hasAudio ? 1.5 : 1.25;
+
+  const total10 = roundToHalf(
+    Math.min(10, grammar + vocabulary + pronunciation + fluency + discourseManagement)
+  );
+
+  const strengthsVi: string[] = [];
+  const improvementsVi: string[] = [];
+
+  if (wordCount >= targetMinWords) {
+    strengthsVi.push(`Độ dài phần trình bày tốt (${wordCount} từ, đạt chuẩn VSTEP Part ${task.partNumber}).`);
+  } else {
+    improvementsVi.push(
+      `Cần mở rộng thêm ý và ví dụ thực tế (hiện tại ${wordCount} từ, khuyến nghị tối thiểu ${targetMinWords} từ cho Part ${task.partNumber}).`
+    );
+  }
+
+  if (usedConnectors.length >= 2) {
+    strengthsVi.push(`Sử dụng tốt các từ nối chuyển ý (${usedConnectors.slice(0, 4).join(', ')}).`);
+  } else {
+    improvementsVi.push(
+      'Bổ sung các từ nối diễn ngôn (First of all, On the other hand, For instance, In conclusion) để bài nói mạch lạc hơn.'
+    );
+  }
+
+  if (usedComplex.length >= 2) {
+    strengthsVi.push('Có vận dụng mệnh đề quan hệ và cấu trúc câu phức chuẩn B2.');
+  } else {
+    improvementsVi.push(
+      'Tăng cường câu ghép và mệnh đề phụ (which, who, although, if...) để nâng điểm tiêu chí Ngữ pháp.'
+    );
+  }
+
+  return {
+    grammar: Number(grammar.toFixed(1)),
+    vocabulary: Number(vocabulary.toFixed(1)),
+    pronunciation: Number(pronunciation.toFixed(1)),
+    fluency: Number(fluency.toFixed(1)),
+    discourseManagement: Number(discourseManagement.toFixed(1)),
+    total10,
+    feedbackVi: `Đánh giá Speaking Part ${task.partNumber} (${wordCount} từ${hasAudio ? ' · Có thu âm Micro' : ''} · Đạt ${total10.toFixed(1)}/10): Ngữ pháp ${grammar.toFixed(1)}/2 · Từ vựng ${vocabulary.toFixed(1)}/2 · Phát âm ${pronunciation.toFixed(1)}/2 · Độ trôi chảy ${fluency.toFixed(1)}/2 · Tổ chức ý ${discourseManagement.toFixed(1)}/2.`,
+    strengthsVi,
+    improvementsVi,
+  };
+}
+
+export function evaluateSpeakingStrictRubric(
+  submission?: SpeakingSubmission,
+  tasks: SpeakingTask[] = SAMPLE_VSTEP_SPEAKING_TASKS
+): DetailedSpeakingEvaluation {
+  const safeSub: SpeakingSubmission = submission || EMPTY_SPEAKING_SUBMISSION;
+  const s1 = tasks[0] || SAMPLE_VSTEP_SPEAKING_TASKS[0];
+  const s2 = tasks[1] || SAMPLE_VSTEP_SPEAKING_TASKS[1];
+  const s3 = tasks[2] || SAMPLE_VSTEP_SPEAKING_TASKS[2];
+
+  const c1 = scoreSingleSpeakingPartStrict(
+    safeSub.part1Text,
+    Boolean(safeSub.part1AudioUrl),
+    safeSub.part1DurationSec || 0,
+    s1
+  );
+  const c2 = scoreSingleSpeakingPartStrict(
+    safeSub.part2Text,
+    Boolean(safeSub.part2AudioUrl),
+    safeSub.part2DurationSec || 0,
+    s2
+  );
+  const c3 = scoreSingleSpeakingPartStrict(
+    safeSub.part3Text,
+    Boolean(safeSub.part3AudioUrl),
+    safeSub.part3DurationSec || 0,
+    s3
+  );
+
+  // VSTEP Speaking weights: Part 1 (Social Interaction), Part 2 (Solution Discussion), Part 3 (Topic Development)
+  const vstepSpeakingScore10 = roundToHalf((c1.total10 + c2.total10 + c3.total10 * 1.5) / 3.5);
+
+  return {
+    part1Score10: c1.total10,
+    part2Score10: c2.total10,
+    part3Score10: c3.total10,
+    vstepSpeakingScore10,
+    part1Score: c1.total10,
+    part2Score: c2.total10,
+    part3Score: c3.total10,
+    overallBand10: vstepSpeakingScore10,
+    part1Criteria: c1,
+    part2Criteria: c2,
+    part3Criteria: c3,
+    overallBandComment:
+      vstepSpeakingScore10 >= 6.0
+        ? `Điểm Speaking VSTEP đạt ${vstepSpeakingScore10.toFixed(1)}/10 — Đạt ngưỡng Bậc 4 (B2) trở lên. Khả năng phát triển chủ đề và lập luận giải pháp tốt.`
+        : vstepSpeakingScore10 >= 4.0
+        ? `Điểm Speaking VSTEP đạt ${vstepSpeakingScore10.toFixed(1)}/10 — Đạt ngưỡng Bậc 3 (B1). Hãy khai thác sâu hơn các nhánh trong sơ đồ tư duy (Mind-map) ở Part 3 để nâng band điểm.`
+        : `Điểm Speaking VSTEP đạt ${vstepSpeakingScore10.toFixed(1)}/10 — Chưa đạt ngưỡng 4.0 (B1). Hãy hoàn thành đầy đủ cả 3 phần: Social Interaction, Solution Discussion và Topic Development.`,
+    isAiGraded: false,
+  };
+}
+
+/**
+ * Calculates official VSTEP B1-B2-C1 exam results on the 10-point scale across all 4 skills:
  * - Listening: (correct / 35) * 10
  * - Reading: (correct / 40) * 10
  * - Writing: ((Task1_10 + Task2_10 * 2) / 3)
+ * - Speaking: ((Part1_10 + Part2_10 + Part3_10 * 1.5) / 3.5)
  * - Overall VSTEP Score: Average of tested skills rounded to nearest 0.5
  */
 export function calculateExamResults(
   questions: Question[],
   answers: Record<number, string>,
   timeSpentSeconds: number,
-  writingScores?: { task1Score: number; task2Score: number }
+  writingScores?: { task1Score: number; task2Score: number },
+  speakingScores?: {
+    part1Score10?: number;
+    part2Score10?: number;
+    part3Score10?: number;
+    part1Score?: number;
+    part2Score?: number;
+    part3Score?: number;
+    overallBand10?: number;
+  }
 ): ComprehensiveExamResult {
   let listeningRaw = 0;
   let readingRaw = 0;
@@ -450,6 +721,7 @@ export function calculateExamResults(
   ];
 
   let writingReport: SkillScoreReport | undefined = undefined;
+  let speakingReport: SkillScoreReport | undefined = undefined;
   const skillScores10: number[] = [];
   if (listeningTotal > 0) skillScores10.push(listeningExact10);
   if (readingTotal > 0) skillScores10.push(readingExact10);
@@ -477,6 +749,33 @@ export function calculateExamResults(
     );
   }
 
+  if (speakingScores) {
+    const p1 = Number(speakingScores.part1Score10 ?? speakingScores.part1Score ?? 0);
+    const p2 = Number(speakingScores.part2Score10 ?? speakingScores.part2Score ?? 0);
+    const p3 = Number(speakingScores.part3Score10 ?? speakingScores.part3Score ?? 0);
+    const speakingExact10 =
+      typeof speakingScores.overallBand10 === 'number' && speakingScores.overallBand10 > 0
+        ? speakingScores.overallBand10
+        : (p1 + p2 + p3 * 1.5) / 3.5;
+    const speakingScore10 = roundToHalf(speakingExact10);
+    const speakingRaw = Math.round((p1 + p2 + p3) * 10) / 10;
+
+    speakingReport = {
+      rawScore: speakingRaw,
+      maxRawScore: 30,
+      scaledScore: speakingScore10,
+      score10: speakingScore10,
+      percentage: speakingExact10 * 10,
+    };
+    skillScores10.push(speakingExact10);
+
+    partsList.push(
+      { partNumber: 1, section: 'SPEAKING', name: "Speaking Part 1 (Social Interaction · 3 phút)", correct: p1, total: 10, percentage: p1 * 10 },
+      { partNumber: 2, section: 'SPEAKING', name: "Speaking Part 2 (Solution Discussion · 4 phút)", correct: p2, total: 10, percentage: p2 * 10 },
+      { partNumber: 3, section: 'SPEAKING', name: "Speaking Part 3 (Topic Development & Mind-map · 5 phút)", correct: p3, total: 10, percentage: p3 * 10 }
+    );
+  }
+
   const avgExact10 =
     skillScores10.length > 0
       ? skillScores10.reduce((acc, v) => acc + v, 0) / skillScores10.length
@@ -499,9 +798,11 @@ export function calculateExamResults(
     listeningScore10: listeningExact10,
     readingScore10: readingExact10,
     writingScore10: writingReport ? writingReport.score10 : 0,
+    speakingScore10: speakingReport ? speakingReport.score10 : 0,
     maxScaledScore: 10,
     normalizedScore100: Math.round(overallPercent),
     percentage: overallPercent,
+    overallPercentage: overallPercent,
     grade,
     cefr,
     listening: {
@@ -519,6 +820,7 @@ export function calculateExamResults(
       percentage: (readingRaw / safeReadingMax) * 100,
     },
     writing: writingReport,
+    speaking: speakingReport,
     parts: partsList,
     timeSpentSeconds,
   };

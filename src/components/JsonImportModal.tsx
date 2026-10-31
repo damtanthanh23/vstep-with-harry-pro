@@ -17,6 +17,7 @@ import {
 } from '../services/examService';
 import { Question, PartAudioMap, VocabItem } from '../types/exam';
 import { WritingTask } from '../types/writing';
+import { SpeakingTask } from '../types/speaking';
 
 interface JsonImportModalProps {
   isOpen: boolean;
@@ -31,6 +32,7 @@ interface JsonImportModalProps {
     partAudioUrls?: PartAudioMap;
     questions: Question[];
     writingTasks?: WritingTask[];
+    speakingTasks?: SpeakingTask[];
     vocabulary?: VocabItem[];
   }) => void;
 }
@@ -54,7 +56,7 @@ export const JsonImportModal: React.FC<JsonImportModalProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'VSTEP_B1_B2_C1_AI_Master_Guide_And_Template.json';
+    a.download = 'VSTEP_4_Skills_B1_B2_C1_AI_Master_Guide_And_Template.json';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -122,8 +124,9 @@ export const JsonImportModal: React.FC<JsonImportModalProps> = ({
       ).length;
 
       const vocabCount = Array.isArray(normalized.vocabulary) ? normalized.vocabulary.length : 0;
+      const speakingCount = Array.isArray(normalized.speakingTasks) ? normalized.speakingTasks.length : 3;
       setPreviewSummary(
-        `Đã nhận diện đề "${normalized.title}": ${validQuestions}/75 câu hỏi có nội dung · ${validTrans}/75 câu có bản dịch song ngữ · ${normalized.writingTasks.length} bài Writing · ${vocabCount} từ vựng kèm theo.`
+        `Đã nhận diện đề 4 Kỹ năng "${normalized.title}": ${validQuestions}/75 câu hỏi · ${validTrans}/75 câu có bản dịch · ${normalized.writingTasks.length} bài Writing · ${speakingCount} Part Speaking (có Sơ đồ tư duy Mind-map) · ${vocabCount} từ vựng kèm theo.`
       );
 
       if (execute) {
@@ -137,6 +140,7 @@ export const JsonImportModal: React.FC<JsonImportModalProps> = ({
           partAudioUrls: normalized.partAudioUrls,
           questions: normalized.questions,
           writingTasks: normalized.writingTasks,
+          speakingTasks: normalized.speakingTasks,
           vocabulary: normalized.vocabulary || [],
         });
         onClose();

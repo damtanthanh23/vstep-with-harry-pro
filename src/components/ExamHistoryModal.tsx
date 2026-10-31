@@ -17,6 +17,8 @@ import {
   Filter,
   FileText,
   BarChart3,
+  PenTool,
+  Mic,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { fetchUserAttempts } from '../services/examService';
@@ -162,7 +164,7 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
   const padBottom = 36;
   const plotW = svgWidth - padLeft - padRight;
   const plotH = svgHeight - padTop - padBottom;
-  const maxScore = 52;
+  const maxScore = 75;
 
   const chartPoints = chartAttempts.map((att, idx) => {
     const count = chartAttempts.length;
@@ -183,7 +185,7 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
         },${padTop + plotH}`
       : '';
 
-  const passLineY = padTop + plotH - (26 / maxScore) * plotH;
+  const passLineY = padTop + plotH - (30 / maxScore) * plotH;
 
   // Trend summary for activeChartGroup
   const firstScore = chartAttempts.length > 0 ? chartAttempts[0].score : 0;
@@ -254,7 +256,7 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                             {matchedTest?.title || prog.testId}
                           </h4>
                           <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 text-[11px] font-black whitespace-nowrap">
-                            {answeredCount}/52 câu
+                            {answeredCount}/75 câu
                           </span>
                         </div>
                         <p className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-2">
@@ -404,9 +406,9 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                         Điểm cao nhất / Gần nhất
                       </div>
                       <div className="text-base font-black text-slate-900 dark:text-white mt-0.5">
-                        {bestScore}/52{' '}
+                        {bestScore}/75{' '}
                         <span className="text-xs font-bold text-slate-400">
-                          (Gần nhất: {latestScore}/52)
+                          (Gần nhất: {latestScore}/75)
                         </span>
                       </div>
                     </div>
@@ -429,7 +431,7 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                           </span>
                         ) : (
                           <span className="text-sm font-black text-amber-600 dark:text-amber-400">
-                            Giữ nguyên ({latestScore}/52)
+                            Giữ nguyên ({latestScore}/75)
                           </span>
                         )}
                       </div>
@@ -451,10 +453,10 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                         </linearGradient>
                       </defs>
 
-                      {/* Horizontal Grid Lines (0, 13, 26 Pass, 39, 52) */}
-                      {[0, 13, 26, 39, 52].map((val) => {
+                      {/* Horizontal Grid Lines (0, 15, 30 Pass B1, 45, 75) */}
+                      {[0, 15, 30, 45, 75].map((val) => {
                         const y = padTop + plotH - (val / maxScore) * plotH;
-                        const isPassLine = val === 26;
+                        const isPassLine = val === 30;
                         return (
                           <g key={val}>
                             <line
@@ -486,7 +488,7 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                         textAnchor="end"
                         className="fill-emerald-600 dark:fill-emerald-400 text-[9px] font-black"
                       >
-                        Mốc Đạt B1 (26/52)
+                        Mốc Đạt B1 (4.0/10 ≈ 30/75)
                       </text>
 
                       {/* Area fill */}
@@ -529,7 +531,7 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                               textAnchor="middle"
                               className="fill-slate-800 dark:fill-slate-100 text-[11px] font-black"
                             >
-                              {pt.attempt.score}/52
+                              {pt.attempt.score}/{pt.attempt.totalQuestions || 75}
                             </text>
                             {/* Attempt number on X axis */}
                             <text
@@ -625,45 +627,76 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
 
                         <div className="text-left sm:text-right shrink-0">
                           <div className="text-2xl font-black text-slate-900 dark:text-white">
-                            {attempt.score}
-                            <span className="text-sm text-slate-400 font-bold">
-                              /{attempt.totalQuestions}
-                            </span>{' '}
+                            {typeof attempt.vstepBandScore === 'number'
+                              ? `${attempt.vstepBandScore.toFixed(1)} / 10.0`
+                              : `${attempt.score}/${attempt.totalQuestions || 75}`}{' '}
                             <span className="text-sm font-black text-[#58CC02]">
                               ({Math.round(attempt.percentage)}%)
                             </span>
                           </div>
                           <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                            Tổng điểm bài thi
+                            Điểm VSTEP Thang 10 ({attempt.score}/{attempt.totalQuestions || 75} câu)
                           </div>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 mt-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
                         <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
-                          <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                          <div className="w-8 h-8 rounded-lg bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-400 flex items-center justify-center shrink-0">
                             <Headphones className="w-4 h-4" />
                           </div>
                           <div>
-                            <div className="text-[11px] font-bold text-slate-400 uppercase">
+                            <div className="text-[10px] font-bold text-slate-400 uppercase">
                               Listening
                             </div>
-                            <div className="text-sm font-black text-slate-800 dark:text-slate-100">
-                              {attempt.listeningScore}/26 câu đúng
+                            <div className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100">
+                              {attempt.listeningScore}/35 câu
                             </div>
                           </div>
                         </div>
 
                         <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
-                          <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 flex items-center justify-center shrink-0">
+                          <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 flex items-center justify-center shrink-0">
                             <BookOpen className="w-4 h-4" />
                           </div>
                           <div>
-                            <div className="text-[11px] font-bold text-slate-400 uppercase">
+                            <div className="text-[10px] font-bold text-slate-400 uppercase">
                               Reading
                             </div>
-                            <div className="text-sm font-black text-slate-800 dark:text-slate-100">
-                              {attempt.readingScore}/26 câu đúng
+                            <div className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100">
+                              {attempt.readingScore}/40 câu
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                          <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                            <PenTool className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase">
+                              Writing
+                            </div>
+                            <div className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100">
+                              {typeof attempt.writingScore === 'number'
+                                ? `${((attempt.writingScore / 24) * 10).toFixed(1)}/10`
+                                : '—'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                          <div className="w-8 h-8 rounded-lg bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 flex items-center justify-center shrink-0">
+                            <Mic className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase">
+                              Speaking
+                            </div>
+                            <div className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100">
+                              {typeof attempt.speakingScore === 'number'
+                                ? `${attempt.speakingScore.toFixed(1)}/10`
+                                : '—'}
                             </div>
                           </div>
                         </div>

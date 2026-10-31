@@ -33,8 +33,18 @@ import { ExamBuilderView } from './components/ExamBuilderView';
 import { AdminPinModal } from './components/AdminPinModal';
 import { ExamHistoryModal } from './components/ExamHistoryModal';
 import { WritingSectionStage } from './components/WritingSectionStage';
+import { SpeakingSectionStage } from './components/SpeakingSectionStage';
 import { WritingSubmission, SAMPLE_B1_WRITING_TASKS } from './types/writing';
-import { evaluateWritingStrictRubric } from './utils/scoringEngine';
+import {
+  SpeakingSubmission,
+  EMPTY_SPEAKING_SUBMISSION,
+  SAMPLE_VSTEP_SPEAKING_TASKS,
+} from './types/speaking';
+import {
+  evaluateWritingStrictRubric,
+  evaluateSpeakingStrictRubric,
+  calculateExamResults,
+} from './utils/scoringEngine';
 import { examAudioManager } from './utils/audioManager';
 import { useAuth, SUPER_ADMIN_EMAILS } from './context/AuthContext';
 import {
@@ -48,6 +58,7 @@ import {
   Headphones,
   BookOpen,
   PenTool,
+  Mic,
   Sparkles,
   X,
   AlertTriangle,
@@ -56,6 +67,7 @@ import {
   subscribeToCustomTests,
   subscribeToDeletedTestIds,
   deleteAnyTestFromSystem,
+  saveTestToFirestore,
   recordUserAttempt,
   fetchUserAttempts,
   saveInProgressAttemptToFirestore,
@@ -72,12 +84,12 @@ import {
   syncStreakWithCloudAndAttempts,
 } from './services/streakService';
 
-// Define question groups matching the LanguageCert exam sections with Part-relative numbering
+// Define question groups matching the VSTEP 4-skill exam sections with Part-relative numbering
 interface QuestionGroup {
-  type: 'questions' | 'transition' | 'writing';
+  type: 'questions' | 'transition' | 'writing' | 'speaking';
   section: ExamSection;
   partNumber?: 1 | 2 | 3 | 4;
-  partKey?: string; // e.g. 'L1'..'L4', 'R1'..'R4', 'W'
+  partKey?: string; // e.g. 'L1'..'L3', 'R1'..'R4', 'W', 'S'
   rangeLabel: string;
   startId?: number;
   endId?: number;
@@ -246,11 +258,24 @@ const QUESTION_GROUPS: QuestionGroup[] = [
   },
 ];
 
-const ALL_PRACTICE_PARTS = ['L1', 'L2', 'L3', 'R1', 'R2', 'R3', 'R4', 'W1', 'W2'];
+const ALL_PRACTICE_PARTS = [
+  'L1',
+  'L2',
+  'L3',
+  'R1',
+  'R2',
+  'R3',
+  'R4',
+  'W1',
+  'W2',
+  'S1',
+  'S2',
+  'S3',
+];
 
 const PART_METADATA: {
   key: string;
-  section: 'LISTENING' | 'READING' | 'WRITING';
+  section: 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING';
   label: string;
   questionCount: number;
   suggestedMinutes: number;
@@ -264,6 +289,9 @@ const PART_METADATA: {
   { key: 'R4', section: 'READING', label: 'Reading Passage 4 (10 câu: Câu 31–40)', questionCount: 10, suggestedMinutes: 15 },
   { key: 'W1', section: 'WRITING', label: 'Writing Task 1 (Thư/Email ≥ 120 từ)', questionCount: 1, suggestedMinutes: 20 },
   { key: 'W2', section: 'WRITING', label: 'Writing Task 2 (Luận Essay ≥ 250 từ)', questionCount: 1, suggestedMinutes: 40 },
+  { key: 'S1', section: 'SPEAKING', label: 'Speaking Part 1 (Social Interaction · 3 phút)', questionCount: 1, suggestedMinutes: 3 },
+  { key: 'S2', section: 'SPEAKING', label: 'Speaking Part 2 (Solution Discussion · 4 phút)', questionCount: 1, suggestedMinutes: 4 },
+  { key: 'S3', section: 'SPEAKING', label: 'Speaking Part 3 (Topic Development Mind-map · 5 phút)', questionCount: 1, suggestedMinutes: 5 },
 ];
 
 export default function App() {
@@ -317,14 +345,16 @@ export default function App() {
     listening: boolean;
     reading: boolean;
     writing: boolean;
+    speaking: boolean;
   }>({
     listening: true,
     reading: true,
     writing: true,
+    speaking: true,
   });
 
-  // Skill package & Writing state
-  const [selectedSkillPackage, setSelectedSkillPackage] = useState<SkillPackageType>('LRW');
+  // Skill package, Writing & Speaking state
+  const [selectedSkillPackage, setSelectedSkillPackage] = useState<SkillPackageType>('LRWS');
   const [writingSubmission, setWritingSubmission] = useState<WritingSubmission>({
     task1Text: '',
     task1WordCount: 0,
@@ -333,6 +363,11 @@ export default function App() {
   });
   const [activeWritingTaskIndex, setActiveWritingTaskIndex] = useState<0 | 1>(0);
 
+  const [speakingSubmission, setSpeakingSubmission] = useState<SpeakingSubmission>(
+    EMPTY_SPEAKING_SUBMISSION
+  );
+  const [activeSpeakingPartIndex, setActiveSpeakingPartIndex] = useState<0 | 1 | 2>(0);
+
   // Exam Active State
   const [currentGroupIndex, setCurrentGroupIndex] = useState<number>(0);
   const [activeQuestionId, setActiveQuestionId] = useState<number>(1);
@@ -340,8 +375,8 @@ export default function App() {
   const [flagged, setFlagged] = useState<Record<number, boolean>>({});
 
   // Timers & Pause State (Items 11 & 15)
-  const [timeRemainingSeconds, setTimeRemainingSeconds] = useState<number>(90 * 60);
-  const [initialTimeSeconds, setInitialTimeSeconds] = useState<number>(90 * 60);
+  const [timeRemainingSeconds, setTimeRemainingSeconds] = useState<number>(172 * 60);
+  const [initialTimeSeconds, setInitialTimeSeconds] = useState<number>(172 * 60);
   const [isTimedSession, setIsTimedSession] = useState<boolean>(true);
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [totalPausedSeconds, setTotalPausedSeconds] = useState<number>(0);
@@ -413,7 +448,9 @@ export default function App() {
   // Load local custom tests, deleted test IDs, and subscribe to Firestore
   useEffect(() => {
     try {
-      const rawBackup = localStorage.getItem('langcert_custom_tests_backup');
+      const rawBackup =
+        localStorage.getItem('langcert_custom_tests_backup_v1') ||
+        localStorage.getItem('langcert_custom_tests_backup');
       if (rawBackup) {
         const localTests: TestMetadata[] = JSON.parse(rawBackup);
         if (Array.isArray(localTests) && localTests.length > 0) {
@@ -457,7 +494,12 @@ export default function App() {
         setCustomTests((prev) => {
           const map = new Map<string, TestMetadata>();
           prev.forEach((t) => map.set(t.id, t));
-          loadedCustomTests.forEach((t) => map.set(t.id, t));
+          loadedCustomTests.forEach((t) => {
+            const existing = map.get(t.id);
+            if (!existing || (t.updatedAt || 0) >= (existing.updatedAt || 0)) {
+              map.set(t.id, t);
+            }
+          });
           return Array.from(map.values());
         });
         const qMap: Record<string, Question[]> = {};
@@ -556,6 +598,7 @@ export default function App() {
       answers,
       flagged,
       writingSubmission,
+      speakingSubmission,
       timeRemainingSeconds: metrics.timeRemainingSeconds,
       elapsedSeconds: metrics.elapsedSeconds,
       totalPausedSeconds: metrics.totalPausedSeconds,
@@ -570,6 +613,7 @@ export default function App() {
     answers,
     flagged,
     writingSubmission,
+    speakingSubmission,
   ]);
 
   // Track last cloud sync timestamp so Firestore writes are throttled to at most once every 60 seconds
@@ -587,17 +631,30 @@ export default function App() {
     const hasWritingAny =
       writingSubmission.task1Text.trim().length > 0 ||
       writingSubmission.task2Text.trim().length > 0;
+    const hasSpeakingAny =
+      speakingSubmission.part1Text.trim().length > 0 ||
+      speakingSubmission.part2Text.trim().length > 0 ||
+      speakingSubmission.part3Text.trim().length > 0 ||
+      Boolean(speakingSubmission.part1AudioDataUrl) ||
+      Boolean(speakingSubmission.part2AudioDataUrl) ||
+      Boolean(speakingSubmission.part3AudioDataUrl);
 
-    if (!hasAnsweredAny && !hasFlaggedAny && !hasWritingAny) {
+    if (!hasAnsweredAny && !hasFlaggedAny && !hasWritingAny && !hasSpeakingAny) {
       return;
     }
 
-    // Immediately persist lightweight writing draft to localStorage so zero characters are ever lost
+    // Immediately persist lightweight writing & speaking drafts to localStorage so zero characters are ever lost
     try {
       if (hasWritingAny) {
         localStorage.setItem(
           `langcert_writing_draft_${selectedTestId}`,
           JSON.stringify(writingSubmission)
+        );
+      }
+      if (hasSpeakingAny) {
+        localStorage.setItem(
+          `langcert_speaking_draft_${selectedTestId}`,
+          JSON.stringify(speakingSubmission)
         );
       }
     } catch {
@@ -653,6 +710,7 @@ export default function App() {
     answers,
     flagged,
     writingSubmission,
+    speakingSubmission,
     buildInProgressSnapshot,
     currentUser,
     isOnline,
@@ -703,6 +761,7 @@ export default function App() {
     const hasAnyListening = ['L1', 'L2', 'L3'].some((k) => partSet.has(k));
     const hasAnyReading = ['R1', 'R2', 'R3', 'R4'].some((k) => partSet.has(k));
     const hasAnyWriting = partSet.has('W1') || partSet.has('W2');
+    const hasAnySpeaking = ['S1', 'S2', 'S3'].some((k) => partSet.has(k));
 
     const groups: QuestionGroup[] = [];
 
@@ -743,6 +802,25 @@ export default function App() {
         partKey: 'W',
         rangeLabel: 'Writing Task 1 & Task 2',
         instructionText: 'VSTEP B1-B2-C1 Writing Section (Task 1: ≥120 words · Task 2: ≥250 words)',
+      });
+    }
+
+    if (hasAnySpeaking) {
+      if (hasAnyListening || hasAnyReading || hasAnyWriting) {
+        groups.push({
+          type: 'transition',
+          section: 'SPEAKING',
+          partKey: 'S_INTRO',
+          rangeLabel: 'Transition to Speaking',
+          instructionText: 'SKILL 4: SPEAKING (3 Parts · 12 Minutes)',
+        });
+      }
+      groups.push({
+        type: 'speaking',
+        section: 'SPEAKING',
+        partKey: 'S',
+        rangeLabel: 'Speaking Part 1, Part 2 & Part 3',
+        instructionText: 'VSTEP B1-B2-C1 Speaking Section (Part 1: 3m · Part 2: 4m · Part 3: 5m)',
       });
     }
 
@@ -876,7 +954,7 @@ export default function App() {
 
   // All questions belonging to the current Part (so ExamFooter shows full 1..N boxes for the active Part on 1 single row)
   const currentPartQuestionsForFooter = useMemo(() => {
-    if (currentGroup.section === 'WRITING') return [];
+    if (currentGroup.section === 'WRITING' || currentGroup.section === 'SPEAKING') return [];
     const targetPartNum = currentGroup.partNumber || 1;
     return activeExamQuestions.filter(
       (q) => q.section === currentGroup.section && q.partNumber === targetPartNum
@@ -896,7 +974,7 @@ export default function App() {
     return q?.audioScript;
   }, [activeQuestionId, activeExamQuestions]);
 
-  // Strict Writing Scores based on official LanguageCert B1 4-criteria rubric
+  // Strict Writing Scores based on official VSTEP 4-criteria rubric
   const writingScores = useMemo(() => {
     const hasWriting =
       selectedPartsForSession.includes('W1') || selectedPartsForSession.includes('W2');
@@ -911,6 +989,26 @@ export default function App() {
       task2Score: strictEval.task2Score,
     };
   }, [selectedPartsForSession, writingSubmission, activeTestMetadata.writingTasks]);
+
+  // Strict Speaking Scores based on official VSTEP 5-criteria rubric on 10-point scale
+  const speakingScores = useMemo(() => {
+    const hasSpeaking =
+      selectedPartsForSession.includes('S1') ||
+      selectedPartsForSession.includes('S2') ||
+      selectedPartsForSession.includes('S3');
+    if (!hasSpeaking) return undefined;
+
+    const strictEval = evaluateSpeakingStrictRubric(
+      speakingSubmission,
+      activeTestMetadata.speakingTasks || SAMPLE_VSTEP_SPEAKING_TASKS
+    );
+    return {
+      part1Score: strictEval.part1Score,
+      part2Score: strictEval.part2Score,
+      part3Score: strictEval.part3Score,
+      overallBand10: strictEval.overallBand10,
+    };
+  }, [selectedPartsForSession, speakingSubmission, activeTestMetadata.speakingTasks]);
 
   // Calculate suggested minutes for selected practice parts
   const suggestedPracticeMinutes = useMemo(() => {
@@ -934,8 +1032,14 @@ export default function App() {
     setPendingStartTestId(testId);
 
     if (initialSection && initialPart) {
-      // Triggered from ListeningPracticeView or ReadingPracticeView for a specific Part
-      const prefix = initialSection === 'LISTENING' ? 'L' : 'R';
+      const prefix =
+        initialSection === 'LISTENING'
+          ? 'L'
+          : initialSection === 'READING'
+          ? 'R'
+          : initialSection === 'SPEAKING'
+          ? 'S'
+          : 'W';
       const partKey = `${prefix}${initialPart}`;
       setExamMode('practice');
       setSelectedPartsForSession([partKey]);
@@ -943,9 +1047,10 @@ export default function App() {
     } else {
       setSelectedPartsForSession(ALL_PRACTICE_PARTS);
       setExamSkillsSelected({
-        listening: selectedSkillPackage !== 'W',
-        reading: selectedSkillPackage !== 'W',
-        writing: selectedSkillPackage !== 'LR',
+        listening: selectedSkillPackage !== 'W' && selectedSkillPackage !== 'S',
+        reading: selectedSkillPackage !== 'W' && selectedSkillPackage !== 'S',
+        writing: selectedSkillPackage === 'LRWS' || selectedSkillPackage === 'LRW' || selectedSkillPackage === 'W',
+        speaking: selectedSkillPackage === 'LRWS' || selectedSkillPackage === 'S',
       });
     }
 
@@ -997,9 +1102,28 @@ export default function App() {
       // Ignore
     }
 
+    let restoredSpeaking: SpeakingSubmission =
+      saved.speakingSubmission || EMPTY_SPEAKING_SUBMISSION;
+    try {
+      const rawSpeakingDraft = localStorage.getItem(`langcert_speaking_draft_${testId}`);
+      if (rawSpeakingDraft) {
+        const parsedSpeakingDraft: SpeakingSubmission = JSON.parse(rawSpeakingDraft);
+        if (
+          (parsedSpeakingDraft.part1Text?.length || 0) >= (restoredSpeaking.part1Text?.length || 0) &&
+          (parsedSpeakingDraft.part2Text?.length || 0) >= (restoredSpeaking.part2Text?.length || 0) &&
+          (parsedSpeakingDraft.part3Text?.length || 0) >= (restoredSpeaking.part3Text?.length || 0)
+        ) {
+          restoredSpeaking = parsedSpeakingDraft;
+        }
+      }
+    } catch {
+      // Ignore
+    }
+
     setWritingSubmission(restoredWriting);
-    setTimeRemainingSeconds(saved.timeRemainingSeconds || 90 * 60);
-    setInitialTimeSeconds(saved.timeRemainingSeconds || 90 * 60);
+    setSpeakingSubmission(restoredSpeaking);
+    setTimeRemainingSeconds(saved.timeRemainingSeconds || 172 * 60);
+    setInitialTimeSeconds(saved.timeRemainingSeconds || 172 * 60);
     setIsTimedSession((saved.timeRemainingSeconds || 0) > 0);
     setElapsedSeconds(saved.elapsedSeconds || 0);
     setTotalPausedSeconds(saved.totalPausedSeconds || 0);
@@ -1035,6 +1159,8 @@ export default function App() {
       try {
         localStorage.setItem('langcert_in_progress_map', JSON.stringify(next));
         localStorage.removeItem(`langcert_inprogress_${testId}`);
+        localStorage.removeItem(`langcert_writing_draft_${testId}`);
+        localStorage.removeItem(`langcert_speaking_draft_${testId}`);
       } catch {
         // Ignore
       }
@@ -1060,6 +1186,7 @@ export default function App() {
         task2WordCount: 0,
       }
     );
+    setSpeakingSubmission(attempt.speakingSubmission || EMPTY_SPEAKING_SUBMISSION);
     if (attempt.selectedParts && attempt.selectedParts.length > 0) {
       setSelectedPartsForSession(attempt.selectedParts);
     } else {
@@ -1077,20 +1204,22 @@ export default function App() {
     setSelectedTestId(testId);
 
     let partsToRun: string[] = [];
-    let durationSec = 90 * 60;
+    let durationSec = 172 * 60;
     let timed = true;
 
     if (examMode === 'exam') {
       if (examSkillsSelected.listening) partsToRun.push('L1', 'L2', 'L3');
       if (examSkillsSelected.reading) partsToRun.push('R1', 'R2', 'R3', 'R4');
       if (examSkillsSelected.writing) partsToRun.push('W1', 'W2');
+      if (examSkillsSelected.speaking) partsToRun.push('S1', 'S2', 'S3');
       if (partsToRun.length === 0) partsToRun = ALL_PRACTICE_PARTS;
 
       let mins = 0;
       if (examSkillsSelected.listening) mins += 40;
       if (examSkillsSelected.reading) mins += 60;
       if (examSkillsSelected.writing) mins += 60;
-      durationSec = (mins || 100) * 60;
+      if (examSkillsSelected.speaking) mins += 12;
+      durationSec = (mins || 172) * 60;
       timed = true;
     } else {
       partsToRun = selectedPartsForSession.length > 0 ? selectedPartsForSession : ALL_PRACTICE_PARTS;
@@ -1101,7 +1230,7 @@ export default function App() {
         durationSec = Math.max(1, customMinutesInput) * 60;
         timed = true;
       } else {
-        durationSec = Math.max(5, suggestedPracticeMinutes) * 60;
+        durationSec = Math.max(3, suggestedPracticeMinutes) * 60;
         timed = true;
       }
     }
@@ -1115,6 +1244,8 @@ export default function App() {
       task2Text: '',
       task2WordCount: 0,
     });
+    setSpeakingSubmission(EMPTY_SPEAKING_SUBMISSION);
+    setActiveSpeakingPartIndex(0);
     setLastSavedText('');
     setTimeRemainingSeconds(durationSec);
     setInitialTimeSeconds(durationSec);
@@ -1132,6 +1263,7 @@ export default function App() {
         localStorage.setItem('langcert_in_progress_map', JSON.stringify(next));
         localStorage.removeItem(`langcert_inprogress_${testId}`);
         localStorage.removeItem(`langcert_writing_draft_${testId}`);
+        localStorage.removeItem(`langcert_speaking_draft_${testId}`);
       } catch {
         // Ignore
       }
@@ -1171,8 +1303,15 @@ export default function App() {
       const hasWritingAny =
         writingSubmission.task1Text.trim().length > 0 ||
         writingSubmission.task2Text.trim().length > 0;
+      const hasSpeakingAny =
+        speakingSubmission.part1Text.trim().length > 0 ||
+        speakingSubmission.part2Text.trim().length > 0 ||
+        speakingSubmission.part3Text.trim().length > 0 ||
+        Boolean(speakingSubmission.part1AudioDataUrl) ||
+        Boolean(speakingSubmission.part2AudioDataUrl) ||
+        Boolean(speakingSubmission.part3AudioDataUrl);
 
-      if (hasAnsweredAny || hasFlaggedAny || hasWritingAny) {
+      if (hasAnsweredAny || hasFlaggedAny || hasWritingAny || hasSpeakingAny) {
         const snap = buildInProgressSnapshot();
         setInProgressMap((prev) => {
           const updated = { ...prev, [selectedTestId]: snap };
@@ -1215,7 +1354,10 @@ export default function App() {
     if (
       answeredCountNow > 0 ||
       writingSubmission.task1WordCount > 0 ||
-      writingSubmission.task2WordCount > 0
+      writingSubmission.task2WordCount > 0 ||
+      speakingSubmission.part1WordCount > 0 ||
+      speakingSubmission.part2WordCount > 0 ||
+      speakingSubmission.part3WordCount > 0
     ) {
       recordStudyActivity(`Luyện tập đề: ${activeTestMetadata.title}`, currentUser?.uid);
     }
@@ -1252,6 +1394,14 @@ export default function App() {
     if (writingGroupIdx !== -1) {
       setCurrentGroupIndex(writingGroupIdx);
       setActiveWritingTaskIndex(taskIndex);
+    }
+  };
+
+  const handleSelectSpeakingPartFromSummary = (partIndex: 0 | 1 | 2) => {
+    const speakingGroupIdx = activeQuestionGroups.findIndex((g) => g.type === 'speaking');
+    if (speakingGroupIdx !== -1) {
+      setCurrentGroupIndex(speakingGroupIdx);
+      setActiveSpeakingPartIndex(partIndex);
     }
   };
 
@@ -1309,13 +1459,16 @@ export default function App() {
       }
     });
 
-    const percentage =
-      activeExamQuestions.length > 0
-        ? Math.round((correctCount / activeExamQuestions.length) * 100)
-        : 0;
-    let grade: 'High Pass' | 'Pass' | 'Fail' = 'Fail';
-    if (percentage >= 75) grade = 'High Pass';
-    else if (percentage >= 50) grade = 'Pass';
+    const evalResult = calculateExamResults(
+      activeExamQuestions,
+      answers,
+      elapsedSeconds,
+      writingScores,
+      speakingScores
+    );
+
+    const percentage = evalResult.overallPercentage;
+    const grade = evalResult.grade;
 
     setCompletedScoresMap((prev) => ({
       ...prev,
@@ -1326,6 +1479,8 @@ export default function App() {
       ? writingScores.task1Score + writingScores.task2Score
       : undefined;
 
+    const speakingBand10 = speakingScores ? speakingScores.overallBand10 : undefined;
+
     const attempt: UserExamAttempt = {
       attemptId: `attempt-${Date.now()}`,
       testId: selectedTestId,
@@ -1335,14 +1490,17 @@ export default function App() {
       totalQuestions: activeExamQuestions.length,
       percentage,
       grade,
+      vstepBandScore: Number((percentage / 10).toFixed(1)),
       listeningScore,
       readingScore,
       writingScore: writingRawScore,
+      speakingScore: speakingBand10,
       timeSpentSeconds: elapsedSeconds,
       totalPausedSeconds,
       completedAt: Date.now(),
       answers: { ...answers },
       writingSubmission: { ...writingSubmission },
+      speakingSubmission: { ...speakingSubmission },
       selectedParts: [...selectedPartsForSession],
     };
 
@@ -1362,6 +1520,7 @@ export default function App() {
         localStorage.setItem('langcert_in_progress_map', JSON.stringify(next));
         localStorage.removeItem(`langcert_inprogress_${selectedTestId}`);
         localStorage.removeItem(`langcert_writing_draft_${selectedTestId}`);
+        localStorage.removeItem(`langcert_speaking_draft_${selectedTestId}`);
       } catch {
         // Ignore
       }
@@ -1455,6 +1614,36 @@ export default function App() {
     setPendingEditTestId(null);
   };
 
+  // 1-Click Publish Draft Test for Admins
+  const handleQuickPublishDraftTest = async (testId: string) => {
+    const target = allTests.find((t) => t.id === testId);
+    if (!target) return;
+
+    const targetQuestions =
+      customQuestionsMap[testId] && customQuestionsMap[testId].length > 0
+        ? customQuestionsMap[testId]
+        : target.questions && target.questions.length > 0
+        ? target.questions
+        : TEST_1_QUESTIONS.map((q) => ({ ...q }));
+
+    const publishedTest = {
+      ...target,
+      description: target.description || '',
+      createdAt: target.createdAt || Date.now(),
+      creatorId: target.creatorId || currentUser?.uid || 'admin',
+      creatorEmail: target.creatorEmail || currentUser?.email || '',
+      isCustom: true,
+      status: 'published' as const,
+      categoryTag:
+        target.categoryTag === 'Đề Nháp' ? 'Đề Chính Thức' : target.categoryTag || 'Đề Chính Thức',
+      updatedAt: Date.now(),
+      questions: targetQuestions,
+    };
+
+    syncSavedTestIntoState(publishedTest);
+    await saveTestToFirestore(publishedTest);
+  };
+
   // Delete ANY test from the system (both default and custom tests — Item 9)
   const handleDeleteAnyTest = async (testId: string) => {
     const isUnlocked = sessionStorage.getItem('langcert_admin_unlocked') === 'true';
@@ -1475,13 +1664,14 @@ export default function App() {
 
     setCustomTests((prev) => prev.filter((t) => t.id !== testId));
     try {
-      const rawBackup = localStorage.getItem('langcert_custom_tests_backup');
+      const rawBackup =
+        localStorage.getItem('langcert_custom_tests_backup_v1') ||
+        localStorage.getItem('langcert_custom_tests_backup');
       if (rawBackup) {
         const list: TestMetadata[] = JSON.parse(rawBackup);
-        localStorage.setItem(
-          'langcert_custom_tests_backup',
-          JSON.stringify(list.filter((t) => t.id !== testId))
-        );
+        const filtered = JSON.stringify(list.filter((t) => t.id !== testId));
+        localStorage.setItem('langcert_custom_tests_backup_v1', filtered);
+        localStorage.setItem('langcert_custom_tests_backup', filtered);
       }
     } catch {
       // Ignore
@@ -1636,6 +1826,7 @@ export default function App() {
             }
           }}
           onEditTest={handleOpenEditExam}
+          onPublishDraftTest={handleQuickPublishDraftTest}
           onOpenHistory={() => setIsHistoryModalOpen(true)}
           onOpenProfile={() => setIsProfileModalOpen(true)}
           onBackToLanding={() => setCurrentScreen('landing')}
@@ -1657,7 +1848,7 @@ export default function App() {
                 <div>
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-lime-100 dark:bg-emerald-950 text-[#2E7D32] dark:text-lime-300 text-[11px] font-black mb-1">
                     <Sparkles className="h-3 w-3" />
-                    THIẾT LẬP PHÒNG THI
+                    THIẾT LẬP PHÒNG THI VSTEP 4 KỸ NĂNG
                   </span>
                   <h3 className="text-xl font-black text-slate-900 dark:text-white">
                     {pendingTestObj.title}
@@ -1687,7 +1878,7 @@ export default function App() {
                           (v) => v && v.trim().length > 0
                         ).length
                       }
-                      /52 câu · Chế độ:{' '}
+                      /75 câu trắc nghiệm · Chế độ:{' '}
                       {existingInProgressForPending.mode === 'exam' ? 'Thi thử' : 'Luyện tập'}
                     </p>
                   </div>
@@ -1723,7 +1914,7 @@ export default function App() {
                       )}
                     </div>
                     <p className="text-[11px] text-slate-500 mt-1">
-                      Chọn trọn bộ kỹ năng (Listening, Reading, Writing), bấm giờ chuẩn quốc tế & tự động nộp khi hết giờ.
+                      Chọn trọn bộ 4 kỹ năng (Listening, Reading, Writing, Speaking), bấm giờ chuẩn VSTEP & tự động nộp khi hết giờ.
                     </p>
                   </button>
 
@@ -1743,7 +1934,7 @@ export default function App() {
                       )}
                     </div>
                     <p className="text-[11px] text-slate-500 mt-1">
-                      Chọn từng Part lẻ tùy thích, tùy chỉnh thời gian hoặc không giới hạn giờ, lưu làm tiếp bất cứ lúc nào.
+                      Chọn từng Part lẻ tùy thích (gồm cả Speaking Part 1, 2, 3), tùy chỉnh thời gian hoặc không giới hạn giờ.
                     </p>
                   </button>
                 </div>
@@ -1753,9 +1944,9 @@ export default function App() {
               {examMode === 'exam' ? (
                 <div className="mt-5">
                   <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
-                    2. Chọn Kỹ năng Thi thử (Phải chọn trọn kỹ năng)
+                    2. Chọn Kỹ năng Thi thử VSTEP (4 Kỹ năng L - R - W - S)
                   </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <button
                       type="button"
                       onClick={() =>
@@ -1775,7 +1966,7 @@ export default function App() {
                       <div>
                         <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1">
                           <Headphones className="h-3.5 w-3.5 text-purple-600" />
-                          <span>Full Listening</span>
+                          <span>1. Full Listening</span>
                         </div>
                         <p className="text-[11px] text-slate-500 mt-0.5">Part 1–3 (35 câu · 40 phút)</p>
                       </div>
@@ -1800,7 +1991,7 @@ export default function App() {
                       <div>
                         <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1">
                           <BookOpen className="h-3.5 w-3.5 text-purple-600" />
-                          <span>Full Reading</span>
+                          <span>2. Full Reading</span>
                         </div>
                         <p className="text-[11px] text-slate-500 mt-0.5">Passage 1–4 (40 câu · 60 phút)</p>
                       </div>
@@ -1825,9 +2016,34 @@ export default function App() {
                       <div>
                         <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1">
                           <PenTool className="h-3.5 w-3.5 text-purple-600" />
-                          <span>Full Writing</span>
+                          <span>3. Full Writing</span>
                         </div>
                         <p className="text-[11px] text-slate-500 mt-0.5">Task 1 &amp; Task 2 (60 phút)</p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExamSkillsSelected((prev) => ({ ...prev, speaking: !prev.speaking }))
+                      }
+                      className={`p-3.5 rounded-2xl border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
+                        examSkillsSelected.speaking
+                          ? 'border-teal-600 bg-teal-50/50 dark:bg-teal-950/40'
+                          : 'border-slate-200 dark:border-slate-700 opacity-70'
+                      }`}
+                    >
+                      {examSkillsSelected.speaking ? (
+                        <CheckSquare className="h-4 w-4 text-teal-600 shrink-0 mt-0.5" />
+                      ) : (
+                        <Square className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+                      )}
+                      <div>
+                        <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1">
+                          <Mic className="h-3.5 w-3.5 text-teal-600" />
+                          <span>4. Full Speaking</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">Part 1, 2 &amp; 3 Mind-map (12 phút)</p>
                       </div>
                     </button>
                   </div>
@@ -1838,7 +2054,7 @@ export default function App() {
                   <div className="mt-5">
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
-                        2. Chọn các Part muốn luyện tập ({selectedPartsForSession.length}/9 Part)
+                        2. Chọn các Part muốn luyện tập ({selectedPartsForSession.length}/{ALL_PRACTICE_PARTS.length} Part)
                       </label>
                       <div className="flex items-center gap-2">
                         <button
@@ -1859,7 +2075,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-52 overflow-y-auto p-1">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto p-1">
                       {PART_METADATA.map((part) => {
                         const checked = selectedPartsForSession.includes(part.key);
                         return (
@@ -2060,6 +2276,10 @@ export default function App() {
   if (currentScreen === 'results') {
     const hasWritingInSession =
       selectedPartsForSession.includes('W1') || selectedPartsForSession.includes('W2');
+    const hasSpeakingInSession =
+      selectedPartsForSession.includes('S1') ||
+      selectedPartsForSession.includes('S2') ||
+      selectedPartsForSession.includes('S3');
     return (
       <>
         <ResultsView
@@ -2070,6 +2290,9 @@ export default function App() {
           writingSubmission={hasWritingInSession ? writingSubmission : undefined}
           writingTasks={activeTestMetadata.writingTasks || SAMPLE_B1_WRITING_TASKS}
           writingScores={writingScores}
+          speakingSubmission={hasSpeakingInSession ? speakingSubmission : undefined}
+          speakingTasks={activeTestMetadata.speakingTasks || SAMPLE_VSTEP_SPEAKING_TASKS}
+          speakingScores={speakingScores}
           onRetake={handleRetakeTest}
           onBackToTests={handleBackToTests}
           onOpenFeedback={() =>
@@ -2123,7 +2346,8 @@ export default function App() {
           onOpenTranscript={
             examMode === 'practice' &&
             currentGroup.type === 'questions' &&
-            currentGroup.section !== 'WRITING'
+            currentGroup.section !== 'WRITING' &&
+            currentGroup.section !== 'SPEAKING'
               ? () => {
                   setScriptToggleCounter((c) => c + 1);
                 }
@@ -2133,19 +2357,25 @@ export default function App() {
             const relNum =
               currentGroup.type === 'questions'
                 ? getPartRelativeNumber(activeQuestionId, currentPartQuestionsForFooter)
+                : currentGroup.type === 'speaking'
+                ? activeSpeakingPartIndex + 1
                 : activeWritingTaskIndex + 1;
             openFeedbackWithContext({
               contextScreen: 'exam',
               testId: activeTestMetadata.id,
               testTitle: activeTestMetadata.title,
               section: currentGroup.section,
-              partNumber: currentGroup.partNumber || (activeWritingTaskIndex + 1),
+              partNumber:
+                currentGroup.partNumber ||
+                (currentGroup.type === 'speaking'
+                  ? activeSpeakingPartIndex + 1
+                  : activeWritingTaskIndex + 1),
               questionNumber: relNum,
             });
           }}
         />
 
-        {/* Main Question Arena, Section Transition, or Writing Editor */}
+        {/* Main Question Arena, Section Transition, Writing Editor, or Speaking Stage */}
         <main className="w-full">
           {currentGroup.type === 'transition' ? (
             <SectionTransitionView
@@ -2156,10 +2386,27 @@ export default function App() {
             <WritingSectionStage
               submission={writingSubmission}
               onChange={setWritingSubmission}
-              onProceedToReview={() => setIsSubmitModalOpen(true)}
+              onProceedToReview={() => {
+                const hasSpeakingNext = activeQuestionGroups.some((g) => g.type === 'speaking');
+                if (hasSpeakingNext && currentGroupIndex < activeQuestionGroups.length - 1) {
+                  handleNextGroup();
+                } else {
+                  setIsSubmitModalOpen(true);
+                }
+              }}
               tasks={activeTestMetadata.writingTasks || SAMPLE_B1_WRITING_TASKS}
               activeTaskIndex={activeWritingTaskIndex}
               onTaskIndexChange={setActiveWritingTaskIndex}
+            />
+          ) : currentGroup.type === 'speaking' ? (
+            <SpeakingSectionStage
+              submission={speakingSubmission}
+              onChange={setSpeakingSubmission}
+              onProceedToReview={() => setIsSubmitModalOpen(true)}
+              tasks={activeTestMetadata.speakingTasks || SAMPLE_VSTEP_SPEAKING_TASKS}
+              activePartIndex={activeSpeakingPartIndex}
+              onPartIndexChange={setActiveSpeakingPartIndex}
+              isPracticeMode={examMode === 'practice'}
             />
           ) : (
             <QuestionStage
@@ -2177,7 +2424,7 @@ export default function App() {
           )}
         </main>
 
-        {/* Right Slide-out Summary Board Drawer (PeopleCert Hierarchy + Writing + Per-Part Numbers — Items 3, 13, 14) */}
+        {/* Right Slide-out Summary Board Drawer (4 Skills L - R - W - S) */}
         <SummaryBoardDrawer
           isOpen={isSummaryDrawerOpen}
           onToggle={() => setIsSummaryDrawerOpen(!isSummaryDrawerOpen)}
@@ -2185,6 +2432,7 @@ export default function App() {
           activeQuestionId={activeQuestionId}
           activeSection={currentGroup.section}
           activeWritingTaskIndex={activeWritingTaskIndex}
+          activeSpeakingPartIndex={activeSpeakingPartIndex}
           answers={answers}
           flagged={flagged}
           writingSubmission={
@@ -2192,16 +2440,24 @@ export default function App() {
               ? writingSubmission
               : undefined
           }
+          speakingSubmission={
+            selectedPartsForSession.includes('S1') ||
+            selectedPartsForSession.includes('S2') ||
+            selectedPartsForSession.includes('S3')
+              ? speakingSubmission
+              : undefined
+          }
           selectedParts={selectedPartsForSession}
           isPracticeMode={examMode === 'practice'}
           questions={activeExamQuestions}
           onSelectQuestion={handleSelectQuestionFromSummary}
           onSelectWritingTask={handleSelectWritingTaskFromSummary}
+          onSelectSpeakingPart={handleSelectSpeakingPartFromSummary}
           onSubmitClick={() => setIsSubmitModalOpen(true)}
           onSaveAndExitPractice={examMode === 'practice' ? handleSaveAndExitPractice : undefined}
         />
 
-        {/* Bottom Sticky Progress & Navigation Bar (Displays Part Name + 1..N Question Boxes on a single horizontal row) */}
+        {/* Bottom Sticky Progress & Navigation Bar (Supports L - R - W - S) */}
         <ExamFooter
           progressPercent={progressPercent}
           section={currentGroup.section}
@@ -2220,6 +2476,15 @@ export default function App() {
               : undefined
           }
           onSelectWritingTask={handleSelectWritingTaskFromSummary}
+          activeSpeakingPartIndex={activeSpeakingPartIndex}
+          speakingSubmission={
+            selectedPartsForSession.includes('S1') ||
+            selectedPartsForSession.includes('S2') ||
+            selectedPartsForSession.includes('S3')
+              ? speakingSubmission
+              : undefined
+          }
+          onSelectSpeakingPart={handleSelectSpeakingPartFromSummary}
           canGoPrev={currentGroupIndex > 0}
           canGoNext={currentGroupIndex < activeQuestionGroups.length - 1}
           onPrev={handlePrevGroup}

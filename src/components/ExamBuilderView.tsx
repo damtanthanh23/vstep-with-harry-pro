@@ -29,6 +29,7 @@ import {
   Edit3,
   FilePlus2,
   Tag,
+  Mic,
 } from 'lucide-react';
 import { Question, TestMetadata, StimulusCard, PartAudioMap, VocabItem, getPartRelativeNumber } from '../types/exam';
 import { playDictionaryAudio } from '../utils/dictionaryAudio';
@@ -42,18 +43,26 @@ import {
   getEffectiveTestCategory,
 } from '../services/categoryTagService';
 import { WritingTask, WritingSubmission, SAMPLE_B1_WRITING_TASKS } from '../types/writing';
+import {
+  SpeakingTask,
+  SpeakingSubmission,
+  SAMPLE_VSTEP_SPEAKING_TASKS,
+  EMPTY_SPEAKING_SUBMISSION,
+} from '../types/speaking';
 import { TEST_1_QUESTIONS } from '../data/test1Data';
 import { JsonImportModal } from './JsonImportModal';
 import { AiPdfUploadModal } from './AiPdfUploadModal';
 import { ImageUploaderCard } from './ImageUploaderCard';
 import { QuestionStage } from './QuestionStage';
 import { WritingSectionStage } from './WritingSectionStage';
+import { SpeakingSectionStage } from './SpeakingSectionStage';
 import { ImageZoomModal } from './ImageZoomModal';
 import { InteractiveTranscriptModal } from './InteractiveTranscriptModal';
 import {
   saveTestToFirestore,
   createBlankQuestionsTemplate,
   createBlankWritingTasksTemplate,
+  createBlankSpeakingTasksTemplate,
   compactQuestionsForStorage,
 } from '../services/examService';
 import { useAuth } from '../context/AuthContext';
@@ -70,7 +79,7 @@ interface PartConfig {
   id: number;
   shortName: string;
   fullName: string;
-  section: 'LISTENING' | 'READING' | 'WRITING' | 'VOCABULARY';
+  section: 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING' | 'VOCABULARY';
   partNumber: 1 | 2 | 3 | 4;
   rangeLabel: string;
   instruction: string;
@@ -186,6 +195,42 @@ const PART_CONFIGS: PartConfig[] = [
     mappingGuide:
       'Soạn đề bài Writing Task 2 (Bài luận học thuật ≥ 250 từ, chiếm 2/3 tổng điểm Writing) kèm bài mẫu B2/C1.',
   },
+  {
+    id: 11,
+    shortName: 'S1: Speaking Part 1',
+    fullName: 'Speaking Part 1: Social Interaction (Giao tiếp xã hội · 3 phút)',
+    section: 'SPEAKING',
+    partNumber: 1,
+    rangeLabel: 'Speaking Part 1 · 3 mins',
+    instruction:
+      "PART 1: Social Interaction (3'). Answer questions about two familiar topics.",
+    mappingGuide:
+      'Soạn 2 chủ đề giao tiếp xã hội (VD: Let’s talk about your free time activities & Let’s talk about your neighborhood), mỗi chủ đề 3 câu hỏi kèm bài mẫu.',
+  },
+  {
+    id: 12,
+    shortName: 'S2: Speaking Part 2',
+    fullName: 'Speaking Part 2: Solution Discussion (Thảo luận giải pháp · 4 phút)',
+    section: 'SPEAKING',
+    partNumber: 2,
+    rangeLabel: 'Speaking Part 2 · 4 mins',
+    instruction:
+      "PART 2: Solution Discussion (4'). 1 minute to prepare and 2-3 minutes to present.",
+    mappingGuide:
+      'Soạn tình huống (Situation) và 3 lựa chọn giải pháp để thí sinh chọn phương án tốt nhất và phản biện 2 phương án còn lại.',
+  },
+  {
+    id: 13,
+    shortName: 'S3: Speaking Part 3 (Mind-map)',
+    fullName: 'Speaking Part 3: Topic Development & Sơ Đồ Tư Duy Mind-map (5 phút)',
+    section: 'SPEAKING',
+    partNumber: 3,
+    rangeLabel: 'Speaking Part 3 · 5 mins',
+    instruction:
+      "PART 3: Topic Development (5'). Develop the topic using the mind-map and answer follow-up questions.",
+    mappingGuide:
+      'Soạn chủ đề (Topic), sơ đồ tư duy Mind-map gồm 1 ô trung tâm và 3 ô nhánh xung quanh giống hệt đề gốc VSTEP, cùng 3 câu hỏi thảo luận mở rộng.',
+  },
 ];
 
 export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
@@ -268,6 +313,23 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
     return createBlankWritingTasksTemplate();
   });
 
+  const [speakingTasks, setSpeakingTasks] = useState<SpeakingTask[]>(() => {
+    if (initialTest?.speakingTasks && initialTest.speakingTasks.length >= 3) {
+      return JSON.parse(JSON.stringify(initialTest.speakingTasks));
+    }
+    if (isEditing) {
+      return JSON.parse(JSON.stringify(SAMPLE_VSTEP_SPEAKING_TASKS));
+    }
+    return createBlankSpeakingTasksTemplate();
+  });
+
+  const [attachedVocabulary, setAttachedVocabulary] = useState<VocabItem[]>(() => {
+    if (initialTest?.vocabulary && Array.isArray(initialTest.vocabulary)) {
+      return JSON.parse(JSON.stringify(initialTest.vocabulary));
+    }
+    return [];
+  });
+
   const [previewWritingSubmission, setPreviewWritingSubmission] = useState<WritingSubmission>({
     task1Text: '',
     task2Text: '',
@@ -275,7 +337,11 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
     task2WordCount: 0,
   });
 
-  // Active Part (1 to 10) & Active Question in Preview
+  const [previewSpeakingSubmission, setPreviewSpeakingSubmission] = useState<SpeakingSubmission>(
+    EMPTY_SPEAKING_SUBMISSION
+  );
+
+  // Active Part (1 to 13) & Active Question in Preview
   const [activeTab, setActiveTab] = useState<number>(1);
   const [previewActiveQuestionId, setPreviewActiveQuestionId] = useState<number>(1);
   const [previewAnswers, setPreviewAnswers] = useState<Record<number, string>>({});
@@ -459,9 +525,9 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
   const handleExportJson = () => {
     const exportPayload = {
       id: testId,
-      title: testTitle.trim() || 'LanguageCert B1 Custom Test',
+      title: testTitle.trim() || 'VSTEP B1-B2-C1 Custom Test',
       subtitle: testSubtitle.trim(),
-      durationMinutes: Number(durationMinutes) || 90,
+      durationMinutes: Number(durationMinutes) || 172,
       audioMode,
       audioUrl: audioUrl.trim(),
       audioFileName: audioFileName.trim(),
@@ -469,6 +535,8 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
       partAudioFileNames,
       questions,
       writingTasks,
+      speakingTasks,
+      vocabulary: attachedVocabulary,
     };
     const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {
       type: 'application/json',
@@ -476,7 +544,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    const safeName = (testTitle || 'languagecert-b1-test')
+    const safeName = (testTitle || 'vstep-4-skills-test')
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-');
     link.download = `${safeName}.json`;
@@ -847,13 +915,23 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
     );
   };
 
+  const handleUpdateSpeakingTask = (
+    partNum: 1 | 2 | 3,
+    patch: Partial<SpeakingTask>
+  ) => {
+    setSpeakingTasks((prev) =>
+      prev.map((t) => (t.partNumber === partNum ? { ...t, ...patch } : t))
+    );
+  };
+
   const handleLoadSampleDemo = () => {
     setQuestions(JSON.parse(JSON.stringify(TEST_1_QUESTIONS)));
     setWritingTasks(JSON.parse(JSON.stringify(SAMPLE_B1_WRITING_TASKS)));
+    setSpeakingTasks(JSON.parse(JSON.stringify(SAMPLE_VSTEP_SPEAKING_TASKS)));
     if (!testTitle.trim()) {
-      setTestTitle('LanguageCert B1 Demo Test (Mẫu tham khảo)');
+      setTestTitle('VSTEP B1–B2–C1 Demo Test (Mẫu 4 Kỹ năng)');
     }
-    setQuickFillNotice('Đã nạp dữ liệu mẫu chuẩn B1 (52 câu + 2 bài Writing) để tham khảo!');
+    setQuickFillNotice('Đã nạp dữ liệu mẫu chuẩn VSTEP 4 Kỹ năng (75 câu + 2 Writing + 3 Speaking Mind-map)!');
     setTimeout(() => setQuickFillNotice(null), 3500);
   };
 
@@ -867,6 +945,8 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
     partAudioUrls?: PartAudioMap;
     questions: Question[];
     writingTasks?: WritingTask[];
+    speakingTasks?: SpeakingTask[];
+    vocabulary?: VocabItem[];
   }) => {
     setTestTitle(data.title);
     if (data.subtitle) setTestSubtitle(data.subtitle);
@@ -883,16 +963,22 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
     if (data.writingTasks && data.writingTasks.length > 0) {
       setWritingTasks(data.writingTasks);
     }
+    if (data.speakingTasks && data.speakingTasks.length > 0) {
+      setSpeakingTasks(data.speakingTasks);
+    }
+    if (data.vocabulary && data.vocabulary.length > 0) {
+      setAttachedVocabulary(data.vocabulary);
+    }
     setQuickFillNotice(
-      `Đã nhập thành công bộ đề "${data.title}" (${data.questions.length} câu hỏi & ${
+      `Đã nhập thành công bộ đề 4 Kỹ năng "${data.title}" (${data.questions.length} câu hỏi, ${
         data.writingTasks?.length || 2
-      } bài Writing)!`
+      } bài Writing & ${data.speakingTasks?.length || 3} Part Speaking)!`
     );
     setTimeout(() => setQuickFillNotice(null), 4000);
   };
 
   // Save exam data:
-  // - exitAfterSave = false ("Lưu Bản Nháp / Sao lưu"): saves with status='draft' (unless already published & not tagged Đề Nháp) and stays in builder
+  // - exitAfterSave = false ("Lưu Bản Nháp / Sao lưu"): saves with status='draft' and stays in builder
   // - exitAfterSave = true ("Xuất Bản Đề Thi"): saves with status='published' and exits to test list
   const handleSaveExam = async (
     exitAfterSave: boolean = true,
@@ -936,27 +1022,34 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
 
     const trimmedAudioUrl = audioUrl.trim();
     const trimmedAudioFileName = audioFileName.trim();
+    const nowTs = Date.now();
 
     const payload: TestMetadata & {
       isCustom: boolean;
       questions: Question[];
       createdAt: number;
+      updatedAt: number;
       creatorId: string;
       creatorEmail: string;
     } = {
       id: testId,
       title: effectiveTitle,
-      subtitle: testSubtitle.trim() || 'Đề thi LanguageCert B1 (Listening, Reading & Writing)',
-      description: testSubtitle.trim() || 'Đề thi LanguageCert B1 (Listening, Reading & Writing)',
+      subtitle:
+        testSubtitle.trim() ||
+        'Đề thi VSTEP B1–B2–C1 4 Kỹ năng (Listening, Reading, Writing & Speaking)',
+      description:
+        testSubtitle.trim() ||
+        'Đề thi VSTEP B1–B2–C1 4 Kỹ năng (Listening, Reading, Writing & Speaking)',
       totalQuestions: questions.length,
-      durationMinutes: Number(durationMinutes) || 90,
+      durationMinutes: Number(durationMinutes) || 172,
       isAvailable: true,
       isCustom: true,
       status: targetStatus,
       categoryTag: resolvedCategoryTag,
-      createdAt: initialTest?.createdAt || Date.now(),
+      createdAt: initialTest?.createdAt || nowTs,
+      updatedAt: nowTs,
       creatorId: initialTest?.creatorId || currentUser?.uid || 'anonymous-admin',
-      creatorEmail: initialTest?.creatorEmail || currentUser?.email || 'admin@languagecert.vn',
+      creatorEmail: initialTest?.creatorEmail || currentUser?.email || 'admin@vstep.vn',
       audioMode,
       ...(trimmedAudioUrl ? { audioUrl: trimmedAudioUrl } : {}),
       ...(trimmedAudioFileName ? { audioFileName: trimmedAudioFileName } : {}),
@@ -964,21 +1057,23 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
       partAudioFileNames,
       questions,
       writingTasks,
+      speakingTasks,
+      ...(attachedVocabulary.length > 0 ? { vocabulary: attachedVocabulary } : {}),
     };
 
-    // Persist a compacted local backup so tests work offline and never exceed localStorage quota
+    // Persist a compacted local backup under the unified key so tests work offline
     try {
       const compactedPayload = {
         ...payload,
         questions: compactQuestionsForStorage(questions),
       };
-      const rawBackup = localStorage.getItem('langcert_custom_tests_backup');
+      const rawBackup = localStorage.getItem('langcert_custom_tests_backup_v1');
       const existingList: TestMetadata[] = rawBackup ? JSON.parse(rawBackup) : [];
       const mergedList = [
         compactedPayload,
         ...existingList.filter((item) => item.id !== payload.id),
       ];
-      localStorage.setItem('langcert_custom_tests_backup', JSON.stringify(mergedList));
+      localStorage.setItem('langcert_custom_tests_backup_v1', JSON.stringify(mergedList));
     } catch (storageErr) {
       console.warn('Could not write local test backup:', storageErr);
     }
@@ -990,10 +1085,16 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
     });
 
     try {
-      await saveTestToFirestore(payload);
-      setLastSavedAtText(`Đã sao lưu ${timeStr}`);
+      const { syncedToCloud } = await saveTestToFirestore(payload);
+      setLastSavedAtText(syncedToCloud ? `Đã đồng bộ Cloud ${timeStr}` : `Sao lưu máy ${timeStr}`);
       if (onSaveProgress) {
         onSaveProgress(payload);
+      }
+
+      if (!syncedToCloud && currentUser) {
+        setSaveError(
+          'Cảnh báo: Đề thi mới chỉ lưu tạm trên trình duyệt này, chưa đồng bộ lên Cloud Firestore. Vui lòng kiểm tra kết nối mạng hoặc tài khoản Admin.'
+        );
       }
 
       if (exitAfterSave) {
@@ -1003,13 +1104,14 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
         }, 700);
       } else {
         setInPlaceSavedMessage(
-          `Đã lưu Bản Nháp (${resolvedCategoryTag}) lên hệ thống lúc ${timeStr}!`
+          syncedToCloud
+            ? `Đã đồng bộ Bản Nháp (${resolvedCategoryTag}) lên Cloud Firestore lúc ${timeStr}!`
+            : `Đã lưu tạm Bản Nháp trên trình duyệt này lúc ${timeStr} (Chưa đồng bộ Cloud).`
         );
-        setTimeout(() => setInPlaceSavedMessage(null), 3500);
+        setTimeout(() => setInPlaceSavedMessage(null), 4000);
       }
     } catch (err: unknown) {
       console.error('Error saving to Firestore:', err);
-      // Even if cloud write fails (e.g. guest mode), local backup succeeded
       setLastSavedAtText(`Sao lưu máy ${timeStr}`);
       if (onSaveProgress) {
         onSaveProgress(payload);
@@ -1022,11 +1124,11 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
             onTestSaved(payload);
           }, 700);
         } else {
-          setInPlaceSavedMessage(`Đã sao lưu Bản Nháp vào bộ nhớ hệ thống lúc ${timeStr}!`);
+          setInPlaceSavedMessage(`Đã sao lưu Bản Nháp vào bộ nhớ trình duyệt lúc ${timeStr}!`);
           setTimeout(() => setInPlaceSavedMessage(null), 3500);
         }
       } else {
-        const msg = err instanceof Error ? err.message : 'Lỗi khi lưu đề thi vào Firestore.';
+        const msg = err instanceof Error ? err.message : 'Lỗi khi lưu đề thi vào Cloud Firestore.';
         setSaveError(msg);
       }
     } finally {
@@ -1044,6 +1146,16 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
       createBlankWritingTasksTemplate()[activePartConfig.partNumber - 1]
     );
   }, [activePartConfig, writingTasks]);
+
+  const activeSpeakingTask = useMemo(() => {
+    if (activePartConfig.section !== 'SPEAKING') return null;
+    const pNum = activePartConfig.partNumber as 1 | 2 | 3;
+    return (
+      speakingTasks.find((t) => t.partNumber === pNum) ||
+      speakingTasks[pNum - 1] ||
+      createBlankSpeakingTasksTemplate()[pNum - 1]
+    );
+  }, [activePartConfig, speakingTasks]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1149,8 +1261,13 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                 {testTitle ? testTitle : 'Đề Thi VSTEP Mới (Đang soạn Bản Nháp)'}
               </h2>
               <span className="rounded-lg bg-slate-100 border border-slate-200 px-2 py-0.5 text-[11px] font-bold text-slate-700">
-                {completedQuestionCount}/75 câu · {writingTasks.filter((w) => (w.stimulusText || '').trim().length > 0).length}/2 bài viết
+                {completedQuestionCount}/75 câu · {writingTasks.filter((w) => (w.stimulusText || '').trim().length > 0).length}/2 Writing · {speakingTasks.length}/3 Speaking
               </span>
+              {attachedVocabulary.length > 0 && (
+                <span className="rounded-lg bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">
+                  {attachedVocabulary.length} từ vựng
+                </span>
+              )}
               {totalImageCount > 0 && (
                 <span className="rounded-lg bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-800 flex items-center gap-1">
                   <ImageIcon className="h-3 w-3" /> {totalImageCount} ảnh
@@ -1606,16 +1723,18 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
         </div>
       )}
 
-      {/* 10-Part Navigation Bar with Live Status (Listening 1-4, Reading 1-4, Writing 1-2) */}
+      {/* 12-Part Navigation Bar with Live Status (Listening 1-3, Reading 1-4, Writing 1-2, Speaking 1-3) */}
       <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2.5 shadow-2xs">
         <div className="mx-auto max-w-[1600px] flex items-center gap-2 overflow-x-auto no-scrollbar">
           {PART_CONFIGS.map((tab) => {
             const isWritingTab = tab.section === 'WRITING';
+            const isSpeakingTab = tab.section === 'SPEAKING';
             const partQs = questions.filter(
               (q) => q.section === tab.section && q.partNumber === tab.partNumber
             );
             const hasImages =
               !isWritingTab &&
+              !isSpeakingTab &&
               partQs.some(
                 (q) =>
                   q.imageUrl ||
@@ -1635,13 +1754,18 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                   isSelected
                     ? isWritingTab
                       ? 'bg-purple-600 text-white shadow-sm border-b-2 border-purple-800'
+                      : isSpeakingTab
+                      ? 'bg-rose-600 text-white shadow-sm border-b-2 border-rose-800'
                       : 'bg-[#58CC02] text-white shadow-sm border-b-2 border-[#3c8c02]'
                     : isWritingTab
                     ? 'bg-purple-50 text-purple-800 hover:bg-purple-100 border border-purple-200'
+                    : isSpeakingTab
+                    ? 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-200'
                     : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200'
                 }`}
               >
                 {isWritingTab && <PenTool className="h-3.5 w-3.5" />}
+                {isSpeakingTab && <Mic className="h-3.5 w-3.5" />}
                 <span>{tab.shortName}</span>
                 {hasImages && (
                   <ImageIcon
@@ -1959,7 +2083,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-emerald-700 mb-1">
-                  Bài viết mẫu chuẩn B1 (Sample Answer — Hiển thị khi học sinh Xem lời giải):
+                  Bài viết mẫu chuẩn B2–C1 (Sample Answer — Hiển thị khi học sinh Xem lời giải):
                 </label>
                 <textarea
                   rows={6}
@@ -1969,7 +2093,231 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                       sampleAnswer: e.target.value,
                     })
                   }
-                  placeholder="Nhập bài viết mẫu chuẩn B1 để học sinh đối chiếu sau khi nộp bài..."
+                  placeholder="Nhập bài viết mẫu chuẩn B2/C1 để học sinh đối chiếu sau khi nộp bài..."
+                  className="w-full rounded-xl border border-emerald-200 bg-emerald-50/30 p-3.5 text-xs leading-relaxed text-slate-800 outline-hidden focus:border-emerald-500 focus:bg-white"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* =============================================================== */}
+          {/* SPEAKING TASK EDITOR (WHEN TAB 11, 12 OR 13 IS SELECTED)        */}
+          {/* =============================================================== */}
+          {activePartConfig.section === 'SPEAKING' && activeSpeakingTask && (
+            <div className="rounded-3xl border-2 border-rose-200 bg-white p-6 shadow-xs space-y-5">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <Mic className="h-5 w-5 text-rose-600" />
+                  <h4 className="text-base font-black text-slate-900">
+                    Soạn Đề Thi {activeSpeakingTask.title} ({activeSpeakingTask.subtitle})
+                  </h4>
+                </div>
+                <span className="rounded-lg bg-rose-100 px-2.5 py-1 text-xs font-black text-rose-800">
+                  {activeSpeakingTask.durationLabel}
+                </span>
+              </div>
+
+              {/* PART 1: 2 Topic Clusters */}
+              {activeSpeakingTask.partNumber === 1 && (
+                <div className="space-y-4">
+                  {(activeSpeakingTask.topicClusters || []).map((cluster, cIdx) => (
+                    <div
+                      key={cIdx}
+                      className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-3"
+                    >
+                      <div>
+                        <label className="block text-xs font-black text-slate-800 mb-1">
+                          Chủ đề #{cIdx + 1} (Topic Header — VD: Let&apos;s talk about your free time activities.):
+                        </label>
+                        <input
+                          type="text"
+                          value={cluster.topicTitle}
+                          onChange={(e) => {
+                            const nextClusters = [...(activeSpeakingTask.topicClusters || [])];
+                            nextClusters[cIdx] = { ...cluster, topicTitle: e.target.value };
+                            handleUpdateSpeakingTask(1, { topicClusters: nextClusters });
+                          }}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-900 outline-hidden focus:border-rose-500"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="block text-xs font-bold text-slate-700">
+                          Các câu hỏi trong chủ đề #{cIdx + 1} (Mỗi dòng 1 câu hỏi):
+                        </label>
+                        <textarea
+                          rows={4}
+                          value={(cluster.questions || []).join('\n')}
+                          onChange={(e) => {
+                            const nextClusters = [...(activeSpeakingTask.topicClusters || [])];
+                            nextClusters[cIdx] = {
+                              ...cluster,
+                              questions: e.target.value.split('\n'),
+                            };
+                            handleUpdateSpeakingTask(1, { topicClusters: nextClusters });
+                          }}
+                          placeholder="What do you often do in your free time?&#10;Do you watch TV?..."
+                          className="w-full rounded-xl border border-slate-300 bg-white p-3 text-xs text-slate-800 outline-hidden focus:border-rose-500"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* PART 2: Situation & 3 Options */}
+              {activeSpeakingTask.partNumber === 2 && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-black text-slate-800 mb-1">
+                      Tình huống thảo luận (Situation — Hiển thị đúng định dạng đề gốc VSTEP):
+                    </label>
+                    <textarea
+                      rows={4}
+                      value={activeSpeakingTask.situation || ''}
+                      onChange={(e) =>
+                        handleUpdateSpeakingTask(2, { situation: e.target.value })
+                      }
+                      placeholder="VD: A group of people is planning a trip from Hanoi to Sapa. Three means of transport are suggested: by train, by plane, and by coach. Which means of transport do you think is the best choice?"
+                      className="w-full rounded-xl border border-slate-300 bg-slate-50 p-3.5 text-xs leading-relaxed text-slate-900 outline-hidden focus:border-rose-500 focus:bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      3 Phương án gợi ý (Options — Mỗi dòng 1 lựa chọn):
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={(activeSpeakingTask.options || []).join('\n')}
+                      onChange={(e) =>
+                        handleUpdateSpeakingTask(2, {
+                          options: e.target.value.split('\n'),
+                        })
+                      }
+                      placeholder="by train&#10;by plane&#10;by coach"
+                      className="w-full rounded-xl border border-slate-300 bg-slate-50 p-3 text-xs font-semibold text-slate-800 outline-hidden focus:border-rose-500 focus:bg-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* PART 3: Topic + Mind-Map Diagram Nodes + Follow-up Questions */}
+              {activeSpeakingTask.partNumber === 3 && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-black text-slate-800 mb-1">
+                      Chủ đề phát triển (Topic Statement — VD: Travelling has a lot of benefits):
+                    </label>
+                    <input
+                      type="text"
+                      value={activeSpeakingTask.topicStatement || ''}
+                      onChange={(e) =>
+                        handleUpdateSpeakingTask(3, { topicStatement: e.target.value })
+                      }
+                      placeholder="VD: Travelling has a lot of benefits"
+                      className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-900 outline-hidden focus:border-rose-500 focus:bg-white"
+                    />
+                  </div>
+
+                  {/* Mind-Map Editor Box */}
+                  <div className="rounded-2xl border-2 border-rose-200 bg-rose-50/40 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black uppercase tracking-wider text-rose-900">
+                        Sơ Đồ Tư Duy (Mind-Map Diagram — Giống 100% Đề Thi Gốc)
+                      </span>
+                      <span className="text-[11px] font-bold text-rose-700">
+                        Tự động vẽ khung nối bên màn hình thi
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Ô Trung Tâm (Central Node — In đậm ở giữa sơ đồ):
+                      </label>
+                      <input
+                        type="text"
+                        value={activeSpeakingTask.mindMap?.centerTopic || ''}
+                        onChange={(e) =>
+                          handleUpdateSpeakingTask(3, {
+                            mindMap: {
+                              centerTopic: e.target.value,
+                              nodes: activeSpeakingTask.mindMap?.nodes || ['', '', ''],
+                            },
+                          })
+                        }
+                        placeholder="VD: Travelling"
+                        className="w-full rounded-xl border-2 border-rose-300 bg-white px-3.5 py-2 text-xs font-black text-slate-900 outline-hidden focus:border-rose-600"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {[
+                        { idx: 0, label: 'Ô Nhánh Trái (Left Node)' },
+                        { idx: 1, label: 'Ô Nhánh Phải (Right Node)' },
+                        { idx: 2, label: 'Ô Nhánh Dưới (Bottom Node)' },
+                      ].map((branch) => (
+                        <div key={branch.idx}>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                            {branch.label}:
+                          </label>
+                          <input
+                            type="text"
+                            value={activeSpeakingTask.mindMap?.nodes?.[branch.idx] || ''}
+                            onChange={(e) => {
+                              const baseNodes = [
+                                ...(activeSpeakingTask.mindMap?.nodes || ['', '', '']),
+                              ];
+                              while (baseNodes.length < 3) baseNodes.push('');
+                              baseNodes[branch.idx] = e.target.value;
+                              handleUpdateSpeakingTask(3, {
+                                mindMap: {
+                                  centerTopic:
+                                    activeSpeakingTask.mindMap?.centerTopic || 'Topic',
+                                  nodes: baseNodes,
+                                },
+                              });
+                            }}
+                            placeholder={`Ý nhánh ${branch.idx + 1}...`}
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 outline-hidden focus:border-rose-500"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      3 Câu hỏi thảo luận mở rộng bên dưới sơ đồ (Follow-up Questions — Mỗi dòng 1 câu):
+                    </label>
+                    <textarea
+                      rows={4}
+                      value={(activeSpeakingTask.followUpQuestions || []).join('\n')}
+                      onChange={(e) =>
+                        handleUpdateSpeakingTask(3, {
+                          followUpQuestions: e.target.value.split('\n'),
+                        })
+                      }
+                      placeholder="What are the differences in the way to travel between your generation and your grandparents?..."
+                      className="w-full rounded-xl border border-slate-300 bg-slate-50 p-3 text-xs leading-relaxed text-slate-800 outline-hidden focus:border-rose-500 focus:bg-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-emerald-700 mb-1">
+                  Bài nói mẫu chuẩn B2–C1 (Sample Answer — Hiển thị khi học viên luyện tập / xem kết quả):
+                </label>
+                <textarea
+                  rows={6}
+                  value={activeSpeakingTask.sampleAnswer || ''}
+                  onChange={(e) =>
+                    handleUpdateSpeakingTask(activeSpeakingTask.partNumber, {
+                      sampleAnswer: e.target.value,
+                    })
+                  }
+                  placeholder="Nhập bài nói mẫu chuẩn B2/C1 cho phần này..."
                   className="w-full rounded-xl border border-emerald-200 bg-emerald-50/30 p-3.5 text-xs leading-relaxed text-slate-800 outline-hidden focus:border-emerald-500 focus:bg-white"
                 />
               </div>
@@ -2127,7 +2475,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
           {/* =============================================================== */}
           {/* INDIVIDUAL QUESTION EDITOR CARDS FOR CURRENT PART               */}
           {/* =============================================================== */}
-          {activePartConfig.section !== 'WRITING' && (
+          {activePartConfig.section !== 'WRITING' && activePartConfig.section !== 'SPEAKING' && (
             <div className="space-y-4">
               {currentQuestions.map((q) => {
                 const relNum = getPartRelativeNumber(q.id, currentQuestions);
@@ -2526,7 +2874,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
             </div>
 
             {/* Interactive Thumbnail Strip for Current Part */}
-            {activePartConfig.section !== 'WRITING' && (
+            {activePartConfig.section !== 'WRITING' && activePartConfig.section !== 'SPEAKING' && (
               <div className="bg-slate-100 border-b border-slate-200 px-4 py-2.5 flex items-center justify-between gap-2 overflow-x-auto no-scrollbar">
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span className="text-[11px] font-black uppercase text-slate-500">
@@ -2563,7 +2911,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                 </div>
 
                 <span className="text-[11px] font-semibold text-slate-500 shrink-0 hidden sm:inline">
-                  Đánh số từ 1 theo chuẩn PeopleCert
+                  Đánh số theo chuẩn VSTEP Bộ GD&ĐT
                 </span>
               </div>
             )}
@@ -2582,7 +2930,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                       {activePartConfig.section}
                     </span>
                     <span className="text-xs font-black text-slate-800 truncate">
-                      {testTitle || 'Đề thi LanguageCert B1'}
+                      {testTitle || 'Đề thi VSTEP 4 Kỹ năng'}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -2616,7 +2964,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                   </div>
                 )}
 
-                {/* LIVE RENDERED QUESTION OR WRITING STAGE */}
+                {/* LIVE RENDERED QUESTION, WRITING OR SPEAKING STAGE */}
                 <div className="max-h-[65vh] overflow-y-auto">
                   {activePartConfig.section === 'WRITING' ? (
                     <WritingSectionStage
@@ -2625,6 +2973,16 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                       onTaskIndexChange={(idx) => handleSelectPartTab(idx === 1 ? 10 : 9)}
                       submission={previewWritingSubmission}
                       onChange={setPreviewWritingSubmission}
+                      onProceedToReview={() => {}}
+                      isReviewMode={previewMode === 'practice'}
+                    />
+                  ) : activePartConfig.section === 'SPEAKING' ? (
+                    <SpeakingSectionStage
+                      tasks={speakingTasks}
+                      activePartIndex={(activePartConfig.partNumber - 1) as 0 | 1 | 2}
+                      onPartIndexChange={(idx) => handleSelectPartTab(idx === 0 ? 11 : idx === 1 ? 12 : 13)}
+                      submission={previewSpeakingSubmission}
+                      onChange={setPreviewSpeakingSubmission}
                       onProceedToReview={() => {}}
                       isReviewMode={previewMode === 'practice'}
                     />

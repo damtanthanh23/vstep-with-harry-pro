@@ -1,8 +1,9 @@
 import { WritingTask, WritingSubmission } from './writing';
+import { SpeakingTask, SpeakingSubmission } from './speaking';
 import type { VocabItem } from '../data/b1VocabData';
 export type { VocabItem };
 
-export type ExamSection = 'LISTENING' | 'READING' | 'WRITING';
+export type ExamSection = 'LISTENING' | 'READING' | 'WRITING' | 'SPEAKING';
 
 export type QuestionType =
   | 'mcq'
@@ -105,6 +106,7 @@ export interface TestMetadata {
   status?: 'draft' | 'published';
   categoryTag?: string;
   createdAt?: number;
+  updatedAt?: number;
   creatorId?: string;
   creatorEmail?: string;
   audioMode?: 'single' | 'per_part';
@@ -114,6 +116,7 @@ export interface TestMetadata {
   partAudioFileNames?: PartAudioMap;
   questions?: Question[];
   writingTasks?: WritingTask[];
+  speakingTasks?: SpeakingTask[];
   vocabulary?: VocabItem[];
 }
 
@@ -125,10 +128,11 @@ export function isDraftTest(test?: TestMetadata | null): boolean {
 export interface InProgressAttempt {
   testId: string;
   mode: 'exam' | 'practice';
-  selectedParts?: string[]; // e.g., ['L1', 'L2', 'L3', 'L4', 'R1', 'R2', 'R3', 'R4', 'W1', 'W2']
+  selectedParts?: string[]; // e.g., ['L1', 'L2', 'L3', 'R1', 'R2', 'R3', 'R4', 'W1', 'W2', 'S1', 'S2', 'S3']
   answers: Record<number, string>;
   flagged: Record<number, boolean>;
   writingSubmission: WritingSubmission;
+  speakingSubmission?: SpeakingSubmission;
   timeRemainingSeconds: number;
   elapsedSeconds: number;
   totalPausedSeconds: number;
@@ -141,7 +145,7 @@ export interface ExamSessionState {
   testId: string;
   mode: 'exam' | 'practice';
   activeSection: ExamSection;
-  activeQuestionIndex: number; // 1-indexed (1 to 52)
+  activeQuestionIndex: number; // 1-indexed (1 to 75)
   answers: Record<number, string>;
   flagged: Record<number, boolean>;
   timeRemainingSeconds: number;
@@ -185,15 +189,18 @@ export interface UserExamAttempt {
   score: number;
   totalQuestions: number;
   percentage: number;
+  vstepBandScore?: number; // 0-10 VSTEP overall score (e.g. 6.5)
   grade: 'High Pass' | 'Pass' | 'Fail';
   listeningScore: number;
   readingScore: number;
   writingScore?: number;
+  speakingScore?: number;
   timeSpentSeconds: number;
   totalPausedSeconds?: number;
   completedAt: number;
   answers?: Record<number, string>;
   writingSubmission?: WritingSubmission;
+  speakingSubmission?: SpeakingSubmission;
   selectedParts?: string[];
 }
 
