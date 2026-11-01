@@ -1,0 +1,284 @@
+Bạn là kỹ sư full-stack và người thiết kế trải nghiệm học ngoại ngữ. Đây là đặc tả cuối cùng hợp nhất, thay thế các yêu cầu cũ mâu thuẫn về việc chưa triển khai SRS/AI/Flappy Bird/Giải cứu khỉ. Hãy trực tiếp triển khai hệ thống HỌC TỪ VỰNG vào dự án website luyện LanguageCert hiện tại của tôi trong Google AI Studio. Tham khảo các ảnh tôi gửi và đặc tả dưới đây. Mục tiêu là tái tạo logic học tương tự với dữ liệu của tôi và phong cách giao diện nhất quán với website hiện có.
+1. Khảo sát dự án rồi triển khai
+Đọc cấu trúc mã nguồn để xác định framework, router, thư viện UI, nơi lưu bộ đề JSON/vocabulary, cơ chế đăng nhập, cách lưu dữ liệu và dịch vụ AI đang dùng. Nếu đã triển khai một phần từ yêu cầu trước thì kiểm tra và mở rộng phần đó, giữ tiến độ hiện có; không tạo module thứ hai trùng chức năng. Giữ stack và quy ước hiện có. Nối chức năng vào điều hướng thật của website; giữ nguyên khả năng luyện Listening, Reading và Writing.
+
+Hãy nêu ngắn gọn các tệp sẽ sửa, sau đó viết mã và hoàn tất chức năng. Tự xử lý quyết định kỹ thuật thông thường. Chỉ hỏi khi thiếu dữ liệu thực sự ngăn cản việc tích hợp; nếu chưa có backend cho tiến độ, làm bản lưu trên thiết bị hoạt động đầy đủ trước, nêu rõ giới hạn. Không tự chuyển framework, dựng lại cả website, thêm đăng nhập mới hay tạo dịch vụ trả phí.
+
+Đây là yêu cầu triển khai chức năng, không chỉ dựng ảnh giao diện hoặc mô tả cách làm. Mọi nút đang hoạt động phải có hành vi thật. Không dùng tiến độ giả, số đếm cố định hay dữ liệu mẫu thay cho dữ liệu thật khi dự án đã có vocabulary.
+2. Dữ liệu chung và khả năng nhập JSON
+Đọc schema vocabulary thực tế của dự án trước. Dùng adapter để ánh xạ sang mô hình nội bộ, giữ tương thích file cũ. Hỗ trợ mảng vocabulary nằm trong JSON từng Test hoặc một file bộ từ riêng. Không yêu cầu tôi sửa thủ công mọi file.
+
+Mỗi mục từ nội bộ cần: id ổn định, deckId, word, phonetic, partOfSpeech, meaningVi, exampleEn, exampleVi, acceptedEnglishAnswers, acceptedVietnameseAnswers; tùy chọn audioUrl, wordForms, meaningGroupId và cloze. Các tên này là mô hình đích, không được mặc định schema cũ đã dùng đúng tên đó. Giữ các trường nguồn chưa ánh xạ để không mất dữ liệu.
+
+Mỗi bộ có id, title, danh sách mục từ và phiên bản nội dung. Tính tổng từ từ dữ liệu; 80 từ chỉ là ví dụ. Giữ được cụm nhiều từ, IPA Unicode và tiếng Việt có dấu. Không gộp hai nghĩa khác nhau chỉ vì cùng headword. Tiến độ tách theo người học, bộ từ và mục từ; không gắn với vị trí đang hiển thị hoặc chỉ với chuỗi word.
+
+Dữ liệu nguồn thiếu IPA/nghĩa/ví dụ/đáp án thì không tự bịa ở bước hiển thị hoặc tạo câu. Tính năng Tạo từ với AI ở mục 11 được phép sinh bản nháp có nhãn nguồn và bước duyệt riêng. Chỉ đưa mục đủ điều kiện vào chế độ tương ứng. Không cần gọi Gemini API trong mỗi lần học hoặc chấm câu.
+3. Trang chi tiết bộ từ
+Tạo màn hình có tiêu đề bộ từ, nút quay lại, tổng số từ, số từ Đã thuộc, phần trăm và thanh tiến độ. Công thức là Math.round(knownCount / totalCount * 100), với trường hợp totalCount=0 trả về 0. Ví dụ 42/80 phải hiện 53%. Nhãn “Đã thuộc” là trạng thái do người học xác nhận, không phải chứng nhận trình độ.
+
+Thêm khối Tùy chỉnh với:
+- Trạng thái: Toàn bộ / Đã thuộc / Chưa thuộc.
+- Số lượng tối đa: 10 / 20 / 50 / 100 / Toàn bộ.
+- Thứ tự: Theo thứ tự nguồn / Ngẫu nhiên.
+- Huy hiệu “38/80 từ được chọn” hoặc số thực tế tương ứng.
+Quy trình tạo phiên: lấy dữ liệu hợp lệ → lọc trạng thái → lọc điều kiện của chế độ → sắp hoặc xáo trộn → lấy tối đa số lượng yêu cầu → cố định danh sách và câu hỏi của phiên. Với Ngẫu nhiên phải xáo trộn trước khi giới hạn số lượng. Không dùng sort(() => Math.random() - 0.5). Không xáo lại khi render.
+
+Màn hình cấu hình có thể hiển thị số từ được chọn chung; sau khi chọn chế độ phải hiển thị số đủ điều kiện thực tế trước khi chạy nếu số đó giảm. Ví dụ “37/38 từ có câu ngữ cảnh hợp lệ; 1 từ chưa có dữ liệu”. Nếu còn 0 mục thì giải thích và không bắt đầu. Đang học không tự thêm/bớt từ khi trạng thái Thuộc thay đổi.
+
+Hiển thị sáu ô chế độ: Flashcard, Trắc nghiệm, Nghe, Gõ từ, Ghép cặp, Đặc biệt. Các ô thể hiện màu/icon, mô tả ngắn và mức điểm thưởng rõ nghĩa.
+
+Bên dưới có bảng từ: nút phát âm, word/IPA, nghĩa, badge từ loại, ví dụ và công tắc Đã thuộc. Dòng đã thuộc có nền xanh nhạt. Có tìm kiếm theo từ và nghĩa, lọc trạng thái riêng cho bảng. Bộ lọc bảng không âm thầm thay cấu hình phiên học. Mở chi tiết để đọc ví dụ đầy đủ; trên điện thoại chuyển sang thẻ dễ đọc. Mọi thay đổi công tắc ngoài phiên được lưu ngay và cập nhật đồng bộ tất cả số đếm.
+4. Các chế độ học bắt buộc
+Flashcard
+Có hai hướng EN→VN và VN→EN. EN→VN hỏi từ tiếng Anh, có IPA/từ loại, mặt sau hiện nghĩa và ví dụ song ngữ. VN→EN hỏi nghĩa Việt và từ loại; mặt sau hiện từ, IPA và ví dụ. Không để từ tiếng Anh xuất hiện ở mặt hỏi VN→EN qua ví dụ hoặc phần phụ.
+
+Click thẻ hoặc Space khi không gõ để lật. Có ô nhập đáp án và nút Kiểm tra, nút phát âm, Quên, Thuộc, Trước, Tiếp. EN→VN chấp nhận một trong các nghĩa Việt đã khai báo; VN→EN chấp nhận từ/cụm tiếng Anh hoặc biến thể đã khai báo. Tách kết quả Kiểm tra với lựa chọn tự đánh giá Quên/Thuộc. Không bắt người học gõ nguyên chuỗi nhiều nghĩa dạng “chăm sóc / xử lý” khi chỉ một nghĩa hợp lệ đã đủ.
+
+Quên/Thuộc thay đổi trạng thái nháp của từ và chuyển sang thẻ kế; thẻ cuối dẫn đến kết quả. Trước/Tiếp chỉ điều hướng, không tự tính đúng hay cộng điểm; lượt còn mục chưa đánh giá phải hiện rõ để người học hoàn thành hoặc kết thúc sớm. Quay lại thẻ cũ giữ được đáp án và đánh giá đã có. Đổi hướng giữ vị trí và danh sách, đóng mặt đáp án và xóa ô nhập của thẻ hiện tại; kết quả đã ghi không bị cộng lại.
+Trắc nghiệm
+Khi bấm ô Trắc nghiệm, mở modal chọn một trong ba dạng:
+1. Từ→Nghĩa: hiện từ/IPA/từ loại, chọn nghĩa Việt.
+2. Nghĩa→Từ: hiện nghĩa Việt, chọn từ tiếng Anh; không hiện IPA của đáp án ở câu hỏi.
+3. Ngữ cảnh: hiện câu tiếng Anh có chỗ trống, chọn từ/cụm đúng; có nút hiện/ẩn bản dịch tiếng Việt từ dữ liệu sẵn có.
+Mặc định 4 lựa chọn, xáo vị trí đáp án đúng; 30 giây mỗi câu. Phải có chính xác một đáp án hợp lệ theo nghĩa/ngữ cảnh. Nhiễu không trùng hiển thị, không là đáp án thay thế hoặc nghĩa tương đương; ưu tiên cùng từ loại và độ dài hợp lý khi có đủ dữ liệu. Có thể lấy nhiễu từ toàn bộ bộ từ, không chỉ từ các mục trong lượt học.
+
+Không thể bảo đảm khác nghĩa bằng cách so chuỗi; ưu tiên câu hỏi/nhiễu đã biên soạn hoặc metadata phân biệt nghĩa. Nếu không có đủ phương án chắc chắn sai, cho 2–3 lựa chọn và thông báo, hoặc loại câu khỏi chế độ; không lặp lựa chọn hay tự bịa nghĩa cho đủ 4. Nếu không thể tạo tối thiểu 2 lựa chọn hợp lệ thì không tạo câu đó.
+
+Ngữ cảnh ưu tiên trường cloze/answerSpan/answerText có sẵn. Nếu phải tự tạo từ ví dụ, tìm đúng từ hoặc biến thể được khai báo với ranh giới hợp lệ, xử lý nguyên cụm và ký tự đặc biệt. Không tìm được chắc chắn thì bỏ câu kèm lý do, không để đáp án còn nguyên trong câu. Từ trong lựa chọn phải đúng dạng cần điền.
+
+Khi chọn đáp án hoặc hết giờ: khóa câu một lần, dừng đồng hồ, hiện đúng/sai/hết giờ, đáp án đúng và ví dụ giải thích, rồi chờ nút Tiếp. Không cộng nhiều lần do bấm nhanh hoặc do hết giờ cùng lúc với bấm đáp án. Bản dịch ngữ cảnh hoặc audio đọc đáp án trong dạng Nghĩa→Từ được tính là trợ giúp.
+Nghe và gõ
+Ẩn headword và IPA đáp án. Có nút nghe, từ loại nếu có, ô gõ, Kiểm tra, tốc độ nghe chọn được, Xem/Ẩn ví dụ và Gợi ý còn 3 lượt. Mặc định 30 giây/câu. Ưu tiên audioUrl; nếu chưa có thì dùng khả năng đọc tiếng Anh của trình duyệt khi hỗ trợ. Nếu cả hai không dùng được, thông báo và không chạy một câu Nghe không có âm thanh.
+
+Có nút Bắt đầu nghe để đáp ứng trường hợp trình duyệt chặn tự phát. Chỉ bắt đầu đồng hồ khi nguồn phát đầu tiên thực sự phát được. Không reset thời gian khi nghe lại; dừng nguồn cũ khi phát nguồn mới, chuyển câu hoặc thoát. Nếu phát âm lỗi giữa chừng, dừng câu và cho thử lại, không tự chấm sai do lỗi kỹ thuật.
+
+Gợi ý mở chữ tích lũy và không trùng vị trí: lần đầu mở chữ đầu mỗi từ; lần hai mở thêm chữ cuối; lần ba mở thêm tối đa 40% tổng số chữ cái nhưng vẫn giữ ít nhất một chữ bị che. Từ quá ngắn không còn chữ có thể mở hợp lệ thì vô hiệu hóa sớm và không trừ lượt vô ích. Giữ dấu cách/dấu câu trong mẫu che, hiển thị đúng số lượt còn lại. Quy tắc này là thiết kế đề xuất để tái hiện hành vi nhìn thấy, không phải khẳng định thuật toán của ảnh.
+
+Ví dụ phải che từ đích tiếng Anh bằng cùng dữ liệu cloze; không tạo được chỗ trống an toàn thì vô hiệu hóa nút ví dụ cho câu đó. Ghi nhận hintCount và usedExample. Đúng có trợ giúp phải phân biệt với đúng độc lập.
+Gõ từ
+Hiện nghĩa Việt, từ loại và ví dụ tiếng Anh đã che từ đích nếu có. Yêu cầu nhập từ/cụm tiếng Anh. Có Kiểm tra, gợi ý và phản hồi như chế độ Nghe. Mặc định không giới hạn thời gian, có tùy chọn 30 giây. Không phát âm đáp án trước khi chấm trừ khi người học bấm trợ giúp; khi đó ghi nhận hỗ trợ. Đây là thiết kế đề xuất vì ảnh chỉ có ô giới thiệu chế độ này.
+Ghép cặp
+Hai cột Anh và Việt. Mỗi vòng tối đa 8 cặp, xáo hai cột độc lập một lần lúc tạo vòng, giữ nguyên vị trí khi ghép. Chọn một ô mỗi bên để kiểm tra bằng id cặp, không bằng vị trí hoặc chỉ bằng chuỗi nghĩa. Đúng thì khóa hai ô; sai thì phản hồi và bỏ chọn. Hiển thị số vòng, đã ghép trong vòng và tổng đã ghép toàn phiên. Với 38 mục và 8 cặp/vòng: 5 vòng, vòng cuối 6 cặp.
+
+Mặc định đề xuất: 5 tim cho toàn phiên, sai một lần trừ 1 tim; 30 giây mỗi vòng. Không đặt lại tim giữa các vòng. Hết tim hoặc hết giờ kết thúc lượt và hiển thị kết quả phần đã làm; các cặp chưa ghép được ghi là chưa hoàn thành. Hoàn thành vòng khi còn thời gian thì bấm Vòng tiếp, đặt lại đồng hồ cho vòng mới. Có tùy chọn không giới hạn thời gian.
+
+Tránh các cặp nghĩa hiển thị giống nhau hoặc có nhiều cách ghép hợp lệ: thêm ngữ cảnh/từ loại phù hợp hoặc tách sang vòng khác. Cặp chỉ có 1 mục vẫn hoạt động. Không bắt buộc kéo thả; click/chạm và bàn phím phải dùng được.
+Đặc biệt — Hỗn hợp, Flappy Bird và Giải cứu khỉ
+Bấm ô Đặc biệt mở bộ chọn có ba chế độ hoạt động thật: Hỗn hợp, Flappy Bird từ vựng, Giải cứu khỉ. Dùng chung WordRef, tạo câu hỏi, chấm, trợ giúp và lưu kết quả với các chế độ khác. Không có nút game chỉ mở một ảnh tĩnh. Các luật vật lý và con số chưa xác định từ ảnh dưới đây là cấu hình đề xuất, không giả làm luật gốc đã xác nhận.
+
+Hỗn hợp: mỗi mục trong danh sách được gán một dạng khả dụng trong Quiz/Gõ từ/Nghe, hoặc Flashcard tự đánh giá nếu không còn dạng khách quan. Gán dạng và câu một lần trước khi chạy, tránh quá hai câu liên tiếp cùng dạng khi có lựa chọn thay thế. Hiện nhãn dạng hiện tại và không nhân đôi logic chấm.
+
+Flappy Bird từ vựng:
+- Màn hình đầu có nhân vật chim, hướng dẫn chạm/Space để bắt đầu và 5 mạng; câu trả lời sai trừ 1 mạng như ảnh. Có cảnh chim/ống, tiến độ theo số từ, mạng còn lại, Chơi lại/Thoát.
+- State gồm intro → flying → question → feedback → resume-ready → flying, hoặc results khi hết mạng/hoàn thành. Khi hiện câu hỏi, dừng vật lý chim/ống nhưng đồng hồ 30 giây của câu vẫn chạy. Có thể hỏi dạng hỗn hợp với Nghe viết, Quiz hoặc Gõ, dùng đúng điều kiện dữ liệu.
+- Ảnh chưa xác nhận thời điểm kích hoạt câu hỏi. Chọn luật mặc định: khi vượt qua một cặp ống hoặc va chạm trước khi qua cặp đó, dừng và đưa ra một câu; một cặp ống chỉ kích hoạt một câu. Va chạm vật lý tự nó không chấm từ là sai hoặc trừ thêm mạng; mạng do kết quả câu hỏi quyết định. Sau chấm, tái bố trí chim/ống vào vị trí an toàn để chơi tiếp.
+- Đúng thì giữ mạng, ghi một attempt và điểm theo cấu hình; sai/hết 30 giây thì trừ đúng một mạng và ghi kết quả tương ứng. Hết mạng kết thúc; mục chưa hỏi/chưa trả lời không bị biến thành câu sai. Trả lời hết tập mục đã chọn thì hoàn thành dù còn mạng.
+- Sau phản hồi, lớp hướng dẫn như ảnh: chạm đầu tiên chỉ tiếp tục rơi và đóng lớp chờ, không tạo lực nhảy; chạm/Space tiếp theo mới nhảy. Cùng một sự kiện không được vừa đóng modal vừa làm chim nhảy. Bỏ qua key repeat.
+- Space trong input phải nhập khoảng trắng cho cụm từ, không điều khiển chim. Chạm nút/input không lan sang canvas. Vật lý dùng thời gian hoạt động thực, không phụ thuộc số frame; không tạo nhiều vòng animation khi render lại. Pause khi tab ẩn/mở modal; tiếp tục an toàn, không bị rơi mất mạng ngay do thời gian nền.
+- Có chế độ giảm chuyển động/tự điều khiển giúp vẫn làm toàn bộ câu hỏi mà không phụ thuộc phản xạ vận động; báo rõ đây là hỗ trợ điều khiển, không phải gợi ý đáp án.
+Giải cứu khỉ:
+- Modal chọn Quiz hoặc Gõ từ. Quiz hỏi từ Anh→nghĩa Việt; Gõ hỏi nghĩa Việt→từ/cụm Anh. Theo ảnh, Yeti trong Quiz tiến nhanh gấp đôi Gõ; dùng tỷ lệ tốc độ 2:1. Không sao chép tên miền/logo trong cảnh vào website mới.
+- Cảnh có khỉ, Yeti, bối cảnh, khoảng cách dạng thanh và mét, nhãn chế độ, số câu/tổng, điểm, Chơi lại/Thoát. Nhân vật và khoảng cách phải phản ánh trạng thái thật; không chỉ đổi chữ bên dưới ảnh nền.
+- Tham số mặc định đề xuất: khoảng cách đầu 100 m, tối đa 100 m; tốc độ Gõ 1 m/giây hoạt động, Quiz 2 m/giây; đúng cộng 15 m có chặn trần; sai trừ 10 m có chặn sàn. Tập trung các giá trị vào gameConfig để chỉnh độ khó sau, không nói rằng các mức mét này được xác nhận từ ảnh.
+- Khoảng cách giảm liên tục trong lúc người học trả lời; Quiz và Gõ dùng cùng cách chuẩn hóa/chấm như các chế độ thường. Không thêm đồng hồ 30 giây thứ hai cho game này nếu khoảng cách đã là giới hạn thời gian. Dừng truy đuổi trong phản hồi, hướng dẫn, pause, lỗi kỹ thuật và kết quả để người học đọc giải thích.
+- Chọn sai hiện lựa chọn sai màu đỏ, đáp án đúng màu xanh và giải thích; Yeti có phản ứng. Chọn đúng hiện phản hồi, tăng khoảng cách và điểm một lần. Nút Tiếp chuyển câu và bắt đầu truy đuổi lại.
+- Khi khoảng cách chạm 0: khóa tương tác, dừng loop/audio, phát hoạt ảnh bắt được khỉ một lần rồi sang kết quả nháp. Kết thúc vì bị bắt không tự chấm câu đang nhập dở là sai; ghi incomplete. Khi hoàn thành mọi câu trước khi bị bắt thì kết thúc thành công.
+- Ảnh cho thấy câu 14/131 nhưng kết quả 9 đúng + 4 sai = 13 câu đã chấm, 69%. Phải phân biệt chỉ số câu đang xem, số câu đã chấm và tổng tập mục; không lấy 14 hoặc 131 làm mẫu số tỷ lệ này.
+- Nếu submit đồng thời với khoảng cách về 0, xử lý theo cùng một nguồn thời gian: khoảng cách đã <=0 trước thời điểm submit thì kết thúc, không vừa nhận điểm đúng vừa thua. Một callback vật lý không được ghi nhiều kết quả hoặc tiếp tục trừ sau khi đã kết thúc.
+- Hoạt ảnh thất bại vui nhộn, không đồ họa bạo lực. Tái sử dụng asset hợp lệ của dự án hoặc tạo hình đơn giản bằng SVG/CSS/canvas; nhân vật có trạng thái chờ/di chuyển/đúng/sai/bị bắt. Không dùng nguyên ảnh chụp cả giao diện làm sân chơi.
+Cả hai game có nút pause/tiếp tục, âm lượng, điều khiển bàn phím/chạm và phương án giảm chuyển động. Giới hạn delta-time, dọn requestAnimationFrame, timer, listener, audio và tài nguyên canvas khi thoát. Resize không reset bài hoặc thay số liệu. Có thể dùng UI framework hiện có cho câu hỏi và canvas/SVG cho cảnh, không cần đổi framework.
+
+Game arcade là phiên luyện thường, không tự đổi lịch SRS. Chỉ chế độ SRS đã được đánh dấu sessionKind=srs mới có quyền cập nhật lịch. Học lại câu sai và Chơi tiếp tạo phiên mới có parentSessionId; không sửa kết quả gốc đã lưu.
+5. Chấm đáp án, trạng thái thuộc và điểm thưởng
+Tiếng Anh: chuẩn hóa Unicode, trim, chữ thường, gộp khoảng trắng, chuẩn hóa kiểu dấu nháy; chấp nhận đúng những biến thể được khai báo. Không tự bỏ khoảng trắng của cụm, không tự bỏ mọi dấu nối và không dùng so khớp chuỗi con. Các cách viết Anh–Mỹ chỉ chấp nhận khi được khai báo.
+
+Tiếng Việt: chuẩn hóa Unicode, chữ thường, trim, gộp khoảng trắng, giữ dấu. Chấp nhận một trong các nghĩa được biên soạn sẵn; đừng tự coi cách diễn đạt khác là sai chắc chắn hoặc dùng fuzzy matching để tự nhận đúng. Khi chưa có đáp án Việt đáng tin cậy, cho tự đối chiếu và đánh dấu Thuộc/Quên, không giả vờ chấm tự do chính xác.
+
+Luôn tách các trường: đã xem, trả lời đúng/sai/hết giờ, có trợ giúp, và isKnown. isKnown là do công tắc hoặc Quên/Thuộc của người học. Quiz đúng một lần không tự biến thành đã thuộc; ở trang kết quả cho người học chủ động chọn “Đánh dấu các từ trả lời đúng không dùng trợ giúp là đã thuộc”, mặc định chưa chọn. Các mục khác giữ nguyên trừ khi người học sửa rõ ràng. Như vậy các chế độ vẫn cập nhật thống kê luyện tập, nhưng tỷ lệ Đã thuộc giữ cùng một định nghĩa.
+
+Những số thưởng trong ảnh chưa có công thức rõ. Dùng một rewardConfig đề xuất và công bố ngay trong UI: Flashcard +5 cho một mục lần đầu tự đánh giá; Quiz +10, Gõ +10, Nghe +15 cho câu đúng không trợ giúp; Ghép cặp +10 cho cặp ghép đúng khi chưa ghép sai mục đó; Hỗn hợp +20 và Flappy Bird +20 cho câu đúng độc lập; Hỗn hợp dùng Flashcard tự đánh giá cũng +20; Giải cứu khỉ +10 cho câu đúng độc lập. Sai/hết giờ/đúng có trợ giúp không nhận điểm nhưng vẫn ghi nhận đã luyện. Ô Đặc biệt ghi “Tối đa +20/mục”, màn chọn game nêu đúng mức từng game. Đây là một phương án thưởng nhất quán, không khẳng định tái tạo công thức sinh 109 điểm trong ảnh.
+
+Tối đa một lần thưởng cho mỗi mục từ trong một sessionId, dù lật lại, kiểm tra lại, đổi hướng hay quay lại. Với các game Đặc biệt chỉ dùng mức của game đang chơi, không cộng thêm mức của dạng câu con. Điểm là điểm học tập nội bộ, không phải tiền hay token có thể đổi giá trị. Gọi đúng là “Điểm lượt học”. Chỉ cộng vào tổng khi lưu phiên; một phiên đã lưu không được ghi nhận hai lần. Chơi lượt mới có thể nhận điểm luyện tập mới; đây không phải cơ chế chống gian lận cho giải thưởng có giá trị.
+
+Nếu bổ sung chuỗi ngày, tính từ ngày địa phương Asia/Ho_Chi_Minh có ít nhất một kết quả luyện được lưu, tối đa một lần mỗi ngày; mở trang không làm tăng chuỗi. Không cần số lửa giả để giống ảnh. Triển khai SRS theo mục 13–15 vì ảnh mới đã xác nhận có tính năng; không gắn nhãn FSRS/SM-2 cho lịch đề xuất nếu chưa triển khai đúng thuật toán tương ứng.
+6. Vòng đời phiên và cách lưu nhất quán
+Dùng một state machine/reducer hoặc cơ chế tương đương cho toàn bộ phiên. Phân biệt preparing, active, feedback, paused, completed, aborted và trạng thái đang lưu. Một câu có id riêng, một phiên có sessionId riêng. Các câu hỏi/lựa chọn được cố định, không tạo trong render.
+
+Mọi đánh giá và điểm trong game là bản nháp. Ngoài game, công tắc ở bảng lưu ngay. Khi học xong hoặc kết thúc sớm hợp lệ, mở trang kết quả để người học xem và bấm Lưu kết quả; chỉ bước này commit tiến độ, thống kê và điểm của phiên. Bấm lưu lại phải idempotent. Lưu lỗi phải giữ bản nháp và cho thử lại, không hiển thị thành công giả.
+
+Trang kết quả có số đúng độc lập, đúng có trợ giúp, sai, hết giờ/chưa hoàn thành, thời gian học, điểm, từ cần ôn, từ đã tự đánh giá và nút Lưu kết quả, Học lại từ sai, Học lượt mới, Về bộ từ. Nếu bấm rời trang hoặc bắt đầu lượt mới khi kết quả chưa lưu, yêu cầu chọn lưu hoặc bỏ kết quả; không bỏ nháp âm thầm. Với Flashcard báo số đã tự đánh giá, không tính Quên như câu trả lời sai và không trộn tự đánh giá vào tỷ lệ đúng của quiz. Tỷ lệ đúng khách quan lấy tổng câu khách quan thực sự đã chấm làm mẫu số, gồm đúng/sai/hết giờ; loại mục chỉ tự đánh giá, incomplete và chưa hỏi. Các mục đang nhập dở khi game kết thúc báo riêng. Chi tiết kết quả trước/sau lưu ở mục 18. Với Ghép cặp, báo số cặp hoàn thành và số lần ghép sai riêng, không gọi một lần click sai là một câu quiz mới.
+
+Khi Thoát giữa chừng, pause đồng hồ và mở modal “Thoát khỏi lượt học? Kết quả và điểm của lượt này chưa được lưu.” với Ở lại và Thoát không lưu. Ở lại khôi phục đúng thời gian còn lại; Thoát không lưu bỏ mọi thay đổi nháp của phiên, giữ tiến độ đã lưu trước đó. Đóng modal bằng Escape tương đương Ở lại. Chơi lại giữa chừng cũng cần xác nhận bỏ bản nháp, đặt lại cùng danh sách/cấu hình với sessionId mới; không xóa tiến độ đã lưu. Học lượt mới từ trang bộ từ có thể tạo thứ tự ngẫu nhiên mới.
+
+Có thể lưu nháp cục bộ để phục hồi sau reload, nhưng không commit điểm hay isKnown trước bước lưu. Reload chỉ đề nghị tiếp tục hoặc bỏ bản nháp, không tự ghi nhận phiên hoàn thành. Xóa nháp khi đã lưu hoặc đã xác nhận bỏ. Nếu có nhiều tab cùng sửa tiến độ, xử lý phiên bản/xung đột phù hợp, không ghi đè toàn bộ dữ liệu mới bằng snapshot cũ.
+
+Nếu dự án có backend, dùng kho dữ liệu/auth hiện có và kiểm soát người dùng chỉ đọc/ghi tiến độ của họ. Nếu chưa có, dùng IndexedDB hoặc localStorage có schemaVersion và adapter để nâng cấp sau, ghi rõ chỉ lưu trên thiết bị. Gói một lần commit nhất quán để tránh cộng điểm mà thiếu tiến độ hoặc ngược lại. Khóa lưu theo sessionId. Không dùng chung dữ liệu giữa các tài khoản trên một trình duyệt. Không sửa JSON nội dung nguồn để lưu tiến độ cá nhân.
+7. Thời gian, âm thanh và bàn phím
+Bộ đếm dựa trên deadline và thời gian còn lại, không trừ một giây theo số lần render. Khi pause, lưu remainingMs; khi tiếp tục, tạo deadline mới từ remainingMs. Mở modal xác nhận, chuyển tab hoặc ứng dụng bị ẩn thì pause trong chế độ học; khi quay lại yêu cầu Tiếp tục. Pause dừng âm thanh; tiếp tục câu Nghe có thể cần nút nghe lại. Dọn mọi timer, listener và nguồn audio khi đổi câu, chơi lại, kết thúc hoặc unmount.
+
+Khóa chấm một lần theo questionId/roundId; kết quả đến muộn từ câu cũ không được chấm cho câu mới. Đồng hồ và thao tác người dùng phải dùng cùng một điều kiện kiểm tra deadline để xử lý tình huống sát giờ. Timer không chạy ở màn hình phản hồi hay kết quả.
+
+Giữ Space để lật và mũi tên để chuyển thẻ khi không focus input; số 1–4 chọn quiz khi không gõ; Enter kiểm tra và Escape điều khiển modal. Không xử lý Enter khi sự kiện đang trong IME composition. Không chiếm Ctrl/Cmd+X/C/V/S, Ctrl+H hoặc Ctrl+Space khi nhập liệu. Không sao chép phím tắt trong ảnh bằng mọi giá; mọi thao tác phải có nút bấm và hoạt động trên Mac/Windows/điện thoại.
+8. Giao diện và phạm vi
+Tham khảo ảnh về phân cấp: nền sáng xám nhẹ, khối trắng bo góc, khoảng cách thoáng, viền mảnh, số tiến độ dễ đọc; ô Flashcard tím, Quiz cam, Nghe xanh ngọc, Gõ từ xanh lá, Ghép cặp xanh dương, Đặc biệt hồng. Điều chỉnh theo design system hiện có; không sao chép logo hay tên thương hiệu OpenTOEIC vào website LanguageCert của tôi.
+
+Desktop lưới chế độ 3 cột, tablet 2, mobile 1 hoặc 2 tùy không gian. Thu nhỏ thẻ và wrap cụm dài, không bê nguyên kích thước ảnh chụp sang CSS. Không có tràn ngang ở màn hình 360px. Input/touch target đủ lớn, focus thấy rõ, màu chữ đủ tương phản; thông báo đúng/sai bằng cả chữ và màu. Modal có focus trap, nhãn và trả focus về nút mở. Tôn trọng cài đặt giảm chuyển động.
+
+Phạm vi bao gồm ba tab học từ, lộ trình, bộ cá nhân/thư mục, AI tạo nội dung, SRS, BXH nếu có backend, Hỗn hợp, Flappy Bird, Giải cứu khỉ và kết quả/lịch sử. Không mở rộng sang toàn bộ Cộng đồng, lớp học, đối kháng, chợ bộ từ, thanh toán hoặc đăng nhập mới khi dự án chưa có đặc tả. Ưu tiên tích hợp hoàn chỉnh các phần đã được mô tả.
+9. Điều hướng, danh mục lộ trình và chi tiết lộ trình
+Mục từ vựng có ba không gian hoạt động đầy đủ: Lộ trình / Bộ của tôi / Học từ của tôi. Tab Cộng đồng và nút Lớp học chỉ có nhãn trong ảnh; nối vào chức năng có sẵn nếu dự án đã có, nếu chưa có thì ẩn hoặc đánh dấu chưa hỗ trợ và vô hiệu hóa rõ ràng. Không dựng mạng xã hội hoặc hệ thống lớp học giả.
+
+Phân biệt:
+- Lộ trình (roadmap): tập hợp có thứ tự các bộ từ.
+- Bộ từ (deck): chứa các mục từ để học.
+- Thư mục cá nhân (folder): tổ chức các bộ từ do người học sở hữu.
+- SRS: trạng thái ôn của người học cho từng mục từ, dùng chung khi mở từ các màn hình khác nhau.
+- CEFR/B1, độ khó 1–5 và SRS Lv0–Lv5 là ba thông tin khác nhau, không quy đổi tự động.
+Trang Lộ trình có khu vực đã ghim, bộ lọc danh mục và các nhóm lộ trình. Điều chỉnh nhãn TOEIC trong ảnh thành nhóm phù hợp dữ liệu LanguageCert thực tế, chẳng hạn Theo sách/bộ đề, Theo kỹ năng/Part và Theo trình độ. Không tạo 20 bộ hay 1.600 từ giả chỉ để khớp ảnh. Nếu dự án chỉ có 8 Test với vocabulary thì hiển thị đúng 8 bộ và tổng số mục nhập được.
+
+Mỗi thẻ lộ trình có tiêu đề đầy đủ, số bộ thực tế, độ khó nếu có metadata và trạng thái ghim. Độ khó chưa có dữ liệu thì hiện “Chưa đánh giá”; không dùng tiến độ cá nhân để tự suy độ khó. Ghim/bỏ ghim lưu theo người dùng; bản ở khu vực ghim và bản ở danh mục là cùng một roadmapId. Không nhân bản nội dung hoặc cộng số liệu hai lần. Hỗ trợ click, chạm và bàn phím; dải thẻ cuộn ngang chỉ cuộn trong vùng đó.
+
+Chi tiết lộ trình có nút quay lại, tên, số bộ, tổng mục từ, phần trăm hoàn thành, tiến độ dạng n/N, Ghim/Bỏ ghim, BXH và Học ngắt quãng. Các bộ hiển thị theo thứ tự nguồn, có tên, số đã thuộc/tổng, phần trăm, thanh tiến độ và nút mở. Không khóa các bộ sau chỉ vì thứ tự nếu chưa có yêu cầu khóa.
+
+Tổng tiến độ lộ trình là tổng isKnown của tập mục từ thuộc các bộ trong lộ trình chia cho tổng mục từ hợp lệ trong tập đó; loại deckId bị lặp. Không lấy trung bình cộng phần trăm từng bộ. Ví dụ 82/1600 → 5%; bộ 1 có 42/80 → 53%. Hai số phải cùng phản ánh dữ liệu thật. Nếu danh sách bộ hoặc nội dung đổi, tính lại tổng; lưu phiên bản nội dung dùng cho lịch sử.
+10. Bộ của tôi, thư mục, nhập và sửa từ
+Triển khai tạo/xem/sửa/xóa bộ từ cá nhân. Modal tạo bộ có tên bắt buộc, mô tả tùy chọn, chọn một trong các biểu tượng và Hủy/Tạo mới. Trim tên, không chấp nhận toàn khoảng trắng; khóa submit trong lúc lưu và chống tạo trùng do bấm nhiều lần. Đóng khi có nội dung chưa lưu cần xác nhận bỏ. Bộ rỗng vẫn xem/sửa được, nhưng không được bắt đầu lượt học rỗng.
+
+Thẻ bộ từ có tên, mô tả, số từ, chọn nhiều, Xem, Học, Sửa, Xóa. Nút Học đi vào cùng trang cấu hình và engine hiện có, không tạo phiên bản học riêng. Trang quản lý hiển thị Tổng, Thuộc, Chưa thuộc và phần trăm; số liệu phải nhất quán với phạm vi bộ đang chọn. Khi chọn nhiều bộ, ghi rõ phạm vi áp dụng của các thao tác.
+
+Tạo/đổi tên thư mục; thêm bộ vào, di chuyển bộ ra hoặc sang thư mục khác. Dùng quan hệ folderId/deckId, không sao chép bộ. Mặc định một bộ cá nhân nằm trong tối đa một thư mục. Xóa thư mục chỉ bỏ cấu trúc gom nhóm, giữ các bộ và chuyển chúng về Chưa phân thư mục; hộp xác nhận phải nói rõ hành vi. Xóa bộ hoặc từ cần xác nhận, ưu tiên xóa mềm/phục hồi; không cho người dùng xóa nội dung hệ thống như thể họ là tác giả.
+
+Thêm/sửa từ thủ công và Thêm nhiều từ phải dùng được ngay cả khi chưa cấu hình AI. Hỗ trợ nhập JSON vocabulary hiện có, dán các dòng có cột bằng tab và CSV được parse đúng dấu ngoặc kép/xuống dòng. Cho xem trước, ánh xạ cột, sửa dòng lỗi, phát hiện trùng và chọn rõ Bỏ qua/Giữ riêng/Cập nhật mục đã xác định. Không tự ghi đè tiến độ, không gộp khác nghĩa. Không dùng split dấu phẩy đơn giản cho câu ví dụ chứa dấu phẩy.
+
+Chỉ ghi những dòng đã xác nhận sau xem trước; báo số thêm thành công, bỏ qua và lỗi. Retry không tạo bản trùng. Có thể xuất bộ cá nhân thành JSON tương thích để sao lưu, giữ metadata nguồn. Một bộ chuyển thư mục/đổi tên không được mất tiến độ hoặc SRS.
+11. Tạo từ vựng với AI — ba nguồn đầu vào
+Tách tính năng soạn nội dung với AI khỏi engine học: AI chỉ chạy khi người dùng bấm tạo, không gọi mỗi lần lật thẻ hay chấm câu. Tái sử dụng dịch vụ AI của dự án; nếu cần adapter mới thì cấu hình provider/model từ server theo API hiện hành. Không đặt khóa bí mật vào bundle frontend, localStorage hoặc log. Không tự tạo tài khoản hay bật dịch vụ trả phí.
+
+Modal có ba tab, đầu vào tương ứng và kết quả nháp có thể xem/sửa:
+1. Nhập chủ đề: nhập chủ đề hoặc đoạn văn tiếng Anh. Nếu là chủ đề thì tạo danh sách từ/cụm phù hợp CEFR đã chọn, mặc định B1 cho LanguageCert. Nếu là đoạn văn thì trích từ thực sự có trong đoạn, giữ câu nguồn và nghĩa đúng ngữ cảnh. Giới hạn 2.000 ký tự và tối đa 50 mục trong một yêu cầu; đây là giới hạn sản phẩm tham khảo ảnh, có thể cấu hình tập trung.
+2. Đọc hiểu: dán đoạn văn, bôi đen/chọn một hoặc nhiều từ/cụm muốn học. Giữ span và câu chứa cụm; hỗ trợ nhiều lần xuất hiện và bỏ mục đã chọn. Trên điện thoại có cách chọn qua nút/chạm, không phụ thuộc chỉ vào bôi đen bằng chuột. Sửa văn bản phải vô hiệu hóa hoặc tính lại các span không còn hợp lệ. Khi không chọn gì, nút tạo bị vô hiệu hóa kèm hướng dẫn; không âm thầm trích cả đoạn.
+3. Hình ảnh: chọn tệp, kéo thả hoặc dán ảnh từ clipboard, hỗ trợ JPG/PNG/WEBP tối đa 5 MB như ảnh. Kiểm tra loại thực và kích thước ở client lẫn server, hiển thị preview và nút bỏ/thay ảnh. Đọc chữ tiếng Anh nhìn thấy trong ảnh; không nhận diện người hoặc tự thêm từ không có trong nguồn. Có bước xem/sửa văn bản OCR trước khi xác nhận danh sách cuối. Trên Mac hỗ trợ Cmd+V bằng thao tác paste thông thường, không chiếm clipboard toàn ứng dụng.
+Kết quả trả về phải qua kiểm tra schema, số lượng, trường bắt buộc và nguồn; không chỉ JSON.parse rồi ghi thẳng. Mỗi mục gồm headword, từ loại, nghĩa Việt theo ngữ cảnh, IPA nếu có cơ sở, ví dụ Anh/Việt, đáp án chấp nhận và cloze khi xác minh được. Nguồn đoạn/ảnh cần sourceQuote hoặc sourceSpan gắn với văn bản đã xác nhận. Nguồn theo chủ đề được đánh dấu generated, không giả làm trích dẫn sách. Không gọi IPA do mô hình tạo là “đã xác minh Oxford” khi chưa đối chiếu.
+
+Cho sửa, xóa, chọn mục, chọn bộ đích và Thêm các từ đã chọn; chưa thêm thì dữ liệu vẫn là bản nháp. Cảnh báo nguồn mờ, chữ không chắc, ví dụ thiếu từ hoặc nghĩa mơ hồ; mục chưa đạt điều kiện không được âm thầm sinh quiz lỗi. Một mục AI chỉ trở thành nội dung học sau khi người dùng duyệt/lưu. Lưu provenance/sourceType và trạng thái kiểm tra; không coi kết quả AI mặc nhiên chính xác.
+
+Ảnh có hạn mức 100/100 lượt/ngày và đã dùng 0; chưa chứng minh một lượt được tính như thế nào. Đề xuất một lượt là một yêu cầu AI tạo nháp thành công, không phải một từ. Giới hạn mặc định 100 yêu cầu/ngày nếu được cấu hình, đặt tại server theo người dùng và ngày Asia/Ho_Chi_Minh; không hardcode huy hiệu 100 khi không có bộ đếm thật. Dùng requestId để reserve/commit/release hạn mức: không âm do hai tab gửi cùng lúc, retry cùng request không trừ thêm; lỗi provider/schema không tiêu lượt, nháp tạo thành công rồi người dùng bỏ vẫn tiêu một lượt. Tách trạng thái chưa gửi, đang xử lý, đã hủy và kết quả đã có để tránh gọi trùng sau timeout.
+
+Có loading, cancel, retry có kiểm soát, thông báo quota hết và lỗi mạng/provider. Hủy đóng hộp thoại không tự thêm từ và không mặc định rằng yêu cầu server đã dừng nếu nó vẫn đang xử lý. Nếu chưa có AI/backend/secret cần thiết, thông báo “Chưa cấu hình AI”, vô hiệu hóa nút gọi và giữ phần nhập thủ công hoạt động; hoàn thiện adapter/UI hợp lệ, không tạo kết quả giả. Nội dung từ tài liệu được xử lý như dữ liệu, không thực thi những câu lệnh nằm trong đoạn văn hoặc OCR.
+12. Học từ của tôi và lịch sử
+Trang Học từ của tôi cho chọn một hoặc Tất cả bộ cá nhân, trạng thái Toàn bộ/Đã thuộc/Chưa thuộc, thứ tự và số lượng; có sáu ô chế độ và nút mở SRS. Hiển thị số từ thực sự sẵn sàng, không khởi chạy khi bằng 0, đồng thời chỉ dẫn tạo bộ/thêm từ hoặc đổi bộ lọc. Có cài đặt âm lượng phát âm 0–100%, mặc định đề xuất 70% theo ảnh; lưu theo người dùng và áp dụng thống nhất mọi chế độ.
+
+“Tất cả bộ” ở trang cá nhân chỉ gom các bộ người dùng sở hữu hoặc đã chủ động lưu theo cơ chế hiện có, không tự gom tất cả nội dung lộ trình công khai. Một bộ hệ thống chỉ được đưa vào phạm vi cá nhân theo thao tác lưu rõ ràng, không do lỡ xem trang.
+
+Cần định danh mục xuyên bộ bằng WordRef gồm deckId và wordId, hoặc một wordKey an toàn được sinh từ cặp đó. Mục trong cùng một bộ được tham chiếu qua nhiều màn hình chỉ tính một lần; cùng headword nhưng nằm ở hai bộ hoặc khác nghĩa vẫn là hai mục riêng theo chính sách này. Không deduplicate theo chữ word. Ghi rõ thống kê theo mục từ; không gọi là số headword duy nhất.
+
+Session hỗ trợ scope deck, roadmap hoặc personal-decks. Snapshot danh sách WordRef, dữ liệu câu và phiên bản nguồn cho từng bộ; không ép một deckId giả cho phiên nhiều bộ. Chấm/lưu trả đúng tiến độ về từng bộ nguồn.
+
+Lịch sử chỉ hiển thị các phiên đã lưu, có thời gian, phạm vi, chế độ, số mục, đúng độc lập/đúng có trợ giúp, điểm và thời lượng hoạt động. Mở chi tiết/luyện lại từ sai bằng dữ liệu đã có; xóa/đổi tên một bộ không làm lịch sử vỡ. Snapshot lịch sử vẫn ghi tên tại thời điểm học; mục đã bị xóa không được hồi sinh âm thầm khi học lại. Đừng tự dựng số liệu “Lịch sử đấu” nếu dự án chưa có đối kháng.
+13. SRS: phạm vi, ghi danh và màn hình quản lý
+Triển khai SRS có Lv0, Lv1, Lv2, Lv3, Lv4, Lv5. Đây là các mức trong hệ thống ôn, không phải cấp CEFR. Không gọi thuật toán là FSRS/SM-2 nếu chưa thực sự triển khai thuật toán đó. Các khoảng cách ở mục 14 là quy tắc sản phẩm đề xuất để có hành vi xác định, không phải lịch đã xác nhận của website trong ảnh.
+
+Dùng một bản ghi SRS cho mỗi người dùng + WordRef; lộ trình chỉ là phạm vi truy vấn, không tạo SRS mới cho cùng mục từ. Lưu riêng isKnown và srsLevel/dueAt. Một người tự đánh dấu Thuộc vẫn có thể đang ở Lv0 để bắt đầu xác nhận khả năng nhớ qua ôn tập.
+
+Chính sách ghi danh đề xuất:
+- Lần đầu xác nhận isKnown=true qua bảng/Flashcard/kết quả: ghi danh SRS ở Lv0, dueAt=thời điểm xác nhận nếu chưa có bản ghi SRS.
+- Các mục đã isKnown=true trước khi cập nhật tính năng: migration một lần sang Lv0 đến hạn ngay, giữ nguyên tiến độ và đánh dấu nguồn migration. Chạy lại migration không tạo bản trùng.
+- Có thao tác “Thêm vào SRS” cho các mục khác. Bỏ dấu Thuộc không xóa bản ghi SRS hoặc tự đổi level; có thao tác tạm dừng SRS riêng, không cần xóa nội dung.
+- Những từ chưa được ghi danh không nằm trong biểu đồ/tổng cần ôn; không mặc định toàn bộ 1.600 mục đều đến hạn nếu chỉ có 82 mục được ghi danh.
+- Việc số SRS=82 trùng với 82 từ đã học trong ảnh chỉ gợi ý mối liên hệ; chính sách trên là quyết định thiết kế để tái hiện nhất quán, không phải kết luận về code gốc.
+Mở SRS từ lộ trình thì chỉ xem các mục trong lộ trình; từ Học từ của tôi thì trong phạm vi cá nhân. Modal/trang có tiêu đề, badge phạm vi, trợ giúp, Cài đặt, Đóng; biểu đồ số lượng mỗi level; bảng có từ/nghĩa, loa, level và Ôn ngay; tìm từ, lọc bộ và level; phân trang; footer hiện tổng cần ôn và bộ chọn số mục mặc định 20, nút Bắt đầu ôn tập.
+
+Biểu đồ tổng các Lv phải bằng số mục đã ghi danh và còn hoạt động trong phạm vi, không bằng tổng từ của toàn thư viện. Cột 0 hiện số 0 với đường nền, không dựng chiều cao có vẻ như có dữ liệu. Bảng lọc tìm kiếm/level có số kết quả riêng. Bộ lọc bộ từ ở đầu và footer cùng liên kết một state phạm vi; tìm kiếm/level chỉ lọc bảng, không ngầm thu hẹp hàng đợi ôn. Ghi rõ điều đó cạnh nút bắt đầu. Các chip Cần ôn/Lv0 được tính từ phạm vi bộ đã chọn trước phân trang.
+
+Xác định cần ôn bằng enrolled && !suspended && dueAt != null && dueAt <= now. Tạo hàng đợi theo dueAt tăng dần, hòa thì level thấp hơn, sau đó theo WordRef để ổn định; chỉ lấy tối đa số mục yêu cầu và cố định hàng đợi của phiên. Không lấy các từ chưa tới hạn để lấp đủ 20, không để từ mới làm các từ quá hạn bị đói lượt.
+
+Không có từ tới hạn thì hiện thời điểm gần nhất và cho lựa chọn Luyện trước hạn riêng. “Ôn ngay” một từ chưa tới hạn cũng là luyện trước hạn: cho học nhưng không lên level, không thay lịch, không giả làm một lần ôn đúng hạn. Một từ chỉ được nâng level một lần từ trạng thái due đã nhận vào phiên; không liên tục tăng Lv0→Lv5 bằng chơi lại trong cùng ngày.
+14. SRS: lịch đề xuất và kết quả ôn
+Đặt toàn bộ lịch trong một cấu hình có phiên bản, không rải số ngày trong component. Bảng dưới là quyết định đề xuất vì ảnh không có lịch Lv0–Lv4:
+Trạng thái sau thao tác	Hẹn lần tiếp theo
+Ghi danh/đặt thủ công Lv0	Ngay
+Đúng độc lập ở Lv0 → Lv1	Sau 1 ngày lịch
+Đúng độc lập ở Lv1 → Lv2	Sau 3 ngày lịch
+Đúng độc lập ở Lv2 → Lv3	Sau 7 ngày lịch
+Đúng độc lập ở Lv3 → Lv4	Sau 14 ngày lịch
+Đúng độc lập ở Lv4 → Lv5	Theo chu kỳ Lv5; mặc định Không ôn lại
+Đúng độc lập khi Lv5 đến hạn	Giữ Lv5, hẹn theo chu kỳ Lv5
+Sai hoặc hết giờ ở bất kỳ level nào	Về Lv0, hẹn sau 10 phút
+Đúng nhưng dùng trợ giúp ở Lv0–Lv2	Giữ level, hẹn sau 1 ngày lịch
+Bỏ qua/chưa hoàn thành/lỗi âm thanh	Giữ nguyên level và lịch; không ghi giả là đã ôn
+
+
+“Đúng độc lập” trong SRS là câu đầu tiên của lần ôn mà không dùng trợ giúp. Sau khi sai, có thể cho làm lại để học nhưng không nâng level trong lần ôn đó. Ở Flashcard ghi nhận Nhớ/Quên là self-report; Nhớ được xử lý như thành công do tự đánh giá để lập lịch, Quên như thất bại, lưu rõ nguồn self-report và không cộng vào tỷ lệ đúng khách quan.
+
+Dùng ngày lịch theo Asia/Ho_Chi_Minh và lưu timestamp UTC. Tách logic tính ngày với UI; các khoảng 10 phút là thời lượng thực. Lưu lastReviewedAt, levelEnteredAt, dueAt, reviewCount, lapseCount, schedulerVersion và version. Không dùng thời gian client như nguồn tin cậy duy nhất khi có backend. SRS được cập nhật ở bước Lưu kết quả cùng session, attempts và điểm; thoát không lưu thì level/lịch vẫn như trước.
+
+Snapshot cả level, dueAt và phiên bản SRS trước lượt học. Commit phải kiểm tra phiên bản hiện tại: hai tab cùng ôn một từ không được nâng hai lần; retry cùng sessionId không ghi lại. Nếu trạng thái đã được đổi ở tab khác thì giữ thay đổi mới và báo mục xung đột, không tự ghi đè hoặc tăng thêm level. Phiên bị xung đột cần có kết quả rõ theo từng mục; điểm/attempt/SRS của mục đó phải thống nhất trong transaction.
+
+Học thường ngoài SRS không tự nâng level hoặc đổi lịch, dù người học trả lời đúng nhiều lần. Chỉ ghi danh khi xác nhận Thuộc lần đầu theo mục 13; bản ghi đã có thì giữ lịch. isKnown không tự thay đổi khi SRS lên hoặc xuống level.
+
+Đổi level thủ công từ bảng là thao tác điều chỉnh có ghi lịch sử, không tạo câu trả lời đúng hay điểm. Khi đổi sang Lv1/Lv2/Lv3/Lv4, lấy khoảng chờ 1/3/7/14 ngày từ thời điểm điều chỉnh; Lv0 đến hạn ngay; Lv5 theo cấu hình Lv5. Cần xác nhận tác động lên lịch trước khi lưu; thao tác này chỉ áp dụng mục đã chọn, không thay toàn bộ bộ từ.
+15. Cài đặt SRS và chu kỳ Lv5
+Tái hiện các hàng 0→1, 1→2, 2→3, 3→4, 4→5; mỗi hàng có Thẻ / Quiz / Gõ / Nghe. Cấu hình mặc định theo trạng thái được chọn trong ảnh:
+- 0→1: Quiz.
+- 1→2: Quiz.
+- 2→3: Gõ.
+- 3→4: Nghe.
+- 4→5: Nghe.
+Đây là cấu hình cá nhân dùng chung cho các phiên SRS của người học. Lộ trình chỉ đổi phạm vi từ, không tạo các lịch mâu thuẫn cho cùng WordRef. Khi ôn Lv5 định kỳ, dùng chế độ của hàng 4→5 nhưng giữ level 5 sau thành công.
+
+Ảnh có hướng dẫn đặc biệt: chọn Thẻ ở bất kỳ hàng nào áp dụng Flashcard cho toàn bộ phiên SRS; đang ở Thẻ toàn bộ mà chọn game khác thì reset về Quiz. Triển khai rõ ràng bằng reviewPresentation=all-flashcards hoặc per-level:
+- Chọn Thẻ: bật all-flashcards và cập nhật tất cả hàng thành Thẻ trong UI.
+- Chọn một chế độ khác khi đang all-flashcards: tắt override, đặt mọi hàng về Quiz rồi áp dụng lựa chọn vừa bấm cho hàng đó. Chú thích cho người học biết những hàng còn lại sẽ về Quiz.
+- Nút Mặc định khôi phục mapping Quiz/Quiz/Gõ/Nghe/Nghe, tắt override và chu kỳ Lv5=Không ôn lại; chỉ ghi khi bấm Xong.
+- Đóng/Hủy không lưu bản nháp cài đặt. Phiên đang chạy dùng snapshot cũ; thay đổi áp dụng cho phiên mới.
+Ở các từ có level trước ôn là Lv3 hoặc Lv4: không có gợi ý mở chữ, không hiện ví dụ/bản dịch làm lộ nghĩa, không phát âm đáp án ở câu Nghĩa→Từ; âm thanh vốn là câu hỏi của chế độ Nghe vẫn phải dùng được. Bản dịch và đáp án chỉ hiện ở bước phản hồi sau khi chấm. Với Flashcard, lật thẻ là bước đối chiếu đáp án bình thường, còn tính năng gợi ý trước đối chiếu bị khóa. Lv5 ôn định kỳ cũng dùng chính sách không gợi ý như chặng cuối. Icon khóa không được tự biến thành tường phí; ảnh chưa xác nhận ý nghĩa quyền truy cập.
+
+Nếu chế độ theo level không khả dụng, cho biết nguyên nhân trước khi vào phiên và đề nghị đổi chế độ. Có thể chọn một chế độ thay thế khả dụng nếu người học xác nhận; không tự đổi Nghe thành Quiz mà vẫn hiển thị như đã kiểm tra kỹ năng nghe. Trường hợp không có dạng kiểm tra khách quan dùng được thì có thể dùng Thẻ có nhãn tự đánh giá. Từ thiếu dữ liệu không bị trừ level vì lỗi hệ thống.
+
+Chu kỳ Lv5 có đúng các lựa chọn Không ôn lại / 15 ngày / 30 ngày / 45 ngày / 60 ngày. Mặc định Không ôn lại như ảnh. dueAt=null nghĩa không tự lên hàng đợi, không có nghĩa xóa hay đã biết vĩnh viễn.
+
+Đổi chu kỳ phải áp dụng cho mọi bản ghi Lv5 hiện tại của người học và các lần lên Lv5 sau này. Mốc tính là lastReviewedAt gần nhất hoặc levelEnteredAt nếu chưa có lần ôn; không lấy “bây giờ” để đẩy lùi mọi từ cũ. Nếu lịch tính lại nằm trong quá khứ, từ đến hạn ngay. Chuyển sang Không ôn lại đặt dueAt=null cho Lv5, giữ toàn bộ lịch sử. Nêu rõ phạm vi áp dụng trong modal trước khi bấm Xong, ghi cài đặt và cập nhật lịch một cách nhất quán. Không gửi email/push hoặc tạo thông báo ngoài ứng dụng khi chưa có yêu cầu; hiển thị số tới hạn trong website là đủ.
+16. Bảng xếp hạng tiến độ lộ trình
+Nút BXH mở bảng cho chính roadmap đang xem: top 3 có vị trí nổi bật, danh sách Top 100 và hàng của tôi được ghim/highlight, kể cả khi tôi ở ngoài top 100. Hiển thị tên an toàn, avatar có fallback, số mục Đã thuộc và phần trăm. Không dùng danh tính, ảnh đại diện hoặc số liệu của người trong ảnh làm dữ liệu mẫu của website mới.
+
+Xếp theo knownCount của cùng một tập mục/phiên bản lộ trình, giảm dần. Đây là BXH tự đánh giá tiến độ, không phải xếp hạng năng lực ngoại ngữ hoặc điểm SRS. Không xếp theo số lần mở trang, điểm lượt học hoặc phần trăm đã làm tròn. 320/1600 và 316/1600 cùng có thể hiện 20%, nhưng 320 phải đứng trước 316.
+
+Nếu bằng knownCount, cho đồng hạng theo kiểu 1,2,2,4; trong cùng hạng sắp tên/id ổn định. Top 100 là tối đa 100 người, không phải 100 số hạng; hàng của tôi riêng không bị tính thêm vào danh sách. Hiện trạng thái chưa tham gia nếu chưa đủ điều kiện, không gán thứ hạng giả.
+
+Chỉ triển khai dữ liệu nhiều người từ backend có kiểm soát quyền. Hồ sơ công khai gồm publicDisplayName, avatar hợp lệ và tổng tiến độ được chia sẻ; không trả email hay lịch sử đáp án riêng. Có lựa chọn tham gia/rút khỏi BXH mặc định riêng tư cho website mới. Khi ghép tên bỏ trường rỗng, không hiện “undefined”; tên thiếu dùng fallback phù hợp. Trạng thái đồng bộ/cập nhật chậm phải hiện rõ.
+
+Nếu dự án chỉ lưu cục bộ, vẫn hoàn thiện lộ trình, học và SRS; bảng xếp hạng hiện “Cần đăng nhập và đồng bộ để xem xếp hạng”, không bịa người dùng hay giả lập thứ hạng. Chuẩn bị repository/API contract thật; không được báo hoàn thành BXH nhiều người khi chưa có backend hoạt động.
+17. Tích hợp, migration và tính nhất quán
+Nội dung hệ thống, bộ cá nhân, tham chiếu thư mục, tiến độ tự đánh giá, SRS, phiên học, lịch sử và AI quota là các loại dữ liệu riêng. Mọi màn hình lấy số liệu từ selector/repository chung. Không lưu thêm một bản isKnown hay SRS trong lộ trình rồi để lệch với bộ gốc.
+
+Migration có schemaVersion, có thể chạy lại an toàn và giữ bản sao/đường khôi phục phù hợp. Không reset tiến độ hoặc biến mọi từ thành đã thuộc khi thêm SRS. Nhập lại một Test có id nguồn giữ được danh tính mục, metadata và tiến độ; không tạo hàng SRS mới chỉ vì thứ tự mảng đổi. Khi xóa/tạm dừng mục, loại khỏi tổng hoạt động và hàng đợi nhưng giữ lịch sử tham chiếu; khi khôi phục dùng lại danh tính cũ.
+
+Sửa nghĩa hoặc đáp án của một mục đang ở SRS phải đánh dấu nội dung thay đổi và có lựa chọn reset lịch riêng; không mặc định coi một nghĩa mới là đã được ôn ở level cao. Session đã mở giữ snapshot nội dung; kết quả cũ không được ghi đè sang nghĩa mới mà không kiểm tra phiên bản.
+
+Nếu có backend: kiểm tra quyền sở hữu ở server cho CRUD cá nhân, tiến độ, SRS, phiên và AI; các tổng công khai do server tính từ dữ liệu hợp lệ. Nếu chỉ local: phân vùng dữ liệu theo user/guest, thông báo giới hạn đồng bộ; không gọi quota, bảo vệ điểm hoặc BXH là an toàn nhiều người. Dữ liệu cá nhân không tự hòa vào tài khoản khác khi đăng xuất/đăng nhập.
+
+Định nghĩa commit gồm attempts hợp lệ, thay đổi known đã xác nhận, enrollment/SRS đúng hạn, điểm và lịch sử dưới cùng sessionId. Có khóa idempotency cho session và request AI; dùng version ở từng mục để không mất cập nhật. Thao tác cài đặt Lv5 cần xử lý nhất quán giữa setting và các dueAt liên quan. Kết quả không lưu/xung đột/lưu một phần phải được báo đúng, không chỉ hiện một toast thành công chung.
+18. Kết quả trước/sau lưu, số dư và chơi tiếp
+Dùng một màn hình kết quả chung có thể mang giao diện sáng/tối của game. Hiển thị trạng thái kết thúc (hoàn thành/hết mạng/bị bắt/kết thúc sớm), tỷ lệ đúng, số đúng/sai/hết giờ/chưa hoàn thành, bảng từ đúng và bảng cần ôn, phát âm từng từ. Chọn từng mục hoặc Tất cả các mục đúng không dùng trợ giúp để đề nghị đánh dấu Đã thuộc; mặc định không tự ghi khi chỉ mở kết quả.
+
+Tỷ lệ đúng khách quan = round((đúng độc lập + đúng có trợ giúp) / tổng câu khách quan đã chấm * 100). Tổng đã chấm gồm correct, incorrect và timeout; không gồm self-rated, incomplete hay chưa hỏi. Luôn tách số đúng độc lập và đúng có trợ giúp trong chi tiết; không đổi nhãn “độc lập” cho tỷ lệ có cả hỗ trợ. Với 9 đúng/4 sai phải ra 69%; với 0 câu đã chấm hiện “Chưa có câu được chấm”, không NaN. Độ chính xác và tỷ lệ hoàn tất tập từ là hai chỉ số riêng.
+
+Trước khi lưu:
+- Ghi “Dự kiến” và “Điểm sẽ nhận”, dùng số nguyên thực từ attempts và quy tắc thưởng đã chọn; không lưu điểm vì component kết quả vừa mount.
+- Nếu có tổng điểm, hiển thị balanceBefore + earned = balanceAfterPreview; 1.234 + 109 phải bằng 1.343. Số 109 trong ảnh không đủ để suy công thức thưởng, không hardcode theo số câu. Một ảnh có +0 nhưng số dư đổi 683→1.234 là không khớp nếu cùng một giao dịch; không tái tạo lỗi này.
+- Nút Lưu & Hoàn thành commit đúng một lần các lựa chọn known, thống kê, SRS nếu có, lịch sử và ledger điểm. Khóa trong lúc đang lưu, có retry không ghi trùng.
+Sau khi lưu:
+- Chuyển “Dự kiến” thành “Đã nhận” chỉ từ xác nhận ghi thành công; hiển thị điểm thực nhận và receipt số dư trước/sau do repository/server trả về. Đổi số dư do phiên/tab khác không được quy là tiền thưởng của phiên này.
+- Khóa các checkbox của bản kết quả đã lưu; muốn chỉnh thuộc về sau dùng bảng từ, không ghi lại giao dịch kết quả.
+- Hiện Làm lại câu sai (n), Chơi tiếp và Game khác. Làm lại tạo lượt mới từ các WordRef có incorrect/timeout; Chơi tiếp dùng những mục chưa được chấm trong snapshot cũ, gồm câu bị bỏ dở khi bị bắt; nếu hết mục thì đổi nhãn thành Học lượt mới. Game khác về bộ chọn, giữ phạm vi/bộ lọc.
+- Các nút chỉ hoạt động sau khi lưu, hoặc cho chọn Lưu trước / Bỏ kết quả rồi tiếp tục. Không tự cộng lại thưởng của lượt cũ khi quay lại, tải lại trang hoặc bấm hai lần.
+- 9 đúng/4 sai trong tập 131 có 118 mục chưa được chấm; không nhầm thành 117 chỉ vì tiêu đề đã hiển thị câu 14.
+Điểm chỉ là điểm học tập nội bộ. Mặc định đề xuất của hai game không cần tái tạo con số lẻ chưa biết nguồn trong ảnh. Mọi mức thưởng phải từ cùng một rewardConfig, có thể kiểm chứng bằng tổng ledger, không có công thức ẩn khác giữa màn hình game và kết quả.
+19. Kiểm tra và bàn giao
+Tách các phần dùng chung theo cấu trúc dự án: adapter dữ liệu, phạm vi WordRef nhiều bộ, chọn từ/tạo câu, chuẩn hóa/chấm, session state, timer, audio, tính tiến độ, repository lưu, SRS scheduler, AI provider/quota, game state và UI. Đừng tạo sáu hệ thống độc lập có quy tắc khác nhau.
+
+Chạy build/typecheck/lint sẵn có và kiểm tra các hành vi có rủi ro: bộ lọc/cố định danh sách, một đáp án hợp lệ, cloze nguyên cụm và biến thể, hết giờ cùng lúc với submit, gợi ý, vòng cuối ghép cặp, lưu đúng một lần, thoát không lưu, chuyển tài khoản và reload. Không cần thêm bộ test chỉ kiểm tra màu hoặc lặp lại cấu trúc implementation.
+
+Kiểm thử với dữ liệu thật, thêm fixture nhỏ chỉ khi cần cho các ca biên và đánh dấu rõ là fixture. Kiểm tra cả CRUD/thư mục, tổng lộ trình, SRS đến hạn, đổi chu kỳ Lv5, hai tab cùng ôn, AI quota/retry, game pause/tiếp tục, thống kê 9/13=69% và receipt điểm. Đối chiếu các ca ở Phần C. Báo ngắn gọn tệp đã sửa, cách mở chức năng, chức năng đã hoàn thành, kiểm tra đã chạy và giới hạn thực tế. Không tuyên bố đã chạy kiểm tra nếu chưa chạy. Hoàn thiện tất cả phần có thể làm trong dự án; không dừng ở kế hoạch hoặc giao diện mẫu.
+
+Đầu ra bàn giao phải chỉ rõ từng nhóm: đã chạy đầy đủ; đã tích hợp nhưng chờ cấu hình AI/backend; hoặc chưa hoàn thành và lý do. Các phần chỉ cần client như lộ trình, bộ cá nhân, các chế độ, SRS và hai game phải được hoàn thiện bằng dữ liệu thật trong khả năng môi trường. Không lấy thiếu backend làm lý do bỏ các phần hoạt động cục bộ. Không tuyên bố đầy đủ tính năng online nếu thiếu xác thực, quota server hoặc dữ liệu nhiều người.

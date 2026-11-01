@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   X,
-  Copy,
   Check,
   FileSpreadsheet,
   Download,
@@ -11,29 +10,96 @@ import {
   Table,
   ClipboardPaste,
   Upload,
+  FileJson,
+  Columns,
 } from 'lucide-react';
 import { ExtendedVocabItem, UserVocabDeck } from '../../../types/vocab';
+import { adaptVocabItem, normalizeEnglishText } from '../../../utils/vocabEngine';
+
+export type DuplicateResolutionStrategy = 'skip' | 'keep_both' | 'overwrite';
 
 interface VocabQuickImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   decks: UserVocabDeck[];
   activeDeckId?: string;
-  onAddWordsToDeck: (deckId: string, words: ExtendedVocabItem[]) => void;
+  onAddWordsToDeck: (
+    deckId: string,
+    words: ExtendedVocabItem[],
+    duplicateStrategy?: DuplicateResolutionStrategy
+  ) => void;
   onRequestCreateDeck?: () => void;
   onOpenJsonModal?: () => void;
 }
 
-interface ManualRow {
+interface ParsedRowDraft {
   id: string;
   word: string;
-  phonetic: string;
-  partOfSpeech: string;
   meaningVi: string;
+  phonetic: string;
+  partOfSpeech: 'n' | 'v' | 'adj' | 'adv' | 'phr';
   exampleEn: string;
   exampleVi: string;
-  note: string;
 }
+
+/**
+ * RFC-4180 compliant CSV / TSV parser supporting quoted fields with commas and newlines
+ */
+export function parseRfc4180Delimited(text: string, delimiter: ',' | '\t' | ';'): string[][] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = '';
+  let inQuotes = false;
+
+  const len = text.length;
+  for (let i = 0; i < len; i++) {
+    const ch = text[i];
+    const nextCh = i + 1 < len ? text[i + 1] : '';
+
+    if (inQuotes) {
+      if (ch === '"' && nextCh === '"') {
+        currentField += '"';
+        i++; // skip escaped quote
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        currentField += ch;
+      }
+    } else {
+      if (ch === '"' && currentField.length === 0) {
+        inQuotes = true;
+      } else if (ch === delimiter) {
+        currentRow.push(currentField.trim());
+        currentField = '';
+      } else if (ch === '\r' && nextCh === '\n') {
+        currentRow.push(currentField.trim());
+        if (currentRow.some((cell) => cell.length > 0)) {
+          rows.push(currentRow);
+        }
+        currentRow = [];
+        currentField = '';
+        i++;
+      } else if (ch === '\n' || ch === '\r') {
+        currentRow.push(currentField.trim());
+        if (currentRow.some((cell) => cell.length > 0)) {
+          rows.push(currentRow);
+        }
+        currentRow = [];
+        currentField = '';
+      } else {
+        currentField += ch;
+      }
+    }
+  }
+
+  currentRow.push(currentField.trim());
+  if (currentRow.some((cell) => cell.length > 0)) {
+    rows.push(currentRow);
+  }
+  return rows;
+}
+
+type ColumnRole = 'word' | 'meaningVi' | 'phonetic' | 'partOfSpeech' | 'exampleEn' | 'exampleVi' | 'ignore';
 
 export const VocabQuickImportModal: React.FC<VocabQuickImportModalProps> = ({
   isOpen,
@@ -42,570 +108,676 @@ export const VocabQuickImportModal: React.FC<VocabQuickImportModalProps> = ({
   activeDeckId,
   onAddWordsToDeck,
   onRequestCreateDeck,
-  onOpenJsonModal,
 }) => {
   const [selectedDeckId, setSelectedDeckId] = useState<string>(
     activeDeckId || (decks.length > 0 ? decks[0].id : '')
   );
   const [activeTab, setActiveTab] = useState<'paste' | 'file' | 'grid'>('paste');
-  const [pasteText, setPasteText] = useState('');
-  const [copiedPrompt, setCopiedPrompt] = useState(false);
+
+  // Paste / CSV state
+  const [rawInputText, setRawInputText] = useState<string>('');
+  const [delimiter, setDelimiter] = useState<',' | '\t' | ';'>('\t');
+  const [hasHeaderRow, setHasHeaderRow] = useState<boolean>(false);
+  const [columnMapping, setColumnMapping] = useState<ColumnRole[]>([
+    'word',
+    'meaningVi',
+    'phonetic',
+    'partOfSpeech',
+    'exampleEn',
+    'exampleVi',
+  ]);
+
+  // Parsed & editable preview rows
+  const [previewRows, setPreviewRows] = useState<ParsedRowDraft[]>([]);
+  const [duplicateStrategy, setDuplicateStrategy] = useState<DuplicateResolutionStrategy>('skip');
   const [error, setError] = useState<string | null>(null);
 
-  // Manual grid rows
-  const [manualRows, setManualRows] = useState<ManualRow[]>([
-    {
-      id: 'row_1',
-      word: '',
-      phonetic: '',
-      partOfSpeech: 'n',
-      meaningVi: '',
-      exampleEn: '',
-      exampleVi: '',
-      note: '',
-    },
-    {
-      id: 'row_2',
-      word: '',
-      phonetic: '',
-      partOfSpeech: 'v',
-      meaningVi: '',
-      exampleEn: '',
-      exampleVi: '',
-      note: '',
-    },
-  ]);
+  useEffect(() => {
+    if (activeDeckId) {
+      setSelectedDeckId(activeDeckId);
+    } else if (decks.length > 0 && !selectedDeckId) {
+      setSelectedDeckId(decks[0].id);
+    }
+  }, [activeDeckId, decks, selectedDeckId]);
+
+  const currentDeck = useMemo(
+    () => decks.find((d) => d.id === selectedDeckId),
+    [decks, selectedDeckId]
+  );
+
+  const existingWordSet = useMemo(() => {
+    const set = new Set<string>();
+    (currentDeck?.items || []).forEach((it) => {
+      const norm = normalizeEnglishText(it.word);
+      if (norm) set.add(norm);
+    });
+    return set;
+  }, [currentDeck]);
+
+  const duplicateCountInPreview = useMemo(() => {
+    let count = 0;
+    previewRows.forEach((r) => {
+      if (r.word.trim() && existingWordSet.has(normalizeEnglishText(r.word))) {
+        count++;
+      }
+    });
+    return count;
+  }, [previewRows, existingWordSet]);
 
   if (!isOpen) return null;
 
-  const chatGptPrompt = `Bạn là chuyên gia từ vựng tiếng Anh LanguageCert B1.
-Hãy tạo danh sách 20 từ vựng cốt lõi chuẩn B1 theo chủ đề [CHỦ ĐỀ CỦA BẠN].
-Mỗi dòng là một từ, các trường cách nhau chính xác bằng dấu gạch đứng | theo quy cách sau (không đánh số thứ tự đầu dòng, không có tiêu đề cột):
-từ vựng | /phiên âm/ | loại từ (n/v/adj/adv/phr) | nghĩa tiếng Việt | ví dụ tiếng Anh | bản dịch ví dụ tiếng Việt | ghi chú hoặc collocation
+  const buildPreviewFromDelimited = (
+    text: string,
+    delim: ',' | '\t' | ';',
+    skipHeader: boolean,
+    mapping: ColumnRole[]
+  ) => {
+    setError(null);
+    const matrix = parseRfc4180Delimited(text, delim);
+    const dataMatrix = skipHeader ? matrix.slice(1) : matrix;
 
-Ví dụ:
-accommodate | /əˈkɒm.ə.deɪt/ | v | cung cấp chỗ ở | The hotel can accommodate 500 guests. | Khách sạn có thể chứa 500 khách. | Thường gặp trong Reading Part 1`;
+    const drafts: ParsedRowDraft[] = dataMatrix.map((cells, idx) => {
+      const draft: ParsedRowDraft = {
+        id: `row_${Date.now()}_${idx}`,
+        word: '',
+        meaningVi: '',
+        phonetic: '',
+        partOfSpeech: 'n',
+        exampleEn: '',
+        exampleVi: '',
+      };
 
-  const handleCopyPrompt = () => {
-    navigator.clipboard.writeText(chatGptPrompt);
-    setCopiedPrompt(true);
-    setTimeout(() => setCopiedPrompt(false), 2500);
-  };
+      cells.forEach((val, colIdx) => {
+        const role = mapping[colIdx] || 'ignore';
+        if (role === 'word') draft.word = val;
+        else if (role === 'meaningVi') draft.meaningVi = val;
+        else if (role === 'phonetic') draft.phonetic = val;
+        else if (role === 'partOfSpeech') {
+          const cleanPos = val.trim().toLowerCase();
+          if (['n', 'v', 'adj', 'adv', 'phr'].includes(cleanPos)) {
+            draft.partOfSpeech = cleanPos as any;
+          }
+        } else if (role === 'exampleEn') draft.exampleEn = val;
+        else if (role === 'exampleVi') draft.exampleVi = val;
+      });
 
-  const parsePastedLines = (text: string): ExtendedVocabItem[] => {
-    const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
-    const results: ExtendedVocabItem[] = [];
-
-    lines.forEach((line, idx) => {
-      // Split by pipe | or tab \t
-      const delimiter = line.includes('|') ? '|' : '\t';
-      const parts = line.split(delimiter).map((p) => p.trim());
-      if (parts.length >= 2 && parts[0]) {
-        const word = parts[0];
-        const phonetic = parts[1]?.startsWith('/') ? parts[1] : '';
-        const partOfSpeechRaw = (parts[2] || 'n').toLowerCase();
-        const pos = ['n', 'v', 'adj', 'adv', 'phr'].includes(partOfSpeechRaw)
-          ? (partOfSpeechRaw as any)
-          : 'n';
-        const meaningVi = parts[3] || parts[1] || '';
-        const exampleEn = parts[4] || '';
-        const exampleVi = parts[5] || '';
-        const note = parts[6] || '';
-
-        results.push({
-          id: `imp_${Date.now()}_${idx}`,
-          word,
-          phonetic: phonetic || `/.../`,
-          partOfSpeech: pos,
-          meaningVi: meaningVi || 'Đang cập nhật nghĩa',
-          exampleEn: exampleEn || `Example for ${word}.`,
-          exampleVi: exampleVi || `Ví dụ cho ${word}.`,
-          topic: 'Nhập nhanh',
-          cefr: 'B1',
-          collocations: note,
-          note,
-          isMastered: false,
-        });
-      }
+      return draft;
     });
 
-    return results;
+    setPreviewRows(drafts);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setError(null);
 
     const reader = new FileReader();
-    reader.onload = (event) => {
-      const rawContent = (event.target?.result as string) || '';
-      if (!rawContent) return;
-
-      const trimmed = rawContent.trim();
-      // Auto-detect JSON file or JSON payload
-      if (file.name.endsWith('.json') || trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    reader.onload = () => {
+      const content = String(reader.result || '');
+      if (file.name.toLowerCase().endsWith('.json')) {
         try {
-          let parsed = JSON.parse(trimmed);
-          if (!Array.isArray(parsed) && parsed.words && Array.isArray(parsed.words)) {
-            parsed = parsed.words;
-          }
-          if (Array.isArray(parsed)) {
-            const formatted = parsed
-              .map((item: any) => {
-                const word = item.word || item.term || '';
-                const phonetic = item.phonetic || item.ipa || '';
-                const pos = item.partOfSpeech || item.pos || 'n';
-                const vi = item.meaningVi || item.meaning || item.definition || '';
-                const exEn = item.exampleEn || item.example || '';
-                const exVi = item.exampleVi || item.exampleMeaning || '';
-                const note = item.collocations || item.note || item.topic || '';
-                return `${word} | ${phonetic} | ${pos} | ${vi} | ${exEn} | ${exVi} | ${note}`;
-              })
-              .filter((l: string) => l.split('|')[0].trim().length > 0)
-              .join('\n');
-
-            setPasteText(formatted);
-            setActiveTab('paste');
-            setError(null);
+          const parsed = JSON.parse(content);
+          const arr = Array.isArray(parsed)
+            ? parsed
+            : Array.isArray(parsed.items)
+            ? parsed.items
+            : Array.isArray(parsed.words)
+            ? parsed.words
+            : [];
+          if (arr.length === 0) {
+            setError('Tệp JSON không chứa mảng từ vựng hợp lệ.');
             return;
           }
+          const drafts: ParsedRowDraft[] = arr.map((item: any, idx: number) => ({
+            id: `json_${Date.now()}_${idx}`,
+            word: String(item.word || item.headword || '').trim(),
+            meaningVi: String(item.meaningVi || item.meaning || '').trim(),
+            phonetic: String(item.phonetic || item.ipa || '').trim(),
+            partOfSpeech: ['n', 'v', 'adj', 'adv', 'phr'].includes(
+              String(item.partOfSpeech || '').toLowerCase()
+            )
+              ? (String(item.partOfSpeech).toLowerCase() as any)
+              : 'n',
+            exampleEn: String(item.exampleEn || item.example || '').trim(),
+            exampleVi: String(item.exampleVi || '').trim(),
+          }));
+          setPreviewRows(drafts);
         } catch {
-          // If JSON parse fails, treat as normal text
+          setError('Không thể đọc tệp JSON. Vui lòng kiểm tra cú pháp JSON.');
         }
+      } else {
+        const autoDelim: ',' | '\t' = file.name.toLowerCase().endsWith('.tsv') ? '\t' : ',';
+        setDelimiter(autoDelim);
+        setRawInputText(content);
+        buildPreviewFromDelimited(content, autoDelim, hasHeaderRow, columnMapping);
       }
-
-      setPasteText(rawContent);
-      setActiveTab('paste');
-      setError(null);
     };
     reader.readAsText(file);
   };
 
-  const downloadSampleCsv = () => {
-    const sampleData = `word,phonetic,partOfSpeech,meaningVi,exampleEn,exampleVi,note
-accommodate,/əˈkɒm.ə.deɪt/,v,cung cấp chỗ ở,The hotel can accommodate 500 guests.,Khách sạn có thể chứa 500 khách.,Reading Part 1
-destination,/ˌdes.tɪˈneɪ.ʃən/,n,điểm đến,Paris is a popular destination.,Paris là điểm đến nổi tiếng.,Travel & Transport
-postpone,/pəʊstˈpəʊn/,v,hoãn lại,The match was postponed due to rain.,Trận đấu bị hoãn do mưa.,Listening Part 2`;
-
-    const blob = new Blob([sampleData], { type: 'text/csv;charset=utf-8;' });
+  const handleExportCurrentDeckJson = () => {
+    if (!currentDeck) return;
+    const blob = new Blob([JSON.stringify(currentDeck, null, 2)], {
+      type: 'application/json',
+    });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', 'sample_vocab_b1_template.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const a = document.createElement('a');
+    a.href = url;
+    const rawName = currentDeck.title || currentDeck.name || 'vocab_deck';
+    a.download = `${rawName.replace(/[^a-zA-Z0-9_-]/g, '_')}_vocab.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const handleAddManualRow = () => {
-    setManualRows((prev) => [
+  const handleAddBlankRow = () => {
+    setPreviewRows((prev) => [
       ...prev,
       {
-        id: `row_${Date.now()}`,
+        id: `manual_${Date.now()}_${prev.length}`,
         word: '',
+        meaningVi: '',
         phonetic: '',
         partOfSpeech: 'n',
-        meaningVi: '',
         exampleEn: '',
         exampleVi: '',
-        note: '',
       },
     ]);
   };
 
-  const handleRemoveManualRow = (id: string) => {
-    setManualRows((prev) => prev.filter((r) => r.id !== id));
-  };
-
-  const updateManualRow = (id: string, field: keyof ManualRow, value: string) => {
-    setManualRows((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, [field]: value } : r))
-    );
-  };
-
-  const handleSave = () => {
+  const handleImportConfirm = () => {
     if (!selectedDeckId) {
-      setError('Vui lòng chọn bộ từ vựng đích');
+      setError('Vui lòng chọn hoặc tạo một bộ từ trước khi nhập.');
       return;
     }
 
-    let wordsToAdd: ExtendedVocabItem[] = [];
-
-    if (activeTab === 'paste' || activeTab === 'file') {
-      wordsToAdd = parsePastedLines(pasteText);
-      if (wordsToAdd.length === 0) {
-        setError('Không tìm thấy dòng từ vựng hợp lệ. Vui lòng kiểm tra lại định dạng dấu | hoặc tab');
-        return;
-      }
-    } else {
-      // Manual grid
-      const validRows = manualRows.filter((r) => r.word.trim() && r.meaningVi.trim());
-      if (validRows.length === 0) {
-        setError('Vui lòng điền ít nhất 1 dòng có từ vựng và nghĩa tiếng Việt');
-        return;
-      }
-      wordsToAdd = validRows.map((r, idx) => ({
-        id: `manual_${Date.now()}_${idx}`,
-        word: r.word.trim(),
-        phonetic: r.phonetic.trim() || `/${r.word.trim()}/`,
-        partOfSpeech: (['n', 'v', 'adj', 'adv', 'phr'].includes(r.partOfSpeech)
-          ? r.partOfSpeech
-          : 'n') as any,
-        meaningVi: r.meaningVi.trim(),
-        exampleEn: r.exampleEn.trim() || `Example with ${r.word.trim()}.`,
-        exampleVi: r.exampleVi.trim() || `Ví dụ với ${r.word.trim()}.`,
-        topic: 'Nhập thủ công',
-        cefr: 'B1',
-        note: r.note.trim(),
-        collocations: r.note.trim(),
-        isMastered: false,
-      }));
+    const validRows = previewRows.filter(
+      (r) => r.word.trim().length > 0 && r.meaningVi.trim().length > 0
+    );
+    if (validRows.length === 0) {
+      setError('Không có dòng từ vựng hợp lệ nào (cần tối thiểu Từ tiếng Anh và Nghĩa tiếng Việt).');
+      return;
     }
 
-    onAddWordsToDeck(selectedDeckId, wordsToAdd);
+    const normalizedItems: ExtendedVocabItem[] = validRows.map((r, idx) =>
+      adaptVocabItem(
+        {
+          word: r.word.trim(),
+          meaningVi: r.meaningVi.trim(),
+          phonetic: r.phonetic.trim(),
+          partOfSpeech: r.partOfSpeech,
+          exampleEn: r.exampleEn.trim(),
+          exampleVi: r.exampleVi.trim(),
+          sourceType: 'manual',
+        },
+        selectedDeckId,
+        idx
+      )
+    );
+
+    onAddWordsToDeck(selectedDeckId, normalizedItems, duplicateStrategy);
     onClose();
   };
 
-  const previewCount = parsePastedLines(pasteText).length;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-4xl max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-5 overflow-y-auto">
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400">
+        <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center">
               <FileSpreadsheet className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-lg text-slate-800 dark:text-slate-100">
-                Thêm nhiều từ vựng vào bộ
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Nhập nhanh danh sách từ qua định dạng Paste (|), tệp CSV hoặc bảng điền trực tiếp
+              <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
+                Nhập / Xuất Từ Vựng (CSV, TSV, JSON & Bảng thủ công)
+              </h2>
+              <p className="text-xs text-slate-500">
+                Hỗ trợ chuẩn CSV RFC-4180, ánh xạ cột linh hoạt và kiểm soát từ trùng lặp
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
 
-        {/* Modal Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* JSON tool promo banner if available */}
-          {onOpenJsonModal && (
-            <div className="p-3.5 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/30 border border-amber-200 dark:border-amber-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-              <div className="flex items-start sm:items-center gap-2.5 text-amber-950 dark:text-amber-200">
-                <span className="text-xl">📁</span>
-                <div>
-                  <div className="font-extrabold text-amber-900 dark:text-amber-200">
-                    Bạn có file dữ liệu .JSON hoặc muốn dùng Master Prompt AI?
-                  </div>
-                  <p className="text-[11px] text-amber-700 dark:text-amber-300">
-                    Hỗ trợ tải tệp JSON từ máy tính, dán trực tiếp và sao chép Prompt 15 chủ đề trích xuất từ vựng B1.
-                  </p>
-                </div>
-              </div>
+          <div className="flex items-center gap-2">
+            {currentDeck && (
               <button
                 type="button"
-                onClick={onOpenJsonModal}
-                className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shrink-0 transition-colors shadow-sm cursor-pointer self-start sm:self-auto"
+                onClick={handleExportCurrentDeckJson}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition"
               >
-                Mở công cụ JSON & AI Prompt &rarr;
-              </button>
-            </div>
-          )}
-
-          {/* Target Deck selector */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/60">
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                Bộ từ nhận dữ liệu:
-              </span>
-              <select
-                value={selectedDeckId}
-                onChange={(e) => setSelectedDeckId(e.target.value)}
-                className="flex-1 sm:w-64 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm font-medium text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
-              >
-                {decks.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.icon} {d.name} ({d.itemCount} từ)
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {onRequestCreateDeck && (
-              <button
-                type="button"
-                onClick={onRequestCreateDeck}
-                className="text-xs font-semibold text-primary-600 dark:text-primary-400 hover:underline flex items-center gap-1"
-              >
-                <Plus className="w-3.5 h-3.5" /> Tạo bộ từ mới
+                <Download className="w-3.5 h-3.5 text-indigo-600" />
+                Xuất JSON bộ từ
               </button>
             )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* Deck selector & Duplicate Resolution Strategy */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-2xl bg-slate-50 border border-slate-200">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Bộ từ cá nhân đích:
+              </label>
+              <div className="flex gap-2">
+                {decks.length > 0 ? (
+                  <select
+                    value={selectedDeckId}
+                    onChange={(e) => setSelectedDeckId(e.target.value)}
+                    className="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm font-semibold text-slate-800"
+                  >
+                    {decks.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.title} ({d.itemCount} từ)
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="text-xs text-amber-700 font-medium py-2">
+                    Chưa có bộ từ cá nhân.
+                  </span>
+                )}
+                {onRequestCreateDeck && (
+                  <button
+                    type="button"
+                    onClick={onRequestCreateDeck}
+                    className="px-3 py-2 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold shrink-0"
+                  >
+                    + Tạo bộ mới
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Khi gặp từ tiếng Anh đã tồn tại trong bộ từ ({duplicateCountInPreview} từ trùng):
+              </label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(
+                  [
+                    { id: 'skip', label: 'Bỏ qua từ trùng' },
+                    { id: 'keep_both', label: 'Giữ riêng' },
+                    { id: 'overwrite', label: 'Cập nhật từ cũ' },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setDuplicateStrategy(opt.id)}
+                    className={`py-2 px-2 rounded-xl text-xs font-bold border transition ${
+                      duplicateStrategy === opt.id
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
-          {/* Tab selector */}
-          <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+          {/* 3 Input Tabs */}
+          <div className="grid grid-cols-3 gap-2 p-1 rounded-xl bg-slate-100 border border-slate-200">
             <button
+              type="button"
               onClick={() => setActiveTab('paste')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+              className={`py-2 px-3 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition ${
                 activeTab === 'paste'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  ? 'bg-white text-emerald-700 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <ClipboardPaste className="w-4 h-4" />
-              1. Thêm nhanh (Paste với |)
+              <span>Dán CSV / Excel (TSV)</span>
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('file')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+              className={`py-2 px-3 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition ${
                 activeTab === 'file'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  ? 'bg-white text-emerald-700 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Upload className="w-4 h-4" />
-              2. Nhập file (CSV / Text)
+              <span>Tải tệp CSV / TSV / JSON</span>
             </button>
             <button
-              onClick={() => setActiveTab('grid')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+              type="button"
+              onClick={() => {
+                setActiveTab('grid');
+                if (previewRows.length === 0) handleAddBlankRow();
+              }}
+              className={`py-2 px-3 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition ${
                 activeTab === 'grid'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  ? 'bg-white text-emerald-700 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Table className="w-4 h-4" />
-              3. Bảng thủ công
+              <span>Nhập bảng trực tiếp</span>
             </button>
           </div>
 
-          {/* TAB 1: PASTE WITH PIPE */}
+          {/* Tab 1: Paste CSV/TSV & Column Mapping */}
           {activeTab === 'paste' && (
-            <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 bg-blue-50/70 dark:bg-blue-950/30 rounded-xl border border-blue-200 dark:border-blue-900/50">
-                <div className="space-y-1">
-                  <span className="text-xs font-bold text-blue-900 dark:text-blue-300 uppercase tracking-wide">
-                    Quy cách dòng phân tách bằng dấu gạch đứng (|):
-                  </span>
-                  <p className="text-xs text-blue-700 dark:text-blue-400 font-mono">
-                    từ vựng | /phiên âm/ | loại từ | nghĩa | ví dụ tiếng Anh | dịch ví dụ | ghi chú
-                  </p>
+            <div className="space-y-4 bg-white border border-slate-200 rounded-2xl p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-700">Ký tự phân cách:</span>
+                  {(
+                    [
+                      { val: '\t', label: 'Tab (Excel/Google Sheets)' },
+                      { val: ',', label: 'Dấu phẩy (,)' },
+                      { val: ';', label: 'Chấm phẩy (;)' },
+                    ] as const
+                  ).map((d) => (
+                    <button
+                      key={d.label}
+                      type="button"
+                      onClick={() => {
+                        setDelimiter(d.val);
+                        if (rawInputText.trim()) {
+                          buildPreviewFromDelimited(
+                            rawInputText,
+                            d.val,
+                            hasHeaderRow,
+                            columnMapping
+                          );
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${
+                        delimiter === d.val
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-slate-50 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={handleCopyPrompt}
-                  className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5 shrink-0"
-                >
-                  {copiedPrompt ? (
-                    <>
-                      <Check className="w-3.5 h-3.5" /> Đã sao chép prompt!
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" /> Sao chép Prompt ChatGPT
-                    </>
-                  )}
-                </button>
+
+                <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={hasHeaderRow}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      setHasHeaderRow(next);
+                      if (rawInputText.trim()) {
+                        buildPreviewFromDelimited(rawInputText, delimiter, next, columnMapping);
+                      }
+                    }}
+                    className="rounded-sm text-emerald-600"
+                  />
+                  Bỏ qua dòng tiêu đề đầu tiên
+                </label>
+              </div>
+
+              {/* Column Mapping Controls */}
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Columns className="w-3.5 h-3.5 text-indigo-600" />
+                  Thứ tự ánh xạ các cột (Cột 1 → Cột 6):
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
+                  {columnMapping.map((role, idx) => (
+                    <div key={idx}>
+                      <span className="block text-[10px] font-bold uppercase text-slate-400 mb-0.5">
+                        Cột {idx + 1}
+                      </span>
+                      <select
+                        value={role}
+                        onChange={(e) => {
+                          const nextMap = [...columnMapping];
+                          nextMap[idx] = e.target.value as ColumnRole;
+                          setColumnMapping(nextMap);
+                          if (rawInputText.trim()) {
+                            buildPreviewFromDelimited(
+                              rawInputText,
+                              delimiter,
+                              hasHeaderRow,
+                              nextMap
+                            );
+                          }
+                        }}
+                        className="w-full px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold"
+                      >
+                        <option value="word">Từ tiếng Anh</option>
+                        <option value="meaningVi">Nghĩa tiếng Việt</option>
+                        <option value="phonetic">Phiên âm IPA</option>
+                        <option value="partOfSpeech">Từ loại (n/v/adj...)</option>
+                        <option value="exampleEn">Ví dụ tiếng Anh</option>
+                        <option value="exampleVi">Dịch ví dụ</option>
+                        <option value="ignore">Bỏ qua cột này</option>
+                      </select>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                    Dán văn bản vào đây:
-                  </label>
-                  {previewCount > 0 && (
-                    <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
-                      Nhận diện được {previewCount} từ hợp lệ
-                    </span>
-                  )}
-                </div>
                 <textarea
-                  rows={8}
-                  value={pasteText}
+                  rows={5}
+                  value={rawInputText}
                   onChange={(e) => {
-                    setPasteText(e.target.value);
-                    setError(null);
+                    const val = e.target.value;
+                    setRawInputText(val);
+                    buildPreviewFromDelimited(val, delimiter, hasHeaderRow, columnMapping);
                   }}
-                  placeholder={`accommodate | /əˈkɒm.ə.deɪt/ | v | cung cấp chỗ ở | The hotel can accommodate 500 guests. | Khách sạn có thể chứa 500 khách. | Reading Part 1\ndestination | /ˌdes.tɪˈneɪ.ʃən/ | n | điểm đến | Paris is a popular destination. | Paris là điểm đến nổi tiếng. | Travel`}
-                  className="w-full p-4 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-100 font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder={`Dán danh sách từ vựng từ Excel hoặc CSV vào đây...\nVí dụ:\ndeparture\tkhởi hành\t/dɪˈpɑːtʃə/\tn\tOur departure was delayed.\tChuyến khởi hành của chúng tôi bị hoãn.`}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
             </div>
           )}
 
-          {/* TAB 2: FILE UPLOAD */}
+          {/* Tab 2: File Upload */}
           {activeTab === 'file' && (
-            <div className="space-y-4">
-              <div className="p-8 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl text-center bg-slate-50/50 dark:bg-slate-800/30 flex flex-col items-center justify-center">
-                <FileSpreadsheet className="w-12 h-12 text-slate-400 mb-2" />
-                <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                  Tải lên tệp CSV, Text (.txt) hoặc JSON (.json) chứa danh sách từ vựng
+            <div className="p-6 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 text-center space-y-3">
+              <FileJson className="w-10 h-10 text-emerald-600 mx-auto" />
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-slate-900">
+                  Chọn tệp .CSV, .TSV hoặc .JSON từ máy tính
+                </h4>
+                <p className="text-xs text-slate-500">
+                  Hỗ trợ đầy đủ dấu ngoặc kép chứa dấu phẩy hoặc xuống dòng theo chuẩn RFC-4180.
                 </p>
-                <p className="text-xs text-slate-400 mt-1 max-w-md">
-                  Hệ thống tự động nhận diện cấu trúc JSON mảng từ vựng, hoặc các cột ngăn cách bởi dấu phẩy, tab, dấu gạch đứng (|).
-                </p>
-                <div className="flex items-center gap-3 mt-4">
-                  <label className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold cursor-pointer hover:bg-blue-700 shadow-sm transition-colors">
-                    <Upload className="w-4 h-4" /> Chọn tệp CSV / TXT / JSON
-                    <input
-                      type="file"
-                      accept=".csv,.txt,.json"
-                      className="hidden"
-                      onChange={handleFileUpload}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={downloadSampleCsv}
-                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold transition-colors"
-                  >
-                    <Download className="w-4 h-4" /> Tải tệp CSV mẫu
-                  </button>
-                </div>
               </div>
+              <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold cursor-pointer shadow-xs transition">
+                <Upload className="w-4 h-4" />
+                <span>Chọn tệp để tải lên</span>
+                <input
+                  type="file"
+                  accept=".csv,.tsv,.txt,.json"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+              </label>
             </div>
           )}
 
-          {/* TAB 3: MANUAL GRID */}
-          {activeTab === 'grid' && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                  Nhập trực tiếp danh sách từ vào bảng bên dưới:
-                </span>
-                <button
-                  type="button"
-                  onClick={handleAddManualRow}
-                  className="px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 text-xs font-semibold hover:bg-blue-100 transition-colors flex items-center gap-1"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Thêm dòng
-                </button>
-              </div>
-
-              <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-x-auto max-h-72">
-                <table className="w-full text-left text-xs min-w-[700px]">
-                  <thead className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold sticky top-0">
-                    <tr>
-                      <th className="p-2 w-32">Từ vựng *</th>
-                      <th className="p-2 w-24">Phiên âm</th>
-                      <th className="p-2 w-20">Loại từ</th>
-                      <th className="p-2 w-44">Nghĩa tiếng Việt *</th>
-                      <th className="p-2">Ví dụ câu & Dịch</th>
-                      <th className="p-2 w-28">Ghi chú</th>
-                      <th className="p-2 w-10 text-center">Xóa</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {manualRows.map((row) => (
-                      <tr key={row.id}>
-                        <td className="p-1.5">
-                          <input
-                            type="text"
-                            value={row.word}
-                            onChange={(e) => updateManualRow(row.id, 'word', e.target.value)}
-                            placeholder="convenient"
-                            className="w-full px-2 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold"
-                          />
-                        </td>
-                        <td className="p-1.5">
-                          <input
-                            type="text"
-                            value={row.phonetic}
-                            onChange={(e) => updateManualRow(row.id, 'phonetic', e.target.value)}
-                            placeholder="/.../"
-                            className="w-full px-2 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-mono"
-                          />
-                        </td>
-                        <td className="p-1.5">
-                          <select
-                            value={row.partOfSpeech}
-                            onChange={(e) => updateManualRow(row.id, 'partOfSpeech', e.target.value)}
-                            className="w-full px-1.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
-                          >
-                            <option value="n">n</option>
-                            <option value="v">v</option>
-                            <option value="adj">adj</option>
-                            <option value="adv">adv</option>
-                            <option value="phr">phr</option>
-                          </select>
-                        </td>
-                        <td className="p-1.5">
-                          <input
-                            type="text"
-                            value={row.meaningVi}
-                            onChange={(e) => updateManualRow(row.id, 'meaningVi', e.target.value)}
-                            placeholder="tiện lợi"
-                            className="w-full px-2 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
-                          />
-                        </td>
-                        <td className="p-1.5">
-                          <input
-                            type="text"
-                            value={row.exampleEn}
-                            onChange={(e) => updateManualRow(row.id, 'exampleEn', e.target.value)}
-                            placeholder="Public transport is convenient."
-                            className="w-full px-2 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
-                          />
-                        </td>
-                        <td className="p-1.5">
-                          <input
-                            type="text"
-                            value={row.note}
-                            onChange={(e) => updateManualRow(row.id, 'note', e.target.value)}
-                            placeholder="Reading P1"
-                            className="w-full px-2 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
-                          />
-                        </td>
-                        <td className="p-1.5 text-center">
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveManualRow(row.id)}
-                            className="p-1 text-slate-400 hover:text-red-500 rounded"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Error Message */}
           {error && (
-            <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs sm:text-sm text-rose-800 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
               <span>{error}</span>
             </div>
           )}
+
+          {/* Editable Preview Table */}
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-extrabold text-slate-900">
+                Bảng kiểm tra & Chỉnh sửa trước khi lưu ({previewRows.length} dòng)
+              </h3>
+              <button
+                type="button"
+                onClick={handleAddBlankRow}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Thêm dòng trống
+              </button>
+            </div>
+
+            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white max-h-72 overflow-y-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 font-bold text-slate-600">
+                    <th className="py-2.5 px-2.5">Từ tiếng Anh *</th>
+                    <th className="py-2.5 px-2.5">Nghĩa tiếng Việt *</th>
+                    <th className="py-2.5 px-2.5 w-28">IPA</th>
+                    <th className="py-2.5 px-2.5 w-20">Loại từ</th>
+                    <th className="py-2.5 px-2.5">Câu ví dụ tiếng Anh</th>
+                    <th className="py-2.5 px-2.5 w-10 text-center">Xóa</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {previewRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-slate-400">
+                        Chưa có dữ liệu xem trước. Hãy dán văn bản, tải tệp hoặc nhấn &ldquo;Thêm
+                        dòng trống&rdquo;.
+                      </td>
+                    </tr>
+                  ) : (
+                    previewRows.map((row, idx) => {
+                      const isDup =
+                        row.word.trim().length > 0 &&
+                        existingWordSet.has(normalizeEnglishText(row.word));
+
+                      return (
+                        <tr key={row.id} className={isDup ? 'bg-amber-50/50' : ''}>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              value={row.word}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setPreviewRows((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, word: val } : r))
+                                );
+                              }}
+                              placeholder="Từ vựng..."
+                              className="w-full px-2 py-1.5 rounded-lg border border-slate-200 font-bold text-slate-900"
+                            />
+                            {isDup && (
+                              <span className="text-[10px] text-amber-700 font-semibold block mt-0.5">
+                                Đã có trong bộ từ
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              value={row.meaningVi}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setPreviewRows((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, meaningVi: val } : r))
+                                );
+                              }}
+                              placeholder="Nghĩa tiếng Việt..."
+                              className="w-full px-2 py-1.5 rounded-lg border border-slate-200 font-medium text-slate-800"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              value={row.phonetic}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setPreviewRows((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, phonetic: val } : r))
+                                );
+                              }}
+                              placeholder="/.../"
+                              className="w-full px-2 py-1.5 rounded-lg border border-slate-200 font-mono"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <select
+                              value={row.partOfSpeech}
+                              onChange={(e) => {
+                                const val = e.target.value as any;
+                                setPreviewRows((prev) =>
+                                  prev.map((r, i) =>
+                                    i === idx ? { ...r, partOfSpeech: val } : r
+                                  )
+                                );
+                              }}
+                              className="w-full px-1.5 py-1.5 rounded-lg border border-slate-200 bg-white font-bold"
+                            >
+                              <option value="n">n</option>
+                              <option value="v">v</option>
+                              <option value="adj">adj</option>
+                              <option value="adv">adv</option>
+                              <option value="phr">phr</option>
+                            </select>
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              value={row.exampleEn}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setPreviewRows((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, exampleEn: val } : r))
+                                );
+                              }}
+                              placeholder="Ví dụ tiếng Anh..."
+                              className="w-full px-2 py-1.5 rounded-lg border border-slate-200"
+                            />
+                          </td>
+                          <td className="p-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreviewRows((prev) => prev.filter((_, i) => i !== idx))
+                              }
+                              className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
 
-        {/* Footer actions */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40">
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium text-sm transition-colors"
+            className="px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-semibold"
           >
-            Đóng
+            Hủy
           </button>
+
           <button
             type="button"
-            onClick={handleSave}
-            className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm shadow-sm transition-colors flex items-center gap-2"
+            disabled={previewRows.length === 0 || !selectedDeckId}
+            onClick={handleImportConfirm}
+            className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-extrabold text-xs sm:text-sm shadow-sm transition"
           >
             <Check className="w-4 h-4" />
-            Lưu từ vựng vào bộ
+            Xác nhận nhập vào bộ từ
           </button>
         </div>
       </div>

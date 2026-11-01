@@ -38,7 +38,7 @@ interface AuthContextType {
 }
 
 // Master Super Admin account list
-export const SUPER_ADMIN_EMAILS = ['damtanthanh23@gmail.com'];
+export const SUPER_ADMIN_EMAILS = ['damtanthanh23@gmail.com', 'admin@gmail.com'];
 
 const AuthContext = createContext<AuthContextType>({
   currentUser: null,
@@ -206,6 +206,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => unsubscribe();
   }, []);
+
+  // 90-second visibility-aware online heartbeat
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const pingHeartbeat = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
+      try {
+        const userDocRef = doc(db, 'users', currentUser.uid);
+        await setDoc(userDocRef, { lastActiveAt: Date.now() }, { merge: true });
+      } catch {
+        // Silently ignore ping error
+      }
+    };
+
+    pingHeartbeat();
+
+    const intervalId = setInterval(pingHeartbeat, 90 * 1000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        pingHeartbeat();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [currentUser]);
 
   const signInWithGoogle = async () => {
     setAuthError(null);

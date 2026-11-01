@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Sparkles,
@@ -10,16 +10,22 @@ import {
   AlertCircle,
   Plus,
   Upload,
+  Trash2,
+  Edit3,
+  FileText,
+  Highlighter,
 } from 'lucide-react';
 import { ExtendedVocabItem, UserVocabDeck } from '../../../types/vocab';
 import { B1_OFFICIAL_15_TOPICS } from '../VocabAiPromptModal';
 import { playDictionaryAudio } from '../../../utils/dictionaryAudio';
+import { adaptVocabItem } from '../../../utils/vocabEngine';
 
 interface VocabAiModalProps {
   isOpen: boolean;
   onClose: () => void;
   decks: UserVocabDeck[];
   activeDeckId?: string;
+  userId?: string | null;
   onAddWordsToDeck: (deckId: string, words: ExtendedVocabItem[]) => void;
   onRequestCreateDeck?: () => void;
 }
@@ -29,6 +35,7 @@ export const VocabAiModal: React.FC<VocabAiModalProps> = ({
   onClose,
   decks,
   activeDeckId,
+  userId = 'guest',
   onAddWordsToDeck,
   onRequestCreateDeck,
 }) => {
@@ -36,539 +43,896 @@ export const VocabAiModal: React.FC<VocabAiModalProps> = ({
     activeDeckId || (decks.length > 0 ? decks[0].id : '')
   );
   const [activeTab, setActiveTab] = useState<'theme' | 'reading' | 'image'>('theme');
+
+  // Tab 1: Theme / Passage
   const [topic, setTopic] = useState('05 Travel And Transport');
   const [customTopic, setCustomTopic] = useState('');
-  const [passage, setPassage] = useState('');
+  const [cefrLevel, setCefrLevel] = useState<'A2' | 'B1' | 'B2' | 'C1'>('B1');
   const [wordCount, setWordCount] = useState(10);
 
-  // Image state
+  // Tab 2: Reading Passage & Interactive Phrase Selection
+  const [passage, setPassage] = useState('');
+  const [selectedPhrases, setSelectedPhrases] = useState<string[]>([]);
+  const [manualPhraseInput, setManualPhraseInput] = useState('');
+
+  // Tab 3: Image OCR
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageBase64, setImageBase64] = useState<string>('');
   const [imageMime, setImageMime] = useState<string>('image/jpeg');
+  const [ocrText, setOcrText] = useState<string>('');
+  const [ocrLoading, setOcrLoading] = useState<boolean>(false);
+  const [ocrCompleted, setOcrCompleted] = useState<boolean>(false);
 
-  // AI Generation state
+  // AI Generation & Draft Preview state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [generatedWords, setGeneratedWords] = useState<ExtendedVocabItem[]>([]);
   const [selectedWordIds, setSelectedWordIds] = useState<Set<string>>(new Set());
+  const [editingWordId, setEditingWordId] = useState<string | null>(null);
 
-  // Quota tracking
-  const [remainingQuota, setRemainingQuota] = useState(98);
+  // Quota tracking (100/day in Asia/Ho_Chi_Minh)
+  const [quotaRemaining, setQuotaRemaining] = useState<number>(100);
+  const [quotaLimit, setQuotaLimit] = useState<number>(100);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (activeDeckId) setSelectedDeckId(activeDeckId);
-  }, [activeDeckId]);
+    if (activeDeckId) {
+      setSelectedDeckId(activeDeckId);
+    } else if (decks.length > 0 && !selectedDeckId) {
+      setSelectedDeckId(decks[0].id);
+    }
+  }, [activeDeckId, decks, selectedDeckId]);
+
+  // Fetch real quota on open
+  useEffect(() => {
+    if (!isOpen) return;
+    const safeUser = userId || 'guest';
+    fetch(`/api/ai/vocab-quota?userId=${encodeURIComponent(safeUser)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (typeof data.remaining === 'number') setQuotaRemaining(data.remaining);
+        if (typeof data.limit === 'number') setQuotaLimit(data.limit);
+      })
+      .catch(() => {
+        // Keep current quota display if offline
+      });
+  }, [isOpen, userId]);
 
   if (!isOpen) return null;
 
-  // Handle image upload / paste
-  const handleImageFile = (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      setError('Vui lòng chọn file hình ảnh (PNG, JPG, WEBP)');
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedMimes.includes(file.type)) {
+      setError('Chỉ hỗ trợ định dạng ảnh JPG, PNG hoặc WEBP.');
       return;
     }
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Dung lượng ảnh vượt quá giới hạn 5MB. Vui lòng chọn ảnh nhỏ hơn.');
+      return;
+    }
+
+    setError(null);
+    setImageMime(file.type);
+    setOcrCompleted(false);
+    setOcrText('');
+
     const reader = new FileReader();
-    reader.onload = (e) => {
-      const result = e.target?.result as string;
-      setImagePreview(result);
-      setImageBase64(result);
-      setImageMime(file.type);
-      setError(null);
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setImagePreview(dataUrl);
+      const base64Part = dataUrl.split(',')[1] || '';
+      setImageBase64(base64Part);
     };
     reader.readAsDataURL(file);
   };
 
-  const handlePaste = (e: React.ClipboardEvent) => {
-    if (activeTab !== 'image') return;
-    const items = e.clipboardData?.items;
-    if (items) {
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.startsWith('image/')) {
-          const file = items[i].getAsFile();
-          if (file) {
-            handleImageFile(file);
-            break;
-          }
-        }
+  const handleRunOcrPreview = async () => {
+    if (!imageBase64) {
+      setError('Vui lòng tải ảnh lên trước khi quét văn bản OCR.');
+      return;
+    }
+    setOcrLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai/ocr-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64,
+          mimeType: imageMime,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Không thể trích xuất văn bản từ ảnh.');
+      }
+      setOcrText(data.ocrText || '');
+      setOcrCompleted(true);
+    } catch (err: any) {
+      setError(err.message || 'Lỗi khi quét OCR.');
+    } finally {
+      setOcrLoading(false);
+    }
+  };
+
+  // Handle text selection in Reading tab (Desktop mouseup / Mobile selection)
+  const handlePassageMouseUp = () => {
+    const selection = window.getSelection()?.toString().trim() || '';
+    if (selection.length >= 2 && selection.length <= 60) {
+      const cleaned = selection.replace(/^[.,;!?()"']+|[.,;!?()"']+$/g, '').trim();
+      if (cleaned && !selectedPhrases.includes(cleaned)) {
+        setSelectedPhrases((prev) => [...prev, cleaned]);
       }
     }
+  };
+
+  const handleAddManualPhrase = () => {
+    const cleaned = manualPhraseInput.trim();
+    if (!cleaned) return;
+    if (!selectedPhrases.includes(cleaned)) {
+      setSelectedPhrases((prev) => [...prev, cleaned]);
+    }
+    setManualPhraseInput('');
+  };
+
+  const handleCancelGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setLoading(false);
   };
 
   const handleGenerate = async () => {
     setError(null);
+    setWarnings([]);
+
+    if (activeTab === 'theme') {
+      const targetText = customTopic.trim() || topic;
+      if (!targetText) {
+        setError('Vui lòng chọn hoặc nhập chủ đề / đoạn văn.');
+        return;
+      }
+      if (targetText.length > 2000) {
+        setError('Nội dung đầu vào vượt quá giới hạn 2.000 ký tự.');
+        return;
+      }
+    } else if (activeTab === 'reading') {
+      if (!passage.trim() && selectedPhrases.length === 0) {
+        setError('Vui lòng nhập đoạn văn tiếng Anh hoặc chọn ít nhất 1 từ/cụm từ.');
+        return;
+      }
+      if (passage.length > 2000) {
+        setError('Đoạn văn vượt quá giới hạn 2.000 ký tự.');
+        return;
+      }
+    } else if (activeTab === 'image') {
+      if (!imageBase64 && !ocrText.trim()) {
+        setError('Vui lòng tải ảnh lên hoặc nhập văn bản OCR.');
+        return;
+      }
+    }
+
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setLoading(true);
-    setGeneratedWords([]);
 
     try {
-      const payload: any = {
-        mode: activeTab,
-        count: wordCount,
-      };
-
-      if (activeTab === 'theme') {
-        payload.topic = customTopic.trim() ? customTopic.trim() : topic;
-      } else if (activeTab === 'reading') {
-        if (!passage.trim()) {
-          throw new Error('Vui lòng dán đoạn văn bản cần trích xuất từ vựng');
-        }
-        payload.passage = passage.trim();
-        payload.topic = 'Reading Passage Vocab';
-      } else if (activeTab === 'image') {
-        if (!imageBase64) {
-          throw new Error('Vui lòng tải lên hoặc dán (Ctrl+V) ảnh chụp tài liệu');
-        }
-        payload.imageBase64 = imageBase64;
-        payload.mimeType = imageMime;
-        payload.topic = 'Document OCR Vocab';
-      }
-
-      const res = await fetch('/api/ai/generate-vocab', {
+      const response = await fetch('/api/ai/generate-vocab', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        signal: controller.signal,
+        body: JSON.stringify({
+          userId: userId || 'guest',
+          requestId,
+          mode: activeTab,
+          topic: customTopic.trim() || topic,
+          passage: passage.trim(),
+          selectedPhrases,
+          imageBase64: activeTab === 'image' ? imageBase64 : undefined,
+          mimeType: activeTab === 'image' ? imageMime : undefined,
+          ocrText: activeTab === 'image' ? ocrText.trim() : undefined,
+          count: Math.min(50, Math.max(1, wordCount)),
+          cefr: cefrLevel,
+        }),
       });
 
-      if (!res.ok) {
-        throw new Error(`Lỗi máy chủ (${res.status}): Không thể tạo từ vựng.`);
+      const data = await response.json();
+      if (!response.ok) {
+        if (data.quota) {
+          setQuotaRemaining(data.quota.remaining);
+          setQuotaLimit(data.quota.limit);
+        }
+        throw new Error(data.error || 'Không thể tạo từ vựng lúc này.');
       }
 
-      const data = await res.json();
-      const items: ExtendedVocabItem[] = (data.items || []).map((it: any) => ({
-        ...it,
-        isMastered: false,
-      }));
-
-      if (items.length === 0) {
-        throw new Error('Không trích xuất được từ vựng nào. Vui lòng thử lại với nội dung rõ hơn.');
+      if (data.quota) {
+        setQuotaRemaining(data.quota.remaining);
+        setQuotaLimit(data.quota.limit);
+      }
+      if (Array.isArray(data.warnings)) {
+        setWarnings(data.warnings);
       }
 
-      setGeneratedWords(items);
-      setSelectedWordIds(new Set(items.map((w) => w.id)));
-      setRemainingQuota((prev) => Math.max(0, prev - 1));
+      const rawWords: any[] = Array.isArray(data.words) ? data.words : [];
+      const targetDeckId = selectedDeckId || 'temp_ai_deck';
+      const normalized = rawWords.map((w, idx) =>
+        adaptVocabItem(
+          {
+            ...w,
+            cefr: w.cefr || cefrLevel,
+            sourceType:
+              activeTab === 'reading'
+                ? 'ai_passage'
+                : activeTab === 'image'
+                ? 'ai_ocr'
+                : 'ai_generated',
+          },
+          targetDeckId,
+          idx
+        )
+      );
+
+      setGeneratedWords(normalized);
+      setSelectedWordIds(new Set(normalized.map((w) => w.id)));
     } catch (err: any) {
-      setError(err.message || 'Đã có lỗi xảy ra khi tạo từ vựng bằng AI.');
+      if (err.name === 'AbortError') {
+        setError('Đã hủy yêu cầu tạo từ vựng.');
+      } else {
+        setError(err.message || 'Lỗi kết nối máy chủ khi tạo từ vựng.');
+      }
     } finally {
       setLoading(false);
+      abortControllerRef.current = null;
     }
   };
 
-  const toggleWordSelection = (id: string) => {
-    const next = new Set(selectedWordIds);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setSelectedWordIds(next);
-  };
-
-  const selectAll = () => {
-    if (selectedWordIds.size === generatedWords.length) {
-      setSelectedWordIds(new Set());
-    } else {
-      setSelectedWordIds(new Set(generatedWords.map((w) => w.id)));
-    }
-  };
-
-  const handleSaveToDeck = () => {
+  const handleSaveSelectedToDeck = () => {
     if (!selectedDeckId) {
-      setError('Vui lòng chọn bộ từ vựng cần lưu');
+      setError('Vui lòng chọn hoặc tạo một bộ từ cá nhân để lưu.');
       return;
     }
-    const wordsToAdd = generatedWords.filter((w) => selectedWordIds.has(w.id));
-    if (wordsToAdd.length === 0) {
-      setError('Vui lòng chọn ít nhất một từ vựng để thêm');
+    const chosen = generatedWords.filter((w) => selectedWordIds.has(w.id));
+    if (chosen.length === 0) {
+      setError('Vui lòng tích chọn ít nhất 1 từ vựng để lưu vào bộ từ.');
       return;
     }
-
-    onAddWordsToDeck(selectedDeckId, wordsToAdd);
+    onAddWordsToDeck(selectedDeckId, chosen);
     onClose();
   };
 
+  const updateDraftField = (
+    wordId: string,
+    field: keyof ExtendedVocabItem,
+    value: string
+  ) => {
+    setGeneratedWords((prev) =>
+      prev.map((w) => (w.id === wordId ? { ...w, [field]: value } : w))
+    );
+  };
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in"
-      onPaste={handlePaste}
-    >
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-4xl max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-5 overflow-y-auto">
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-md shadow-indigo-500/20">
-              <Sparkles className="w-5 h-5 animate-pulse" />
+        <div className="px-5 py-4 border-b border-slate-200 bg-gradient-to-r from-indigo-50/80 to-violet-50/80 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+              <Sparkles className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-3">
-                <h3 className="font-bold text-lg text-slate-800 dark:text-slate-100">
-                  Tạo từ vựng với AI
-                </h3>
-                <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800">
-                  THƯỜNG | CÒN {remainingQuota}/100 LƯỢT HÔM NAY
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Bóc tách và chuẩn hóa từ vựng LanguageCert B1 tự động từ chủ đề, bài đọc hoặc ảnh chụp sách
+              <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
+                Tạo Từ Vựng Thông Minh (3 Chế độ)
+              </h2>
+              <p className="text-xs text-slate-600">
+                Hạn mức hôm nay (Asia/Ho_Chi_Minh):{' '}
+                <strong className="text-indigo-700">
+                  {quotaRemaining}/{quotaLimit} lượt
+                </strong>
               </p>
             </div>
           </div>
+
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-white transition"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Content Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Deck selector bar */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/60">
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                Lưu vào bộ:
-              </span>
-              <select
-                value={selectedDeckId}
-                onChange={(e) => setSelectedDeckId(e.target.value)}
-                className="flex-1 sm:w-64 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm font-medium text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
-              >
-                {decks.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.icon} {d.name} ({d.itemCount} từ)
-                  </option>
-                ))}
-              </select>
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* Destination Deck Selector */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+            <div className="flex-1">
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Lưu từ vựng vào bộ từ cá nhân:
+              </label>
+              {decks.length > 0 ? (
+                <select
+                  value={selectedDeckId}
+                  onChange={(e) => setSelectedDeckId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm font-semibold text-slate-800"
+                >
+                  {decks.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.title} ({d.itemCount} từ)
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="text-xs text-amber-700 font-medium">
+                  Bạn chưa có bộ từ cá nhân nào. Hãy tạo bộ từ trước khi lưu.
+                </div>
+              )}
             </div>
-
             {onRequestCreateDeck && (
               <button
                 type="button"
                 onClick={onRequestCreateDeck}
-                className="text-xs font-semibold text-primary-600 dark:text-primary-400 hover:underline flex items-center gap-1"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold self-start sm:self-end transition"
               >
-                <Plus className="w-3.5 h-3.5" /> Tạo bộ từ mới
+                <Plus className="w-4 h-4" />
+                Tạo bộ từ mới
               </button>
             )}
           </div>
 
-          {/* 3 AI Subtabs */}
-          <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+          {/* 3 Mode Tabs */}
+          <div className="grid grid-cols-3 gap-2 p-1 rounded-xl bg-slate-100 border border-slate-200">
             <button
+              type="button"
               onClick={() => setActiveTab('theme')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+              className={`py-2.5 px-3 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition ${
                 activeTab === 'theme'
-                  ? 'bg-primary-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  ? 'bg-white text-indigo-700 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Sparkles className="w-4 h-4" />
-              1. Nhập chủ đề
+              <span>1. Chủ đề / Đoạn văn</span>
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('reading')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+              className={`py-2.5 px-3 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition ${
                 activeTab === 'reading'
-                  ? 'bg-primary-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  ? 'bg-white text-indigo-700 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <BookOpen className="w-4 h-4" />
-              2. Đọc hiểu (Passage)
+              <span>2. Đọc hiểu (Chọn cụm từ)</span>
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('image')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+              className={`py-2.5 px-3 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition ${
                 activeTab === 'image'
-                  ? 'bg-primary-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  ? 'bg-white text-indigo-700 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <ImageIcon className="w-4 h-4" />
-              3. Ảnh tài liệu (OCR)
+              <span>3. Hình ảnh (OCR)</span>
             </button>
           </div>
 
-          {/* Tab 1: Theme */}
+          {/* Tab 1: Theme / Passage */}
           {activeTab === 'theme' && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
-                  Chọn 1 trong 15 chủ đề cốt lõi LanguageCert B1:
-                </label>
-                <select
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-medium text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                >
-                  {B1_OFFICIAL_15_TOPICS.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
+            <div className="space-y-4 bg-white border border-slate-200 rounded-2xl p-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Chủ đề gợi ý chuẩn VSTEP / LanguageCert:
+                  </label>
+                  <select
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white"
+                  >
+                    {B1_OFFICIAL_15_TOPICS.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Trình độ CEFR & Số từ:
+                  </label>
+                  <div className="flex gap-2">
+                    <select
+                      value={cefrLevel}
+                      onChange={(e) => setCefrLevel(e.target.value as any)}
+                      className="px-2.5 py-2 rounded-xl border border-slate-300 text-sm bg-white font-bold text-indigo-700"
+                    >
+                      <option value="A2">A2</option>
+                      <option value="B1">B1</option>
+                      <option value="B2">B2</option>
+                      <option value="C1">C1</option>
+                    </select>
+                    <select
+                      value={wordCount}
+                      onChange={(e) => setWordCount(Number(e.target.value))}
+                      className="flex-1 px-2.5 py-2 rounded-xl border border-slate-300 text-sm bg-white font-semibold"
+                    >
+                      <option value={5}>5 từ</option>
+                      <option value={10}>10 từ</option>
+                      <option value={15}>15 từ</option>
+                      <option value={20}>20 từ</option>
+                      <option value={30}>30 từ</option>
+                      <option value={50}>50 từ (Tối đa)</option>
+                    </select>
+                  </div>
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
-                  Hoặc nhập chủ đề / tình huống thi mong muốn (tùy chỉnh):
-                </label>
-                <input
-                  type="text"
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-700">
+                    Hoặc nhập chủ đề riêng / đoạn văn cần rút từ (Tối đa 2.000 ký tự):
+                  </label>
+                  <span
+                    className={`text-[11px] font-semibold ${
+                      customTopic.length > 2000 ? 'text-rose-600' : 'text-slate-400'
+                    }`}
+                  >
+                    {customTopic.length}/2000
+                  </span>
+                </div>
+                <textarea
+                  rows={3}
                   value={customTopic}
                   onChange={(e) => setCustomTopic(e.target.value)}
-                  placeholder="VD: Cụm từ hay gặp trong email phàn nàn dịch vụ (Writing Part 1)"
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  placeholder="Ví dụ: Environmental pollution and renewable energy solutions..."
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
                 />
-              </div>
-
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Số lượng từ cần tạo:
-                </span>
-                {[5, 10, 15, 20].map((num) => (
-                  <button
-                    key={num}
-                    type="button"
-                    onClick={() => setWordCount(num)}
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${
-                      wordCount === num
-                        ? 'bg-primary-50 dark:bg-primary-950/50 border-primary-500 text-primary-600 dark:text-primary-400'
-                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50'
-                    }`}
-                  >
-                    {num} từ
-                  </button>
-                ))}
               </div>
             </div>
           )}
 
-          {/* Tab 2: Reading */}
+          {/* Tab 2: Reading Passage & Interactive Word/Phrase Selection */}
           {activeTab === 'reading' && (
-            <div className="space-y-4">
+            <div className="space-y-4 bg-white border border-slate-200 rounded-2xl p-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
-                  Dán bài đọc / đoạn văn bản tiếng Anh:
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <Highlighter className="w-3.5 h-3.5 text-indigo-600" />
+                    Dán đoạn văn tiếng Anh (Bôi đen từ/cụm từ trong bài đọc để chọn ngay):
+                  </label>
+                  <span
+                    className={`text-[11px] font-semibold ${
+                      passage.length > 2000 ? 'text-rose-600' : 'text-slate-400'
+                    }`}
+                  >
+                    {passage.length}/2000
+                  </span>
+                </div>
                 <textarea
-                  rows={6}
+                  rows={5}
                   value={passage}
                   onChange={(e) => setPassage(e.target.value)}
-                  placeholder="Dán đoạn văn bản Reading hoặc transcript Listening vào đây để AI tự động lọc ra các từ vựng B1 then chốt..."
-                  className="w-full p-4 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500 font-mono leading-relaxed"
+                  onMouseUp={handlePassageMouseUp}
+                  onKeyUp={handlePassageMouseUp}
+                  placeholder="Paste your English reading passage here. Select/highlight any word or collocation to add it to your extraction list..."
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-hidden focus:ring-2 focus:ring-indigo-500 leading-relaxed"
                 />
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Số lượng từ cần trích xuất:
-                </span>
-                {[5, 10, 15].map((num) => (
-                  <button
-                    key={num}
-                    type="button"
-                    onClick={() => setWordCount(num)}
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${
-                      wordCount === num
-                        ? 'bg-primary-50 dark:bg-primary-950/50 border-primary-500 text-primary-600 dark:text-primary-400'
-                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50'
-                    }`}
-                  >
-                    {num} từ
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
-          {/* Tab 3: Image OCR */}
-          {activeTab === 'image' && (
-            <div className="space-y-4">
-              <div className="p-6 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl text-center hover:border-primary-500 transition-colors bg-slate-50/50 dark:bg-slate-800/30 flex flex-col items-center justify-center">
-                {imagePreview ? (
-                  <div className="space-y-3">
-                    <img
-                      src={imagePreview}
-                      alt="Uploaded study sheet"
-                      className="max-h-48 rounded-xl shadow-md border border-slate-200 dark:border-slate-700 mx-auto object-contain"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setImagePreview(null);
-                        setImageBase64('');
-                      }}
-                      className="text-xs text-red-500 hover:underline font-semibold"
-                    >
-                      Xóa ảnh & chọn ảnh khác
-                    </button>
+              {/* Interactive token tap helper for mobile + manual phrase input */}
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={manualPhraseInput}
+                    onChange={(e) => setManualPhraseInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddManualPhrase();
+                      }
+                    }}
+                    placeholder="Hoặc gõ thêm từ/cụm từ cần giải nghĩa trong ngữ cảnh bài đọc..."
+                    className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddManualPhrase}
+                    className="px-3.5 py-2 rounded-xl bg-slate-800 text-white text-xs font-bold hover:bg-slate-900"
+                  >
+                    + Thêm cụm từ
+                  </button>
+                </div>
+
+                {selectedPhrases.length > 0 && (
+                  <div className="p-3 rounded-xl bg-indigo-50/60 border border-indigo-200 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-indigo-900">
+                        Cụm từ đã chọn ({selectedPhrases.length}):
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPhrases([])}
+                        className="text-[11px] text-rose-600 font-semibold hover:underline"
+                      >
+                        Xóa tất cả
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedPhrases.map((phr) => (
+                        <span
+                          key={phr}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-indigo-200 text-xs font-bold text-indigo-800"
+                        >
+                          {phr}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedPhrases((prev) => prev.filter((p) => p !== phr))
+                            }
+                            className="text-slate-400 hover:text-rose-600"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                ) : (
-                  <>
-                    <Upload className="w-10 h-10 text-slate-400 mb-2" />
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                      Kéo thả ảnh tài liệu vào đây hoặc nhấn để tải lên
-                    </p>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Mẹo: Bạn có thể nhấn <kbd className="px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-[11px]">Ctrl+V</kbd> để dán ảnh chụp màn hình trực tiếp
-                    </p>
-                    <label className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary-600 text-white text-xs font-semibold cursor-pointer hover:bg-primary-700 shadow-sm transition-colors">
-                      <Upload className="w-3.5 h-3.5" /> Chọn tệp hình ảnh
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          if (e.target.files?.[0]) handleImageFile(e.target.files[0]);
-                        }}
-                      />
-                    </label>
-                  </>
                 )}
               </div>
             </div>
           )}
 
-          {/* Error message */}
-          {error && (
-            <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{error}</span>
+          {/* Tab 3: Image Upload & OCR Review Step */}
+          {activeTab === 'image' && (
+            <div className="space-y-4 bg-white border border-slate-200 rounded-2xl p-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs sm:text-sm font-bold text-slate-800">
+                    Tải lên ảnh trang sách, đề thi hoặc bảng từ vựng (JPG, PNG, WEBP &le; 5MB)
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Hệ thống hỗ trợ quét OCR để bạn kiểm tra và sửa văn bản trước khi trích xuất từ
+                    vựng.
+                  </p>
+                </div>
+                <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold cursor-pointer transition shrink-0">
+                  <Upload className="w-4 h-4" />
+                  <span>Chọn ảnh (&le; 5MB)</span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {imagePreview && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                  <div className="space-y-2">
+                    <div className="text-xs font-bold text-slate-600">Ảnh đã tải lên:</div>
+                    <img
+                      src={imagePreview}
+                      alt="OCR Preview"
+                      className="max-h-52 w-full object-contain rounded-xl border border-slate-200 bg-slate-50"
+                    />
+                    <button
+                      type="button"
+                      disabled={ocrLoading}
+                      onClick={handleRunOcrPreview}
+                      className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold disabled:opacity-50 transition"
+                    >
+                      {ocrLoading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Đang nhận diện chữ trên ảnh (OCR)...
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="w-4 h-4" />
+                          {ocrCompleted ? 'Quét lại OCR từ ảnh' : 'Bước 1: Quét văn bản OCR để duyệt'}
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="text-xs font-bold text-slate-600">
+                      Văn bản OCR (Có thể chỉnh sửa trước khi tạo từ):
+                    </div>
+                    <textarea
+                      rows={7}
+                      value={ocrText}
+                      onChange={(e) => setOcrText(e.target.value)}
+                      placeholder="Nhấn 'Quét văn bản OCR' bên trái hoặc gõ/dán nội dung từ ảnh vào đây..."
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Trigger Generate Button */}
-          <div className="flex justify-center pt-1">
+          {/* Generate Button / Cancel */}
+          <div className="flex items-center justify-end gap-3">
+            {loading ? (
+              <button
+                type="button"
+                onClick={handleCancelGeneration}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-rose-300 bg-rose-50 text-rose-700 font-bold text-xs sm:text-sm"
+              >
+                <X className="w-4 h-4" />
+                Hủy yêu cầu đang chạy
+              </button>
+            ) : null}
+
             <button
               type="button"
+              disabled={loading || quotaRemaining <= 0}
               onClick={handleGenerate}
-              disabled={loading}
-              className="px-6 py-3 rounded-xl bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-700 hover:to-indigo-700 text-white font-bold text-sm shadow-md hover:shadow-lg disabled:opacity-50 transition-all flex items-center gap-2"
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs sm:text-sm shadow-sm transition"
             >
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  AI đang bóc tách và chuẩn hóa từ vựng...
+                  Đang phân tích & tạo từ vựng...
                 </>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4" />
-                  Bắt đầu tạo từ vựng với AI
+                  Phân tích & Tạo bảng từ nháp
                 </>
               )}
             </button>
           </div>
 
-          {/* Preview Results Table */}
+          {/* Error & Warnings */}
+          {error && (
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs sm:text-sm text-rose-800 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {warnings.length > 0 && (
+            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 space-y-1">
+              <div className="font-bold">Lưu ý kiểm duyệt dữ liệu tự động:</div>
+              <ul className="list-disc pl-4 space-y-0.5">
+                {warnings.slice(0, 5).map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Editable Draft Preview List */}
           {generatedWords.length > 0 && (
-            <div className="space-y-3 pt-3 border-t border-slate-200 dark:border-slate-800 animate-fade-in">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <h4 className="font-bold text-sm text-slate-800 dark:text-slate-100">
-                    Kết quả từ vựng bóc tách ({generatedWords.length} từ)
-                  </h4>
-                  <span className="text-xs text-slate-500">
-                    (Đã chọn {selectedWordIds.size}/{generatedWords.length})
-                  </span>
-                </div>
+            <div className="space-y-3 border-t border-slate-200 pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-extrabold text-slate-900">
+                  Bảng xem trước & Chỉnh sửa ({selectedWordIds.size}/{generatedWords.length} từ được
+                  chọn)
+                </h3>
                 <button
                   type="button"
-                  onClick={selectAll}
-                  className="text-xs font-semibold text-primary-600 dark:text-primary-400 hover:underline"
+                  onClick={() => {
+                    if (selectedWordIds.size === generatedWords.length) {
+                      setSelectedWordIds(new Set());
+                    } else {
+                      setSelectedWordIds(new Set(generatedWords.map((w) => w.id)));
+                    }
+                  }}
+                  className="text-xs font-bold text-indigo-600 hover:underline"
                 >
-                  {selectedWordIds.size === generatedWords.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                  {selectedWordIds.size === generatedWords.length
+                    ? 'Bỏ chọn tất cả'
+                    : 'Chọn tất cả'}
                 </button>
               </div>
 
-              <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden shadow-inner max-h-60 overflow-y-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold sticky top-0 z-10">
-                    <tr>
-                      <th className="p-2.5 w-8 text-center">#</th>
-                      <th className="p-2.5">Từ vựng & Phiên âm</th>
-                      <th className="p-2.5">Nghĩa tiếng Việt</th>
-                      <th className="p-2.5">Ví dụ song ngữ</th>
-                      <th className="p-2.5">Ghi chú / Cụm từ</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {generatedWords.map((word) => {
-                      const isChecked = selectedWordIds.has(word.id);
-                      return (
-                        <tr
-                          key={word.id}
-                          onClick={() => toggleWordSelection(word.id)}
-                          className={`cursor-pointer transition-colors ${
-                            isChecked
-                              ? 'bg-primary-50/40 dark:bg-primary-950/20'
-                              : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                          }`}
-                        >
-                          <td className="p-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {generatedWords.map((item) => {
+                  const isChecked = selectedWordIds.has(item.id);
+                  const isEditing = editingWordId === item.id;
+
+                  return (
+                    <div
+                      key={item.id}
+                      className={`p-3 rounded-xl border transition ${
+                        isChecked
+                          ? 'bg-indigo-50/40 border-indigo-200'
+                          : 'bg-slate-50 border-slate-200 opacity-65'
+                      }`}
+                    >
+                      {!isEditing ? (
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-2.5">
                             <input
                               type="checkbox"
                               checked={isChecked}
-                              onChange={() => toggleWordSelection(word.id)}
-                              className="rounded text-primary-600 focus:ring-primary-500"
+                              onChange={() => {
+                                setSelectedWordIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(item.id)) next.delete(item.id);
+                                  else next.add(item.id);
+                                  return next;
+                                });
+                              }}
+                              className="mt-1 rounded-sm text-indigo-600 focus:ring-indigo-500"
                             />
-                          </td>
-                          <td className="p-2.5">
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-bold text-slate-900 dark:text-slate-100">
-                                {word.word}
-                              </span>
-                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-medium">
-                                {word.partOfSpeech}
-                              </span>
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-extrabold text-sm text-slate-900">
+                                  {item.word}
+                                </span>
+                                {item.phonetic && (
+                                  <span className="text-xs font-mono text-slate-500">
+                                    {item.phonetic}
+                                  </span>
+                                )}
+                                <span className="px-1.5 py-0.5 rounded-md bg-white border border-slate-200 text-[10px] font-bold uppercase text-slate-600">
+                                  {item.partOfSpeech}
+                                </span>
+                                <span className="text-xs font-bold text-indigo-700">
+                                  — {item.meaningVi}
+                                </span>
+                              </div>
+                              {item.exampleEn && (
+                                <p className="text-xs text-slate-600 italic mt-0.5">
+                                  &ldquo;{item.exampleEn}&rdquo;
+                                  {item.exampleVi ? ` (${item.exampleVi})` : ''}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => playDictionaryAudio(item.word)}
+                              className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-100"
+                              title="Nghe phát âm"
+                            >
+                              <Volume2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingWordId(item.id)}
+                              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-200"
+                              title="Chỉnh sửa từ này"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setGeneratedWords((prev) => prev.filter((w) => w.id !== item.id));
+                                setSelectedWordIds((prev) => {
+                                  const next = new Set(prev);
+                                  next.delete(item.id);
+                                  return next;
+                                });
+                              }}
+                              className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50"
+                              title="Xóa dòng này"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                            <input
+                              type="text"
+                              value={item.word}
+                              onChange={(e) => updateDraftField(item.id, 'word', e.target.value)}
+                              placeholder="Từ tiếng Anh"
+                              className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold"
+                            />
+                            <input
+                              type="text"
+                              value={item.phonetic}
+                              onChange={(e) =>
+                                updateDraftField(item.id, 'phonetic', e.target.value)
+                              }
+                              placeholder="Phiên âm IPA"
+                              className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono"
+                            />
+                            <select
+                              value={item.partOfSpeech}
+                              onChange={(e) =>
+                                updateDraftField(item.id, 'partOfSpeech', e.target.value)
+                              }
+                              className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold bg-white"
+                            >
+                              <option value="n">n (Danh từ)</option>
+                              <option value="v">v (Động từ)</option>
+                              <option value="adj">adj (Tính từ)</option>
+                              <option value="adv">adv (Trạng từ)</option>
+                              <option value="phr">phr (Cụm từ)</option>
+                            </select>
+                            <input
+                              type="text"
+                              value={item.meaningVi}
+                              onChange={(e) =>
+                                updateDraftField(item.id, 'meaningVi', e.target.value)
+                              }
+                              placeholder="Nghĩa tiếng Việt"
+                              className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold"
+                            />
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input
+                              type="text"
+                              value={item.exampleEn}
+                              onChange={(e) =>
+                                updateDraftField(item.id, 'exampleEn', e.target.value)
+                              }
+                              placeholder="Câu ví dụ tiếng Anh"
+                              className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs"
+                            />
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={item.exampleVi}
+                                onChange={(e) =>
+                                  updateDraftField(item.id, 'exampleVi', e.target.value)
+                                }
+                                placeholder="Dịch nghĩa ví dụ"
+                                className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs"
+                              />
                               <button
                                 type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  playDictionaryAudio(word.word, 'uk');
-                                }}
-                                className="p-1 hover:text-primary-600 rounded text-slate-400"
+                                onClick={() => setEditingWordId(null)}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold"
                               >
-                                <Volume2 className="w-3.5 h-3.5" />
+                                Xong
                               </button>
                             </div>
-                            <span className="text-[11px] text-slate-500 font-mono">
-                              {word.phonetic}
-                            </span>
-                          </td>
-                          <td className="p-2.5 text-slate-700 dark:text-slate-300 font-medium">
-                            {word.meaningVi}
-                          </td>
-                          <td className="p-2.5 text-slate-600 dark:text-slate-400">
-                            <p className="line-clamp-1 italic">{word.exampleEn}</p>
-                            <p className="line-clamp-1 text-slate-500">{word.exampleVi}</p>
-                          </td>
-                          <td className="p-2.5 text-slate-500 text-[11px]">
-                            {word.collocations || word.note || '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
         </div>
 
-        {/* Footer actions */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40">
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium text-sm transition-colors"
+            className="px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-semibold"
           >
             Đóng
           </button>
-          <button
-            type="button"
-            onClick={handleSaveToDeck}
-            disabled={generatedWords.length === 0 || selectedWordIds.size === 0}
-            className="px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-white font-semibold text-sm shadow-sm disabled:opacity-50 transition-colors flex items-center gap-2"
-          >
-            <Check className="w-4 h-4" />
-            Lưu {selectedWordIds.size} từ vào bộ
-          </button>
+
+          {generatedWords.length > 0 && (
+            <button
+              type="button"
+              disabled={selectedWordIds.size === 0 || !selectedDeckId}
+              onClick={handleSaveSelectedToDeck}
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-extrabold text-xs sm:text-sm shadow-sm transition"
+            >
+              <Check className="w-4 h-4" />
+              Lưu {selectedWordIds.size} từ vào bộ từ
+            </button>
+          )}
         </div>
       </div>
     </div>

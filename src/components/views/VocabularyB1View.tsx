@@ -1,1226 +1,906 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Folder,
-  Layers,
+  Map as MapIcon,
+  FolderHeart,
+  BookOpenCheck,
   Sparkles,
-  BookOpen,
-  X,
+  FileSpreadsheet,
+  Layers,
   Trophy,
-  Flame,
-  FileCode2,
-  CheckCircle2,
+  Users,
+  GraduationCap,
 } from 'lucide-react';
-import { doc } from 'firebase/firestore';
-import { db, safeSetDoc } from '../../firebase';
-import { useAuth } from '../../context/AuthContext';
 import { TestMetadata } from '../../types/exam';
+import { ExtendedVocabItem, UserVocabDeck, UserVocabFolder } from '../../types/vocab';
+import { generateDefault15TopicDecks } from '../../data/b1Official15TopicsData';
+import { B1_VOCAB_LIST } from '../../data/b1VocabData';
 import {
-  UserVocabDeck,
-  UserVocabFolder,
-  VocabSrsRecord,
-  ExtendedVocabItem,
-  VocabDeckCategoryType,
-  OFFICIAL_15_TOPICS,
-} from '../../types/vocab';
-
-// Subcomponents
+  NormalizedVocabItem,
+  adaptVocabDeck,
+  adaptVocabItem,
+  normalizeEnglishText,
+} from '../../utils/vocabEngine';
+import {
+  UserVocabPartitionState,
+  VocabSavedSession,
+  loadUserVocabState,
+  runLegacyVocabMigrationIfNeeded,
+} from '../../services/vocabStorageService';
+import { auth } from '../../firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { VocabRoadmapsTab } from './vocab/VocabRoadmapsTab';
 import { VocabMyDecksTab } from './vocab/VocabMyDecksTab';
 import { VocabStudyHubTab } from './vocab/VocabStudyHubTab';
-import { VocabDeckModal } from './vocab/VocabDeckModal';
-import { VocabFolderModal } from './vocab/VocabFolderModal';
+import { VocabDeckDetailView } from './vocab/VocabDeckDetailView';
+import { VocabGameRunner, RunnerMode } from './vocab/VocabGameRunner';
+import { VocabSrsModal } from './vocab/VocabSrsModal';
 import { VocabAiModal } from './vocab/VocabAiModal';
-import { VocabQuickImportModal } from './vocab/VocabQuickImportModal';
-import { VocabAiPromptModal, BatchImportInstruction } from './VocabAiPromptModal';
-import { generateDefault15TopicDecks } from '../../data/b1Official15TopicsData';
 import {
-  getStreakStatus,
-  recordStudyActivity,
-  STREAK_UPDATED_EVENT,
-  ComputedStreakStatus,
-} from '../../services/streakService';
+  VocabQuickImportModal,
+  DuplicateResolutionStrategy,
+} from './vocab/VocabQuickImportModal';
 
-interface VocabularyB1ViewProps {
+export interface VocabularyB1ViewProps {
   selectedTestFilterId?: string | null;
   onClearTestFilter?: () => void;
   tests?: TestMetadata[];
-  activeWorkspace?: 'my_decks' | 'study_hub';
-  onWorkspaceChange?: (ws: 'my_decks' | 'study_hub') => void;
+  activeWorkspace?: 'study_hub' | 'roadmaps' | 'my_decks';
+  onWorkspaceChange?: (workspace: 'study_hub' | 'roadmaps' | 'my_decks') => void;
 }
 
-type MainWorkspace = 'my_decks' | 'study_hub';
+interface ActiveGameSessionConfig {
+  sessionId: string;
+  parentSessionId?: string;
+  sessionKind: 'regular' | 'srs';
+  isEarlySrsPractice?: boolean;
+  scopeType: 'deck' | 'roadmap' | 'personal-decks';
+  scopeId: string;
+  scopeTitle: string;
+  mode: RunnerMode;
+  subMode?: string;
+  sessionItems: NormalizedVocabItem[];
+  distractorPool: NormalizedVocabItem[];
+}
 
-const LOCAL_DECKS_KEY = 'langcert_custom_vocab_decks_v2';
-const LOCAL_FOLDERS_KEY = 'langcert_vocab_folders_v2';
-const LOCAL_SRS_KEY = 'langcert_vocab_srs_v2';
-const LOCAL_STREAK_KEY = 'langcert_vocab_streak_v2';
-const LOCAL_COINS_KEY = 'langcert_vocab_coins_v2';
-
-// SM-2 calculation helper
-function computeNextSm2(
-  prev: VocabSrsRecord | undefined,
-  wordId: string,
-  rating: 'again' | 'hard' | 'good' | 'easy'
-): VocabSrsRecord {
-  const now = Date.now();
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const MIN_MS = 60 * 1000;
-
-  const currentRep = prev?.repetition ?? 0;
-  const currentInterval = prev?.intervalDays ?? 0;
-  let ease = prev?.easeFactor ?? 2.5;
-
-  if (rating === 'again') {
-    ease = Math.max(1.3, ease - 0.2);
-    return {
-      wordId,
-      intervalDays: 0,
-      repetition: 0,
-      easeFactor: Number(ease.toFixed(2)),
-      dueAt: now + 10 * MIN_MS,
-      lastRatedAt: now,
-      status: 'learning',
-    };
-  }
-
-  if (rating === 'hard') {
-    ease = Math.max(1.3, ease - 0.15);
-    const nextDays = currentInterval === 0 ? 1 : Math.max(1, Math.round(currentInterval * 1.2));
-    return {
-      wordId,
-      intervalDays: nextDays,
-      repetition: currentRep + 1,
-      easeFactor: Number(ease.toFixed(2)),
-      dueAt: now + nextDays * DAY_MS,
-      lastRatedAt: now,
-      status: nextDays >= 7 ? 'mastered' : 'review',
-    };
-  }
-
-  if (rating === 'good') {
-    const nextDays =
-      currentRep === 0
-        ? 1
-        : currentRep === 1
-        ? 3
-        : Math.max(4, Math.round(currentInterval * ease));
-    return {
-      wordId,
-      intervalDays: nextDays,
-      repetition: currentRep + 1,
-      easeFactor: Number(ease.toFixed(2)),
-      dueAt: now + nextDays * DAY_MS,
-      lastRatedAt: now,
-      status: nextDays >= 7 ? 'mastered' : 'review',
-    };
-  }
-
-  // 'easy'
-  ease = ease + 0.15;
-  const nextDays =
-    currentRep === 0
-      ? 4
-      : currentRep === 1
-      ? 7
-      : Math.max(7, Math.round(currentInterval * ease * 1.3));
-  return {
-    wordId,
-    intervalDays: nextDays,
-    repetition: currentRep + 1,
-    easeFactor: Number(ease.toFixed(2)),
-    dueAt: now + nextDays * DAY_MS,
-    lastRatedAt: now,
-    status: 'mastered',
-  };
+interface ActiveSrsModalScope {
+  scopeType: 'roadmap' | 'personal-decks' | 'deck';
+  scopeId: string;
+  scopeTitle: string;
+  availableDecks: { id: string; title: string }[];
+  scopeItems: NormalizedVocabItem[];
 }
 
 export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
   selectedTestFilterId,
   onClearTestFilter,
   tests = [],
-  activeWorkspace,
+  activeWorkspace: propWorkspace,
   onWorkspaceChange,
 }) => {
-  const { currentUser } = useAuth();
+  // Current authenticated user tracking for strict partition isolation
+  const [currentUserId, setCurrentUserId] = useState<string>('guest');
+  const [currentUserDisplayName, setCurrentUserDisplayName] = useState<string | null>(null);
+  const [isUserAuthenticated, setIsUserAuthenticated] = useState<boolean>(false);
 
-  // 1. Consolidate into 2 Primary Workspaces: 'my_decks' (Kho Từ Vựng) & 'study_hub' (Phòng Luyện Tập)
-  const [internalTab, setInternalTab] = useState<MainWorkspace>('my_decks');
-  const activeTab: MainWorkspace = activeWorkspace ?? internalTab;
-  const setActiveTab = useCallback(
-    (next: MainWorkspace) => {
-      setInternalTab(next);
-      onWorkspaceChange?.(next);
-    },
-    [onWorkspaceChange]
-  );
-  const [initialRelFilter, setInitialRelFilter] = useState<'all' | VocabDeckCategoryType>('all');
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const showToast = useCallback((msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage((prev) => (prev === msg ? null : prev));
-    }, 4500);
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setCurrentUserId(user.uid);
+        setCurrentUserDisplayName(user.displayName || user.email || 'Học viên');
+        setIsUserAuthenticated(true);
+      } else {
+        setCurrentUserId('guest');
+        setCurrentUserDisplayName(null);
+        setIsUserAuthenticated(false);
+      }
+    });
+    return () => unsub();
   }, []);
 
-  // 2. Decks & Folders state
-  const [decks, setDecks] = useState<UserVocabDeck[]>(() => {
-    const default15Decks = generateDefault15TopicDecks();
+  // Load partitioned vocab state per learner
+  const [vocabState, setVocabState] = useState<UserVocabPartitionState>(() =>
+    loadUserVocabState('guest')
+  );
+
+  useEffect(() => {
+    setVocabState(loadUserVocabState(currentUserId));
+  }, [currentUserId]);
+
+  // Personal Decks & Folders storage per user
+  const personalDecksStorageKey = `langcert_personal_decks_v3_${currentUserId}`;
+  const personalFoldersStorageKey = `langcert_personal_folders_v3_${currentUserId}`;
+
+  const [personalDecks, setPersonalDecks] = useState<UserVocabDeck[]>([]);
+  const [folders, setFolders] = useState<UserVocabFolder[]>([]);
+
+  useEffect(() => {
     try {
-      const saved = localStorage.getItem(LOCAL_DECKS_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const seenIds = new Set<string>();
-          const seenNames = new Set<string>();
-          const sanitized: UserVocabDeck[] = [];
-          parsed.forEach((d: UserVocabDeck, idx: number) => {
-            if (!d || typeof d !== 'object') return;
-            const normName = (d.name || '').trim().toLowerCase();
-            if (d.id?.startsWith('deck_rm_') && seenNames.has(normName)) {
-              return;
-            }
-            let uniqueId = d.id || `deck_restored_${Date.now()}_${idx}`;
-            if (seenIds.has(uniqueId)) {
-              uniqueId = `${uniqueId}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
-            }
-            seenIds.add(uniqueId);
-            if (normName) seenNames.add(normName);
-
-            // Auto-populate categoryType for legacy decks if missing
-            let categoryType: VocabDeckCategoryType = d.categoryType || 'untagged';
-            if (!d.categoryType) {
-              if (uniqueId.startsWith('deck_official_') || d.officialTopicCode) {
-                categoryType = '15_topics';
-              } else if (d.linkedTestId || d.linkedTestTitle) {
-                categoryType = 'exam_test';
-              } else if (d.customTopicTag) {
-                categoryType = 'custom_topic';
-              }
-            }
-
-            sanitized.push({ ...d, id: uniqueId, categoryType });
-          });
-
-          const hasOfficialTopics = sanitized.some((d: UserVocabDeck) =>
-            d.id?.startsWith('deck_official_')
-          );
-          if (hasOfficialTopics) return sanitized;
-          return [...default15Decks, ...sanitized];
-        }
-      }
-    } catch (e) {
-      console.warn('Error reading local decks:', e);
-    }
-
-    return default15Decks;
-  });
-
-  const [folders, setFolders] = useState<UserVocabFolder[]>(() => {
-    const defaultFolders: UserVocabFolder[] = [
-      {
-        id: 'folder_15_topics',
-        name: '15 Chủ Đề Cốt Lõi B1 Achiever',
-        deckIds: [],
-        createdAt: Date.now(),
-      },
-      {
-        id: 'folder_listening',
-        name: 'Kỹ Năng Nghe (Listening)',
-        deckIds: [],
-        createdAt: Date.now(),
-      },
-      {
-        id: 'folder_reading',
-        name: 'Kỹ Năng Đọc (Reading)',
-        deckIds: [],
-        createdAt: Date.now(),
-      },
-    ];
-
-    try {
-      const saved = localStorage.getItem(LOCAL_FOLDERS_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
+      const rawDecks = localStorage.getItem(personalDecksStorageKey);
+      if (rawDecks) {
+        setPersonalDecks(JSON.parse(rawDecks));
+      } else {
+        // Default starter personal deck
+        const starter: UserVocabDeck = {
+          id: `personal_starter_${currentUserId}`,
+          name: 'Sổ tay từ vựng cá nhân của tôi',
+          title: 'Sổ tay từ vựng cá nhân của tôi',
+          description: 'Bộ từ cá nhân dùng để lưu từ mới, nhập CSV hoặc tạo từ bằng AI',
+          icon: '📚',
+          isCustom: true,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          itemCount: 8,
+          items: B1_VOCAB_LIST.slice(0, 8).map((it, idx) => ({
+            ...it,
+            id: `starter_${idx}_${it.id}`,
+            cefr: 'B1',
+          })),
+        };
+        setPersonalDecks([starter]);
+        localStorage.setItem(personalDecksStorageKey, JSON.stringify([starter]));
       }
     } catch {
-      // ignore
+      setPersonalDecks([]);
     }
-    return defaultFolders;
-  });
 
-  const [activeDeckId, setActiveDeckId] = useState<string>(() => {
-    return decks[0]?.id || 'deck_official_topic_01';
-  });
+    try {
+      const rawFolders = localStorage.getItem(personalFoldersStorageKey);
+      if (rawFolders) {
+        setFolders(JSON.parse(rawFolders));
+      } else {
+        const defaultFolders: UserVocabFolder[] = [
+          {
+            id: 'folder_vstep_focus',
+            name: 'Ôn trọng tâm VSTEP',
+            deckIds: [],
+            createdAt: Date.now(),
+          },
+        ];
+        setFolders(defaultFolders);
+        localStorage.setItem(personalFoldersStorageKey, JSON.stringify(defaultFolders));
+      }
+    } catch {
+      setFolders([]);
+    }
+  }, [currentUserId, personalDecksStorageKey, personalFoldersStorageKey]);
 
-  // Sync any embedded test.vocabulary from `tests` into exam-linked decks automatically
-  useEffect(() => {
-    if (!tests || tests.length === 0) return;
-    setDecks((prev) => {
-      let changed = false;
-      const next = [...prev];
+  const savePersonalDecks = (nextDecks: UserVocabDeck[]) => {
+    setPersonalDecks(nextDecks);
+    try {
+      localStorage.setItem(personalDecksStorageKey, JSON.stringify(nextDecks));
+    } catch (e) {
+      console.warn('Failed to save personal decks:', e);
+    }
+  };
 
-      tests.forEach((test) => {
-        if (!test.vocabulary || test.vocabulary.length === 0) return;
-        const deckIdForTest = `deck_exam_${test.id}`;
-        const existingIdx = next.findIndex(
-          (d) => d.id === deckIdForTest || d.linkedTestId === test.id
-        );
+  const saveFolders = (nextFolders: UserVocabFolder[]) => {
+    setFolders(nextFolders);
+    try {
+      localStorage.setItem(personalFoldersStorageKey, JSON.stringify(nextFolders));
+    } catch (e) {
+      console.warn('Failed to save folders:', e);
+    }
+  };
 
-        if (existingIdx === -1) {
-          const mappedItems: ExtendedVocabItem[] = test.vocabulary.map((v, idx) => ({
-            id: v.id || `tv_${test.id}_${idx}`,
+  // Build System Decks (15 Official B1 Topic Decks + Exam Vocabulary Decks)
+  const systemDecks = useMemo<UserVocabDeck[]>(() => {
+    const official15 = generateDefault15TopicDecks();
+    const examDecks: UserVocabDeck[] = [];
+
+    tests.forEach((test) => {
+      if (Array.isArray(test.vocabulary) && test.vocabulary.length > 0) {
+        examDecks.push({
+          id: `exam_deck_${test.id}`,
+          name: `Từ vựng Đề thi: ${test.title}`,
+          title: `Từ vựng Đề thi: ${test.title}`,
+          description: `Bộ từ vựng trích xuất từ đề thi ${test.title} (${(test as any).level || 'B1'})`,
+          icon: '📝',
+          isCustom: false,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          itemCount: test.vocabulary.length,
+          items: test.vocabulary.map((v: any, idx: number) => ({
+            id: v.id || `ex_${test.id}_${idx}`,
             word: v.word,
             phonetic: v.phonetic || '',
-            partOfSpeech: v.partOfSpeech || 'n',
+            partOfSpeech: (['n', 'v', 'adj', 'adv', 'phr'].includes(v.partOfSpeech)
+              ? v.partOfSpeech
+              : 'n') as any,
             meaningVi: v.meaningVi,
             exampleEn: v.exampleEn || '',
             exampleVi: v.exampleVi || '',
-            cefr: v.cefr || 'B1',
-            topic: v.topic || 'Exam Vocabulary',
-            collocations: (v as ExtendedVocabItem).collocations || '',
-            isMastered: false,
-            linkedTestId: test.id,
-          }));
-
-          next.unshift({
-            id: deckIdForTest,
-            name: `Từ vựng Đề thi: ${test.title}`,
-            description: `Từ vựng trọng tâm trích xuất từ đề thi "${test.title}"`,
-            icon: '📝',
-            categoryType: 'exam_test',
-            linkedTestId: test.id,
-            linkedTestTitle: test.title,
-            itemCount: mappedItems.length,
-            items: mappedItems,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-          });
-          changed = true;
-        }
-      });
-
-      return changed ? next : prev;
+            topic: test.title,
+            cefr: 'B1',
+          })),
+        });
+      }
     });
+
+    return [...official15, ...examDecks];
   }, [tests]);
 
-  // If user clicked "Từ vựng của đề này" from a Test Card (`selectedTestFilterId`)
-  useEffect(() => {
-    if (!selectedTestFilterId) return;
-    setActiveTab('my_decks');
-    setInitialRelFilter('exam_test');
+  // Normalize all decks (system + personal) via Section 2 adapter
+  const { allDecks, normalizedByDeckId, allNormalizedItems } = useMemo(() => {
+    const combinedDecks: UserVocabDeck[] = [];
+    const byDeck: Record<string, NormalizedVocabItem[]> = {};
+    const flatItems: NormalizedVocabItem[] = [];
 
-    const matchingDeck = decks.find(
-      (d) => d.linkedTestId === selectedTestFilterId || d.id === `deck_exam_${selectedTestFilterId}`
-    );
-    if (matchingDeck) {
-      setActiveDeckId(matchingDeck.id);
-    }
-  }, [selectedTestFilterId, decks]);
-
-  // 3. SRS SM-2 state
-  const [srsRecords, setSrsRecords] = useState<Record<string, VocabSrsRecord>>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_SRS_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return {};
-  });
-
-  // 4. Streak & Coins (Connected to real streakService)
-  const [streakCount, setStreakCount] = useState<number>(() => getStreakStatus().currentStreak);
-
-  useEffect(() => {
-    setStreakCount(getStreakStatus().currentStreak);
-    const handleStreakUpdate = (e: Event) => {
-      const ce = e as CustomEvent<ComputedStreakStatus>;
-      setStreakCount(ce.detail ? ce.detail.currentStreak : getStreakStatus().currentStreak);
-    };
-    window.addEventListener(STREAK_UPDATED_EVENT, handleStreakUpdate);
-    return () => window.removeEventListener(STREAK_UPDATED_EVENT, handleStreakUpdate);
-  }, []);
-
-  const [coinCount, setCoinCount] = useState<number>(() => {
-    try {
-      return Number(localStorage.getItem(LOCAL_COINS_KEY)) || 120;
-    } catch {
-      return 120;
-    }
-  });
-
-  // 5. Modals
-  const [isDeckModalOpen, setIsDeckModalOpen] = useState(false);
-  const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
-  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [isJsonModalOpen, setIsJsonModalOpen] = useState(false);
-
-  // Sync to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_DECKS_KEY, JSON.stringify(decks));
-    } catch (e) {
-      console.warn('LocalStorage save deck error:', e);
-    }
-  }, [decks]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_FOLDERS_KEY, JSON.stringify(folders));
-    } catch (e) {
-      console.warn('LocalStorage save folders error:', e);
-    }
-  }, [folders]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_SRS_KEY, JSON.stringify(srsRecords));
-    } catch (e) {
-      console.warn('LocalStorage save SRS error:', e);
-    }
-  }, [srsRecords]);
-
-  useEffect(() => {
-    localStorage.setItem(LOCAL_STREAK_KEY, String(streakCount));
-  }, [streakCount]);
-
-  useEffect(() => {
-    localStorage.setItem(LOCAL_COINS_KEY, String(coinCount));
-  }, [coinCount]);
-
-  // Subscribe to user's saved vocabulary decks, folders & SRS progress from Firestore in real time
-  useEffect(() => {
-    if (!currentUser?.uid) return;
-
-    let unsub: (() => void) | undefined;
-    let cancelled = false;
-
-    import('firebase/firestore').then(({ onSnapshot }) => {
-      if (cancelled) return;
-      const userRef = doc(db, 'users', currentUser.uid);
-      unsub = onSnapshot(
-        userRef,
-        (snap) => {
-          if (cancelled || !snap.exists()) return;
-          const data = snap.data() as {
-            vocabDecksBackup?: UserVocabDeck[];
-            vocabFoldersBackup?: UserVocabFolder[];
-            vocabSrsBackup?: Record<string, VocabSrsRecord>;
-          };
-
-          if (Array.isArray(data.vocabDecksBackup) && data.vocabDecksBackup.length > 0) {
-            setDecks((prev) => {
-              const map = new Map<string, UserVocabDeck>();
-              prev.forEach((d) => map.set(d.id, d));
-              data.vocabDecksBackup!.forEach((remoteDeck) => {
-                if (!remoteDeck || !remoteDeck.id) return;
-                const localDeck = map.get(remoteDeck.id);
-                if (!localDeck || (remoteDeck.updatedAt || 0) >= (localDeck.updatedAt || 0)) {
-                  map.set(remoteDeck.id, remoteDeck);
-                }
-              });
-              return Array.from(map.values());
-            });
-          }
-
-          if (Array.isArray(data.vocabFoldersBackup) && data.vocabFoldersBackup.length > 0) {
-            setFolders((prev) => {
-              const map = new Map<string, UserVocabFolder>();
-              prev.forEach((f) => map.set(f.id, f));
-              data.vocabFoldersBackup!.forEach((rf) => {
-                if (rf && rf.id) map.set(rf.id, rf);
-              });
-              return Array.from(map.values());
-            });
-          }
-
-          if (data.vocabSrsBackup && typeof data.vocabSrsBackup === 'object') {
-            setSrsRecords((prev) => ({
-              ...data.vocabSrsBackup,
-              ...prev,
-            }));
-          }
-        },
-        () => {}
-      );
+    [...systemDecks, ...personalDecks].forEach((rawDeck) => {
+      const adapted = adaptVocabDeck(rawDeck);
+      combinedDecks.push(adapted.deck);
+      byDeck[rawDeck.id] = adapted.normalizedItems;
+      flatItems.push(...adapted.normalizedItems);
     });
 
-    return () => {
-      cancelled = true;
-      if (unsub) unsub();
+    return {
+      allDecks: combinedDecks,
+      normalizedByDeckId: byDeck,
+      allNormalizedItems: flatItems,
     };
-  }, [currentUser?.uid]);
+  }, [systemDecks, personalDecks]);
 
-  // Firestore Sync if logged in (quota-safe, sanitized, and debounced)
-  const hasMountedVocabRef = React.useRef(false);
+  // Run one-time legacy migration if needed
   useEffect(() => {
-    if (!currentUser?.uid) return;
-    if (!hasMountedVocabRef.current) {
-      hasMountedVocabRef.current = true;
-      return;
+    if (allNormalizedItems.length > 0 && !vocabState.migratedLegacyKnown) {
+      const migrated = runLegacyVocabMigrationIfNeeded(vocabState, allNormalizedItems);
+      if (migrated.changed) {
+        setVocabState(migrated.state);
+      }
     }
-    const timer = setTimeout(() => {
-      const userRef = doc(db, 'users', currentUser.uid);
-      // Only sync custom decks or modified official decks so payload stays compact
-      const customOrModifiedDecks = decks.filter(
-        (d) => !d.id.startsWith('deck_official_') || (d.items && d.items.length > 35)
-      );
-      const cleanDecks = JSON.parse(JSON.stringify(customOrModifiedDecks));
-      const cleanFolders = JSON.parse(JSON.stringify(folders));
-      const cleanSrs = JSON.parse(JSON.stringify(srsRecords));
-      safeSetDoc(
-        userRef,
-        {
-          uid: currentUser.uid,
-          vocabDecksBackup: cleanDecks,
-          vocabFoldersBackup: cleanFolders,
-          vocabSrsBackup: cleanSrs,
-        },
-        { merge: true }
-      ).catch(() => {});
-    }, 2500);
-    return () => clearTimeout(timer);
-  }, [currentUser?.uid, decks, folders, srsRecords]);
+  }, [allNormalizedItems, vocabState]);
 
-  // Handle coins earning & record real study activity
-  const handleEarnCoins = (amount: number) => {
-    setCoinCount((c) => c + amount);
-    recordStudyActivity('Hoàn thành bài luyện từ vựng B1', currentUser?.uid);
+  // Navigation Workspace State ('roadmaps' | 'my_decks' | 'study_hub')
+  const [internalWorkspace, setInternalWorkspace] = useState<'roadmaps' | 'my_decks' | 'study_hub'>(
+    propWorkspace || 'roadmaps'
+  );
+  const currentWorkspace = propWorkspace || internalWorkspace;
+
+  const handleSelectWorkspace = (ws: 'roadmaps' | 'my_decks' | 'study_hub') => {
+    setInternalWorkspace(ws);
+    if (onWorkspaceChange) onWorkspaceChange(ws);
+    setSelectedDeckId(null);
   };
 
-  // Add words to a deck
-  const handleAddWordsToDeck = useCallback(
-    (deckId: string, words: ExtendedVocabItem[]) => {
-      setDecks((prev) =>
-        prev.map((d) => {
-          if (d.id === deckId) {
-            const existingWordSet = new Set(d.items.map((i) => i.word.toLowerCase()));
-            const newItems = words.filter((w) => !existingWordSet.has(w.word.toLowerCase()));
-            const combined = [...d.items, ...newItems];
-            return {
-              ...d,
-              items: combined,
-              itemCount: combined.length,
-              updatedAt: Date.now(),
-            };
-          }
-          return d;
-        })
-      );
-      setActiveDeckId(deckId);
-      setActiveTab('my_decks');
-      showToast(`Đã thêm ${words.length} từ vựng vào bộ từ!`);
-    },
-    [showToast]
-  );
+  // Active Deck Detail View State
+  const [selectedDeckId, setSelectedDeckId] = useState<string | null>(null);
 
-  // Create a new deck manually
-  const handleCreateDeck = (data: {
-    name: string;
+  // If user clicked a specific test's vocabulary button from TestSelectionView, open that exam deck
+  useEffect(() => {
+    if (selectedTestFilterId) {
+      const targetExamDeckId = `exam_deck_${selectedTestFilterId}`;
+      if (normalizedByDeckId[targetExamDeckId]) {
+        setSelectedDeckId(targetExamDeckId);
+      }
+    }
+  }, [selectedTestFilterId, normalizedByDeckId]);
+
+  // Active Game Session Runner State
+  const [activeGameConfig, setActiveGameSessionConfig] =
+    useState<ActiveGameSessionConfig | null>(null);
+
+  // Active SRS Modal State
+  const [activeSrsModal, setActiveSrsModal] = useState<ActiveSrsModalScope | null>(null);
+
+  // Modals for AI Vocab & CSV/JSON Quick Import
+  const [isAiModalOpen, setIsAiModalOpen] = useState<boolean>(false);
+  const [aiTargetDeckId, setAiTargetDeckId] = useState<string | undefined>(undefined);
+  const [isQuickImportOpen, setIsQuickImportOpen] = useState<boolean>(false);
+  const [importTargetDeckId, setImportTargetDeckId] = useState<string | undefined>(undefined);
+
+  // Personal Deck & Folder CRUD Handlers
+  const handleCreatePersonalDeck = (data: {
+    title: string;
     description: string;
-    icon: string;
     folderId?: string;
-    categoryType?: VocabDeckCategoryType;
-    officialTopicCode?: string;
-    linkedTestId?: string;
-    linkedTestTitle?: string;
-    customTopicTag?: string;
   }) => {
     const newDeck: UserVocabDeck = {
-      id: `deck_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      name: data.name,
+      id: `deck_custom_${Date.now()}`,
+      name: data.title,
+      title: data.title,
       description: data.description,
-      icon: data.icon,
+      icon: '📚',
       folderId: data.folderId,
-      categoryType: data.categoryType || 'custom_topic',
-      officialTopicCode: data.officialTopicCode,
-      linkedTestId: data.linkedTestId,
-      linkedTestTitle: data.linkedTestTitle,
-      customTopicTag: data.customTopicTag,
-      itemCount: 0,
-      items: [],
+      isCustom: true,
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      itemCount: 0,
+      items: [],
     };
-    setDecks((prev) => [newDeck, ...prev]);
-    setActiveDeckId(newDeck.id);
-    if (data.categoryType) {
-      setInitialRelFilter(data.categoryType);
-    }
-    showToast(`Đã tạo bộ từ mới "${data.name}"!`);
+    const next = [newDeck, ...personalDecks];
+    savePersonalDecks(next);
+    return newDeck.id;
   };
 
-  // Update relationship of an existing deck
-  const handleUpdateDeckRelationship = useCallback(
-    (
-      deckId: string,
-      rel: {
-        categoryType: VocabDeckCategoryType;
-        officialTopicCode?: string;
-        linkedTestId?: string;
-        linkedTestTitle?: string;
-        customTopicTag?: string;
-      }
-    ) => {
-      setDecks((prev) =>
-        prev.map((d) => {
-          if (d.id !== deckId) return d;
-          return {
+  const handleUpdatePersonalDeckMeta = (
+    deckId: string,
+    data: { title: string; description: string; folderId?: string }
+  ) => {
+    const next = personalDecks.map((d) =>
+      d.id === deckId
+        ? {
             ...d,
-            categoryType: rel.categoryType,
-            officialTopicCode: rel.officialTopicCode,
-            linkedTestId: rel.linkedTestId,
-            linkedTestTitle: rel.linkedTestTitle,
-            customTopicTag: rel.customTopicTag,
+            name: data.title,
+            title: data.title,
+            description: data.description,
+            folderId: data.folderId,
             updatedAt: Date.now(),
-          };
-        })
-      );
-      showToast('Đã cập nhật mối quan hệ & nhãn cho bộ từ!');
-    },
-    [showToast]
-  );
-
-  // Create a new deck pre-populated with words (legacy fallback)
-  const handleCreateDeckWithWords = useCallback(
-    (deckName: string, description: string, words: ExtendedVocabItem[]) => {
-      const newDeck: UserVocabDeck = {
-        id: `deck_json_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        name: deckName,
-        description,
-        icon: '📚',
-        categoryType: 'custom_topic',
-        customTopicTag: deckName,
-        itemCount: words.length,
-        items: words,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-      setDecks((prev) => [newDeck, ...prev]);
-      setActiveDeckId(newDeck.id);
-      setActiveTab('my_decks');
-      showToast(`Đã tạo bộ từ "${deckName}" với ${words.length} từ vựng!`);
-    },
-    [showToast]
-  );
-
-  // Comprehensive Batch JSON Import Handler supporting all routing modes
-  const handleBatchImportVocab = useCallback(
-    (payload: BatchImportInstruction) => {
-      const {
-        mode,
-        items,
-        customDeckName,
-        targetOfficialTopic,
-        targetTestId,
-        targetTestTitle,
-        customTopicTag,
-        targetExistingDeckId,
-        rawDecks,
-      } = payload;
-      const deckName =
-        customDeckName ||
-        rawDecks?.[0]?.name ||
-        targetTestTitle ||
-        customTopicTag ||
-        'Bộ từ vựng JSON';
-      const deckDescription =
-        rawDecks?.[0]?.description ||
-        `Nhập hàng loạt từ JSON (${items.length} từ vựng chuẩn B1)`;
-
-      if (!items || items.length === 0) return;
-
-      if (mode === 'existing_deck' && targetExistingDeckId) {
-        handleAddWordsToDeck(targetExistingDeckId, items);
-        return;
-      }
-
-      if (mode === '15_topics' && targetOfficialTopic) {
-        const prefix = targetOfficialTopic.slice(0, 2);
-        let matchedDeckId = '';
-
-        setDecks((prev) => {
-          const targetIdx = prev.findIndex(
-            (d) =>
-              d.officialTopicCode === targetOfficialTopic ||
-              d.name.startsWith(prefix) ||
-              d.id === `deck_official_topic_${prefix}`
-          );
-
-          if (targetIdx !== -1) {
-            const targetDeck = prev[targetIdx];
-            matchedDeckId = targetDeck.id;
-            const existingWords = new Set(targetDeck.items.map((w) => w.word.toLowerCase()));
-            const toAdd = items.filter((w) => !existingWords.has(w.word.toLowerCase()));
-            const merged = [...targetDeck.items, ...toAdd];
-            const next = [...prev];
-            next[targetIdx] = {
-              ...targetDeck,
-              categoryType: '15_topics',
-              officialTopicCode: targetOfficialTopic,
-              items: merged,
-              itemCount: merged.length,
-              updatedAt: Date.now(),
-            };
-            return next;
           }
+        : d
+    );
+    savePersonalDecks(next);
+  };
 
-          // Fallback: create official topic deck
-          const newId = `deck_official_custom_${Date.now()}`;
-          matchedDeckId = newId;
-          const newDeck: UserVocabDeck = {
-            id: newId,
-            name: targetOfficialTopic,
-            description: deckDescription,
-            icon: '🧭',
-            categoryType: '15_topics',
-            officialTopicCode: targetOfficialTopic,
-            itemCount: items.length,
-            items,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-          };
-          return [newDeck, ...prev];
-        });
+  const handleDeletePersonalDeck = (deckId: string) => {
+    const next = personalDecks.filter((d) => d.id !== deckId);
+    savePersonalDecks(next);
+    if (selectedDeckId === deckId) setSelectedDeckId(null);
+  };
 
-        if (matchedDeckId) setActiveDeckId(matchedDeckId);
-        setInitialRelFilter('15_topics');
-        setActiveTab('my_decks');
-        showToast(`Đã gộp ${items.length} từ vào chủ đề "${targetOfficialTopic}"!`);
-        return;
-      }
-
-      if (mode === 'auto_15_topics') {
-        let firstTouchedDeckId = '';
-        let distributedCount = 0;
-
-        setDecks((prev) => {
-          const next = [...prev];
-          const unmatched: ExtendedVocabItem[] = [];
-
-          items.forEach((item) => {
-            const itemTopic = (item.topic || '').trim();
-            const prefixMatch = itemTopic.match(/^(\d{2})\b/);
-            const officialMatch = OFFICIAL_15_TOPICS.find(
-              (t) =>
-                t.toLowerCase() === itemTopic.toLowerCase() ||
-                (prefixMatch && t.startsWith(prefixMatch[1]))
-            );
-
-            if (officialMatch) {
-              const codePrefix = officialMatch.slice(0, 2);
-              const dIdx = next.findIndex(
-                (d) =>
-                  d.officialTopicCode === officialMatch ||
-                  d.id === `deck_official_topic_${codePrefix}` ||
-                  d.name.startsWith(codePrefix)
-              );
-
-              if (dIdx !== -1) {
-                const targetDeck = next[dIdx];
-                if (!firstTouchedDeckId) firstTouchedDeckId = targetDeck.id;
-                const exists = targetDeck.items.some(
-                  (w) => w.word.toLowerCase() === item.word.toLowerCase()
-                );
-                if (!exists) {
-                  const updatedItems = [...targetDeck.items, item];
-                  next[dIdx] = {
-                    ...targetDeck,
-                    categoryType: '15_topics',
-                    officialTopicCode: officialMatch,
-                    items: updatedItems,
-                    itemCount: updatedItems.length,
-                    updatedAt: Date.now(),
-                  };
-                  distributedCount++;
-                }
-                return;
-              }
-            }
-
-            unmatched.push(item);
-          });
-
-          // If there are unmatched words OR user also gave a custom deck name, save unmatched words
-          if (unmatched.length > 0) {
-            const extraDeckId = `deck_auto_extra_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-            if (!firstTouchedDeckId) firstTouchedDeckId = extraDeckId;
-            next.unshift({
-              id: extraDeckId,
-              name: deckName || 'Bộ từ vựng mở rộng (Ngoài 15 chủ đề)',
-              description: deckDescription,
-              icon: '✨',
-              categoryType: 'custom_topic',
-              customTopicTag: 'Mở rộng B1',
-              itemCount: unmatched.length,
-              items: unmatched,
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-            });
-          }
-
-          return next;
-        });
-
-        if (firstTouchedDeckId) setActiveDeckId(firstTouchedDeckId);
-        setInitialRelFilter('15_topics');
-        setActiveTab('my_decks');
-        showToast(
-          `Đã tự động phân bổ ${distributedCount || items.length} từ vựng vào 15 Chủ đề chuẩn B1!`
-        );
-        return;
-      }
-
-      if (mode === 'exam_test') {
-        const newDeckId = `deck_exam_json_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-        const newDeck: UserVocabDeck = {
-          id: newDeckId,
-          name: deckName || `Từ vựng: ${targetTestTitle || 'Đề thi LanguageCert B1'}`,
-          description: deckDescription,
-          icon: '📝',
-          categoryType: 'exam_test',
-          linkedTestId: targetTestId,
-          linkedTestTitle: targetTestTitle || deckName,
-          itemCount: items.length,
-          items,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        setDecks((prev) => [newDeck, ...prev]);
-        setActiveDeckId(newDeckId);
-        setInitialRelFilter('exam_test');
-        setActiveTab('my_decks');
-        showToast(`Đã tạo bộ từ gắn với đề thi "${targetTestTitle || deckName}" (${items.length} từ)!`);
-        return;
-      }
-
-      if (mode === 'custom_topic') {
-        const newDeckId = `deck_custom_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-        const newDeck: UserVocabDeck = {
-          id: newDeckId,
-          name: deckName,
-          description: deckDescription,
-          icon: '🏷️',
-          categoryType: 'custom_topic',
-          customTopicTag: customTopicTag || deckName,
-          itemCount: items.length,
-          items,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        setDecks((prev) => [newDeck, ...prev]);
-        setActiveDeckId(newDeckId);
-        setInitialRelFilter('custom_topic');
-        setActiveTab('my_decks');
-        showToast(`Đã tạo bộ từ chủ đề riêng "${customTopicTag || deckName}" (${items.length} từ)!`);
-        return;
-      }
-
-      // Default: 'untagged'
-      const newDeckId = `deck_untagged_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-      const newDeck: UserVocabDeck = {
-        id: newDeckId,
-        name: deckName,
-        description: deckDescription,
-        icon: '📚',
-        categoryType: 'untagged',
-        itemCount: items.length,
-        items,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-      setDecks((prev) => [newDeck, ...prev]);
-      setActiveDeckId(newDeckId);
-      setInitialRelFilter('untagged');
-      setActiveTab('my_decks');
-      showToast(`Đã nhập bộ từ độc lập "${deckName}" (${items.length} từ)!`);
-    },
-    [handleAddWordsToDeck, showToast]
-  );
-
-  // Create a new folder
   const handleCreateFolder = (name: string) => {
     const newFolder: UserVocabFolder = {
-      id: `folder_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: `folder_${Date.now()}`,
       name,
       deckIds: [],
       createdAt: Date.now(),
     };
-    setFolders((prev) => [...prev, newFolder]);
+    saveFolders([...folders, newFolder]);
   };
 
-  // Load / reload all 15 official topic decks
-  const handleLoadDefault15Topics = useCallback(() => {
-    const default15 = generateDefault15TopicDecks();
-    setDecks((prev) => {
-      const existingIds = new Set(prev.map((d) => d.id));
-      const missingDecks = default15.filter((d) => !existingIds.has(d.id));
-      if (missingDecks.length === 0) {
-        const defaultMap = new Map(default15.map((d) => [d.id, d]));
-        return prev.map((d) => (defaultMap.has(d.id) ? defaultMap.get(d.id)! : d));
-      }
-      return [...missingDecks, ...prev];
-    });
-    setActiveDeckId('deck_official_topic_01');
-    setInitialRelFilter('15_topics');
-    setActiveTab('my_decks');
-    showToast('Đã đồng bộ đầy đủ 15 Chủ đề chuẩn LanguageCert B1!');
-  }, [showToast]);
-
-  // Toggle master status of a word
-  const handleToggleMasterWord = (deckId: string, wordId: string) => {
-    setDecks((prev) =>
-      prev.map((d) => {
-        if (d.id === deckId) {
-          const updatedItems = d.items.map((w) =>
-            w.id === wordId ? { ...w, isMastered: !w.isMastered } : w
-          );
-          return { ...d, items: updatedItems };
-        }
-        return d;
-      })
-    );
-    recordStudyActivity('Ôn tập & đánh dấu thuộc từ vựng B1', currentUser?.uid);
+  const handleRenameFolder = (folderId: string, newName: string) => {
+    saveFolders(folders.map((f) => (f.id === folderId ? { ...f, name: newName } : f)));
   };
 
-  // Delete a word from a deck
-  const handleDeleteWord = (deckId: string, wordId: string) => {
-    setDecks((prev) =>
-      prev.map((d) => {
-        if (d.id === deckId) {
-          const updatedItems = d.items.filter((w) => w.id !== wordId);
-          return { ...d, items: updatedItems, itemCount: updatedItems.length };
-        }
-        return d;
-      })
-    );
-  };
-
-  // Delete a deck
-  const handleDeleteDeck = (deckId: string) => {
-    setDecks((prev) => {
-      const next = prev.filter((d) => d.id !== deckId);
-      if (activeDeckId === deckId && next.length > 0) {
-        setActiveDeckId(next[0].id);
-      }
-      return next;
-    });
-    showToast('Đã xóa bộ từ vựng.');
-  };
-
-  // Delete a folder
   const handleDeleteFolder = (folderId: string) => {
-    setFolders((prev) => prev.filter((f) => f.id !== folderId));
+    // Deleting folder moves its decks to uncategorized (folderId = undefined) without deleting decks
+    saveFolders(folders.filter((f) => f.id !== folderId));
+    const nextDecks = personalDecks.map((d) =>
+      d.folderId === folderId ? { ...d, folderId: undefined } : d
+    );
+    savePersonalDecks(nextDecks);
   };
 
-  // Launch practice arena directly for a specific deck
-  const handleStartPracticeDeck = useCallback(
-    (deckId: string) => {
-      setActiveDeckId(deckId);
-      setActiveTab('study_hub');
-    },
-    [setActiveTab]
-  );
+  // Add words to a personal deck with duplicate conflict resolution ('skip' | 'keep_both' | 'overwrite')
+  const handleAddWordsToPersonalDeck = (
+    deckId: string,
+    newWords: ExtendedVocabItem[],
+    strategy: DuplicateResolutionStrategy = 'keep_both'
+  ) => {
+    const nextDecks = personalDecks.map((deck) => {
+      if (deck.id !== deckId) return deck;
+      const existingItems = [...(deck.items || [])];
+      const existingByNorm = new Map<string, number>();
+      existingItems.forEach((it, idx) => {
+        existingByNorm.set(normalizeEnglishText(it.word), idx);
+      });
 
-  // SRS Rating handler
-  const handleRateSrsWord = (wordId: string, rating: 'again' | 'hard' | 'good' | 'easy') => {
-    setSrsRecords((prev) => {
-      const current = prev[wordId];
-      const updated = computeNextSm2(current, wordId, rating);
-      return { ...prev, [wordId]: updated };
+      newWords.forEach((nw, i) => {
+        const normW = normalizeEnglishText(nw.word);
+        const existingIdx = existingByNorm.get(normW);
+        const adapted = adaptVocabItem(nw as any, deckId, existingItems.length + i);
+
+        if (existingIdx !== undefined) {
+          if (strategy === 'skip') {
+            return;
+          }
+          if (strategy === 'overwrite') {
+            const prevItem = existingItems[existingIdx];
+            existingItems[existingIdx] = {
+              ...adapted,
+              id: prevItem.id, // preserve ID so known/SRS state stays linked
+              contentVersion: ((prevItem as any).contentVersion || 1) + 1,
+            } as any;
+            return;
+          }
+        }
+        existingItems.push(adapted);
+      });
+
+      return {
+        ...deck,
+        itemCount: existingItems.length,
+        items: existingItems,
+      };
     });
-    handleEarnCoins(5);
+
+    savePersonalDecks(nextDecks);
   };
 
-  // Test filter detection: if selectedTestFilterId is given, display an info strip
-  const filteredTest = useMemo(() => {
-    if (!selectedTestFilterId) return null;
-    return tests.find((t) => t.id === selectedTestFilterId) || null;
-  }, [selectedTestFilterId, tests]);
+  const handleAddManualWordToDeck = (
+    deckId: string,
+    wordData: {
+      word: string;
+      phonetic: string;
+      partOfSpeech: 'n' | 'v' | 'adj' | 'adv' | 'phr';
+      meaningVi: string;
+      exampleEn: string;
+      exampleVi: string;
+    }
+  ) => {
+    const item = adaptVocabItem(
+      {
+        ...wordData,
+        id: `manual_${Date.now()}`,
+        sourceType: 'manual',
+      },
+      deckId,
+      Date.now()
+    );
+    handleAddWordsToPersonalDeck(deckId, [item], 'keep_both');
+  };
 
-  // Active deck summary for top switcher
-  const activeDeckObj = useMemo(
-    () => decks.find((d) => d.id === activeDeckId) || decks[0],
-    [decks, activeDeckId]
+  const handleUpdateManualWordInDeck = (
+    deckId: string,
+    wordId: string,
+    wordData: {
+      word: string;
+      phonetic: string;
+      partOfSpeech: 'n' | 'v' | 'adj' | 'adv' | 'phr';
+      meaningVi: string;
+      exampleEn: string;
+      exampleVi: string;
+    }
+  ) => {
+    const nextDecks = personalDecks.map((d) => {
+      if (d.id !== deckId) return d;
+      const nextItems = (d.items || []).map((it) => {
+        if (it.id !== wordId) return it;
+        return adaptVocabItem(
+          {
+            ...it,
+            ...wordData,
+            id: wordId,
+            contentVersion: ((it as any).contentVersion || 1) + 1,
+          },
+          deckId
+        );
+      });
+      return { ...d, items: nextItems, itemCount: nextItems.length };
+    });
+    savePersonalDecks(nextDecks);
+  };
+
+  const handleDeleteManualWordFromDeck = (deckId: string, wordId: string) => {
+    const nextDecks = personalDecks.map((d) => {
+      if (d.id !== deckId) return d;
+      const nextItems = (d.items || []).filter((it) => it.id !== wordId);
+      return { ...d, items: nextItems, itemCount: nextItems.length };
+    });
+    savePersonalDecks(nextDecks);
+  };
+
+  // Global SRS Due Count across all decks
+  const globalDueCount = useMemo(() => {
+    const now = Date.now();
+    let due = 0;
+    Object.values(vocabState.srsMap).forEach((rec) => {
+      if (rec && rec.enrolled && !rec.suspended && rec.dueAt !== null && rec.dueAt <= now) {
+        due++;
+      }
+    });
+    return due;
+  }, [vocabState.srsMap]);
+
+  // If Game Runner is active, render VocabGameRunner full-width
+  if (activeGameConfig) {
+    return (
+      <VocabGameRunner
+        key={activeGameConfig.sessionId}
+        sessionId={activeGameConfig.sessionId}
+        parentSessionId={activeGameConfig.parentSessionId}
+        sessionKind={activeGameConfig.sessionKind}
+        isEarlySrsPractice={activeGameConfig.isEarlySrsPractice}
+        scopeType={activeGameConfig.scopeType}
+        scopeId={activeGameConfig.scopeId}
+        scopeTitle={activeGameConfig.scopeTitle}
+        mode={activeGameConfig.mode}
+        subMode={activeGameConfig.subMode}
+        sessionItems={activeGameConfig.sessionItems}
+        distractorPool={activeGameConfig.distractorPool}
+        vocabState={vocabState}
+        onVocabStateChange={setVocabState}
+        onExitToDeck={() => setActiveGameSessionConfig(null)}
+        onSwitchModeRequest={() => {
+          const scopeDeckId =
+            activeGameConfig.scopeType === 'deck' ? activeGameConfig.scopeId : null;
+          setActiveGameSessionConfig(null);
+          if (scopeDeckId) setSelectedDeckId(scopeDeckId);
+        }}
+        onStartFollowUpSession={({ items, mode, subMode, parentSessionId }) => {
+          setActiveGameSessionConfig({
+            ...activeGameConfig,
+            sessionId: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            parentSessionId,
+            mode,
+            subMode,
+            sessionItems: items,
+          });
+        }}
+      />
+    );
+  }
+
+  const activeDeck = selectedDeckId
+    ? allDecks.find((d) => d.id === selectedDeckId) || null
+    : null;
+  const activeDeckItems = selectedDeckId ? normalizedByDeckId[selectedDeckId] || [] : [];
+  const isPersonalActiveDeck = Boolean(
+    selectedDeckId && personalDecks.some((d) => d.id === selectedDeckId)
   );
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      {/* TOAST NOTIFICATION */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-slate-900 dark:bg-emerald-600 text-white text-xs font-extrabold shadow-xl border border-slate-700 animate-fade-in">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 dark:text-white shrink-0" />
-          <span>{toastMessage}</span>
+    <div className="space-y-6">
+      {/* Top Vocabulary Navigation Header (Section 8) */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setToastMessage(null)}
-            className="ml-2 text-slate-400 hover:text-white"
+            onClick={() => handleSelectWorkspace('roadmaps')}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition ${
+              currentWorkspace === 'roadmaps' && !selectedDeckId
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
           >
-            <X className="w-3.5 h-3.5" />
+            <MapIcon className="w-4 h-4" />
+            Lộ trình
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSelectWorkspace('my_decks')}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition ${
+              currentWorkspace === 'my_decks' && !selectedDeckId
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            <FolderHeart className="w-4 h-4" />
+            Bộ của tôi ({personalDecks.length})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSelectWorkspace('study_hub')}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition ${
+              currentWorkspace === 'study_hub' && !selectedDeckId
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            <BookOpenCheck className="w-4 h-4" />
+            Học từ của tôi
+          </button>
+
+          {/* Disabled Upcoming Tabs per Section 8 */}
+          <span
+            className="hidden lg:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-400 text-xs font-semibold cursor-not-allowed"
+            title="Tính năng Cộng đồng đang được phát triển"
+          >
+            <Users className="w-3.5 h-3.5" />
+            Cộng đồng (Sắp mở)
+          </span>
+          <span
+            className="hidden xl:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-400 text-xs font-semibold cursor-not-allowed"
+            title="Tính năng Lớp học đang được phát triển"
+          >
+            <GraduationCap className="w-3.5 h-3.5" />
+            Lớp học (Sắp mở)
+          </span>
+        </div>
+
+        {/* Right Quick Actions & Points Pill */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-extrabold">
+            <Trophy className="w-4 h-4 text-amber-500" />
+            <span>{vocabState.pointsBalance} điểm</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              setActiveSrsModal({
+                scopeType: 'personal-decks',
+                scopeId: 'all_vocab',
+                scopeTitle: 'Toàn bộ Kho Từ Vựng',
+                availableDecks: allDecks.map((d) => ({
+                  id: d.id,
+                  title: d.title || d.name || 'Bộ từ',
+                })),
+                scopeItems: allNormalizedItems,
+              })
+            }
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold transition"
+          >
+            <Layers className="w-4 h-4" />
+            <span>SRS ({globalDueCount} đến hạn)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setAiTargetDeckId(selectedDeckId && isPersonalActiveDeck ? selectedDeckId : undefined);
+              setIsAiModalOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold shadow-2xs transition"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>Tạo từ AI</span>
           </button>
         </div>
-      )}
+      </div>
 
-      {/* TEST LINKED BANNER (If user navigated from a specific test) */}
-      {filteredTest && (
-        <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-950/40 dark:to-teal-950/30 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between gap-3 animate-fade-in">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-emerald-500 text-white">
-              <BookOpen className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
-                  ĐANG XEM TỪ VỰNG CỦA ĐỀ THI:
-                </span>
-                <span className="text-xs font-black text-slate-900 dark:text-white">
-                  {filteredTest.title}
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Bạn có thể ôn tập bộ từ của đề này hoặc nhấn "Nhập file JSON & AI Prompt" để bổ sung thêm từ vựng từ đề PDF & Audio Script.
-              </p>
-            </div>
-          </div>
-          {onClearTestFilter && (
-            <button
-              onClick={() => {
-                onClearTestFilter();
-                setInitialRelFilter('all');
-              }}
-              className="text-xs font-bold text-emerald-700 dark:text-emerald-400 hover:underline flex items-center gap-1 shrink-0"
-            >
-              <X className="w-4 h-4" /> Xem tất cả bộ từ
-            </button>
+      {/* Main Content Area: Either Active Deck Detail View OR Active Tab */}
+      {activeDeck ? (
+        <VocabDeckDetailView
+          deckId={activeDeck.id}
+          deckTitle={activeDeck.title || activeDeck.name || 'Bộ từ'}
+          deckSubtitle={activeDeck.description}
+          items={activeDeckItems}
+          vocabState={vocabState}
+          onVocabStateChange={setVocabState}
+          isPersonalDeck={isPersonalActiveDeck}
+          onBack={() => {
+            setSelectedDeckId(null);
+            if (onClearTestFilter) onClearTestFilter();
+          }}
+          onLaunchSession={({ mode, subMode, selectedItems, distractorPool }) => {
+            setActiveGameSessionConfig({
+              sessionId: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+              sessionKind: 'regular',
+              scopeType: 'deck',
+              scopeId: activeDeck.id,
+              scopeTitle: activeDeck.title || activeDeck.name || 'Bộ từ',
+              mode,
+              subMode,
+              sessionItems: selectedItems,
+              distractorPool,
+            });
+          }}
+          onOpenSrsForDeck={() =>
+            setActiveSrsModal({
+              scopeType: 'deck',
+              scopeId: activeDeck.id,
+              scopeTitle: activeDeck.title || activeDeck.name || 'Bộ từ',
+              availableDecks: [
+                { id: activeDeck.id, title: activeDeck.title || activeDeck.name || 'Bộ từ' },
+              ],
+              scopeItems: activeDeckItems,
+            })
+          }
+          onOpenQuickImport={() => {
+            setImportTargetDeckId(activeDeck.id);
+            setIsQuickImportOpen(true);
+          }}
+          onOpenAiModal={() => {
+            setAiTargetDeckId(activeDeck.id);
+            setIsAiModalOpen(true);
+          }}
+          onAddManualWord={
+            isPersonalActiveDeck
+              ? (wordData) => handleAddManualWordToDeck(activeDeck.id, wordData)
+              : undefined
+          }
+          onUpdateManualWord={
+            isPersonalActiveDeck
+              ? (wordId, wordData) =>
+                  handleUpdateManualWordInDeck(activeDeck.id, wordId, wordData)
+              : undefined
+          }
+          onDeleteManualWord={
+            isPersonalActiveDeck
+              ? (wordId) => handleDeleteManualWordFromDeck(activeDeck.id, wordId)
+              : undefined
+          }
+        />
+      ) : currentWorkspace === 'roadmaps' ? (
+        <VocabRoadmapsTab
+          systemDecks={systemDecks}
+          normalizedByDeckId={normalizedByDeckId}
+          vocabState={vocabState}
+          onVocabStateChange={setVocabState}
+          onSelectDeck={(deckId) => setSelectedDeckId(deckId)}
+          onOpenSrsForRoadmap={(rm) =>
+            setActiveSrsModal({
+              scopeType: 'roadmap',
+              scopeId: rm.id,
+              scopeTitle: rm.title,
+              availableDecks: rm.decks.map((d) => ({
+                id: d.id,
+                title: d.title || d.name || 'Bộ từ',
+              })),
+              scopeItems: rm.items,
+            })
+          }
+          currentUserDisplayName={currentUserDisplayName}
+          isUserAuthenticated={isUserAuthenticated}
+        />
+      ) : currentWorkspace === 'my_decks' ? (
+        <VocabMyDecksTab
+          personalDecks={personalDecks}
+          savedSystemDecks={systemDecks.filter((d) =>
+            vocabState.savedSystemDeckIds.includes(d.id)
           )}
-        </div>
+          folders={folders}
+          normalizedByDeckId={normalizedByDeckId}
+          vocabState={vocabState}
+          onSelectDeck={(deckId) => setSelectedDeckId(deckId)}
+          onCreateDeck={handleCreatePersonalDeck}
+          onUpdateDeckMeta={handleUpdatePersonalDeckMeta}
+          onDeleteDeck={handleDeletePersonalDeck}
+          onCreateFolder={handleCreateFolder}
+          onRenameFolder={handleRenameFolder}
+          onDeleteFolder={handleDeleteFolder}
+          onOpenAiModal={(deckId) => {
+            setAiTargetDeckId(deckId);
+            setIsAiModalOpen(true);
+          }}
+          onOpenQuickImport={(deckId) => {
+            setImportTargetDeckId(deckId);
+            setIsQuickImportOpen(true);
+          }}
+          onOpenSrsForPersonalDecks={() => {
+            const pItems: NormalizedVocabItem[] = [];
+            personalDecks.forEach((d) => {
+              pItems.push(...(normalizedByDeckId[d.id] || []));
+            });
+            setActiveSrsModal({
+              scopeType: 'personal-decks',
+              scopeId: 'my_personal_decks',
+              scopeTitle: 'Bộ từ cá nhân của tôi',
+              availableDecks: personalDecks.map((d) => ({
+                id: d.id,
+                title: d.title || d.name || 'Bộ từ',
+              })),
+              scopeItems: pItems,
+            });
+          }}
+        />
+      ) : (
+        <VocabStudyHubTab
+          allDecks={allDecks}
+          normalizedByDeckId={normalizedByDeckId}
+          vocabState={vocabState}
+          onSelectDeck={(deckId) => setSelectedDeckId(deckId)}
+          onOpenGlobalSrsModal={() =>
+            setActiveSrsModal({
+              scopeType: 'personal-decks',
+              scopeId: 'all_vocab',
+              scopeTitle: 'Toàn bộ Kho Từ Vựng',
+              availableDecks: allDecks.map((d) => ({
+                id: d.id,
+                title: d.title || d.name || 'Bộ từ',
+              })),
+              scopeItems: allNormalizedItems,
+            })
+          }
+          onReplaySavedSessionSubset={({ session, subsetType }) => {
+            // Reconstruct NormalizedVocabItem list from saved session attempts
+            const itemByWordKey = new Map<string, NormalizedVocabItem>(
+              allNormalizedItems.map((it) => [it.wordKey, it])
+            );
+
+            const targetWordKeys =
+              subsetType === 'wrong'
+                ? session.attempts
+                    .filter(
+                      (a) =>
+                        a.outcome === 'incorrect' ||
+                        a.outcome === 'timeout' ||
+                        (a.outcome === 'self_rated' && a.selfRating === 'forgot')
+                    )
+                    .map((a) => a.wordKey)
+                : session.attempts
+                    .filter((a) => a.outcome === 'incomplete')
+                    .map((a) => a.wordKey);
+
+            const resolvedItems: NormalizedVocabItem[] = targetWordKeys
+              .map((wk) => {
+                const live = itemByWordKey.get(wk);
+                if (live) return live;
+                const snap = session.attempts.find((a) => a.wordKey === wk);
+                if (!snap) return null;
+                return adaptVocabItem(
+                  {
+                    id: snap.wordId,
+                    word: snap.wordSnapshot,
+                    meaningVi: snap.meaningSnapshot,
+                    phonetic: snap.phoneticSnapshot || '',
+                    partOfSpeech: snap.posSnapshot || 'n',
+                  },
+                  snap.deckId
+                );
+              })
+              .filter((x): x is NormalizedVocabItem => Boolean(x));
+
+            if (resolvedItems.length === 0) return;
+
+            setActiveGameSessionConfig({
+              sessionId: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+              parentSessionId: session.sessionId,
+              sessionKind: session.sessionKind,
+              scopeType: session.scopeType,
+              scopeId: session.scopeId,
+              scopeTitle: `${session.scopeTitle} (${
+                subsetType === 'wrong' ? 'Làm lại câu sai' : 'Chơi tiếp'
+              })`,
+              mode: (session.mode as RunnerMode) || 'quiz',
+              subMode: session.subMode,
+              sessionItems: resolvedItems,
+              distractorPool: allNormalizedItems,
+            });
+          }}
+        />
       )}
 
-      {/* VOCABULARY PAGE HEADER & QUICK ACTIONS */}
-      <div className="bg-gradient-to-r from-slate-900 via-primary-950 to-slate-900 text-white rounded-3xl p-6 sm:p-7 shadow-xl relative overflow-hidden border border-slate-800">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-primary-500/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
-        <div className="absolute bottom-0 left-1/3 w-64 h-64 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
+      {/* SRS Modal (Sections 14, 15, 16) */}
+      {activeSrsModal && (
+        <VocabSrsModal
+          isOpen={true}
+          onClose={() => setActiveSrsModal(null)}
+          scopeType={activeSrsModal.scopeType}
+          scopeId={activeSrsModal.scopeId}
+          scopeTitle={activeSrsModal.scopeTitle}
+          availableDecks={activeSrsModal.availableDecks}
+          scopeItems={activeSrsModal.scopeItems}
+          vocabState={vocabState}
+          onVocabStateChange={setVocabState}
+          onStartSrsSession={({ items, isEarlyPractice, scopeTitle }) => {
+            const scopeInfo = activeSrsModal;
+            setActiveSrsModal(null);
+            setActiveGameSessionConfig({
+              sessionId: `srs_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+              sessionKind: 'srs',
+              isEarlySrsPractice: isEarlyPractice,
+              scopeType: scopeInfo.scopeType,
+              scopeId: scopeInfo.scopeId,
+              scopeTitle,
+              mode: 'mixed',
+              sessionItems: items,
+              distractorPool:
+                scopeInfo.scopeItems.length >= 4 ? scopeInfo.scopeItems : allNormalizedItems,
+            });
+          }}
+        />
+      )}
 
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-5">
-          <div className="space-y-1.5">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary-500/20 text-primary-300 border border-primary-500/30 text-xs font-bold tracking-wide uppercase">
-              <Sparkles className="w-3.5 h-3.5" /> LanguageCert B1 Achiever Vocabulary
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-              Hệ Thống Quản Lý & Luyện Từ Vựng B1
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-              Tổ chức trực quan theo 4 mối liên kết: <strong>15 Chủ đề chuẩn B1</strong>,{' '}
-              <strong>Theo Đề thi trong Web</strong>, <strong>Chủ đề tự tạo</strong> hoặc{' '}
-              <strong>Độc lập</strong> — tích hợp AI Prompt bóc tách từ vựng từ Đề PDF & Script Nghe.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
-            {/* Streak & Coins */}
-            <div className="flex items-center gap-2 bg-slate-800/80 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-slate-700/60 shadow-inner">
-              <div className="flex items-center gap-1.5 text-amber-400 font-black text-sm tabular-nums">
-                <Flame className="w-4 h-4 fill-amber-400" />
-                <span>{streakCount} ngày</span>
-              </div>
-              <div className="w-px h-4 bg-slate-700" />
-              <div className="flex items-center gap-1.5 text-yellow-300 font-black text-sm tabular-nums">
-                <Trophy className="w-4 h-4 text-yellow-400" />
-                <span>{coinCount} xu</span>
-              </div>
-            </div>
-
-            {/* Prominent JSON Batch Import & AI Prompt Button */}
-            <button
-              type="button"
-              onClick={() => setIsJsonModalOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 font-black text-xs sm:text-sm shadow-lg shadow-amber-500/25 transition-all transform hover:-translate-y-0.5 cursor-pointer"
-            >
-              <FileCode2 className="w-4 h-4 text-slate-950" />
-              <span>Nhập JSON hàng loạt & AI Prompt (Đề + Script PDF)</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* 2 PRIMARY WORKSPACES NAVIGATION BAR */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-2 shadow-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {/* Workspace 1: Kho Từ Vựng */}
-          <button
-            type="button"
-            onClick={() => setActiveTab('my_decks')}
-            className={`flex items-center justify-between gap-3 py-3.5 px-5 rounded-xl text-left transition-all cursor-pointer ${
-              activeTab === 'my_decks'
-                ? 'bg-[#58CC02] text-white shadow-md shadow-lime-500/20 border-b-2 border-[#46a302]'
-                : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className={`p-2 rounded-xl ${
-                  activeTab === 'my_decks'
-                    ? 'bg-white/20 text-white'
-                    : 'bg-slate-100 dark:bg-slate-800 text-primary-600'
-                }`}
-              >
-                <Folder className="w-5 h-5 shrink-0" />
-              </div>
-              <div>
-                <div className="text-sm font-black">
-                  1. Kho Từ Vựng (Lọc theo Chủ đề / Đề thi / Tag)
-                </div>
-                <div
-                  className={`text-[11px] font-medium ${
-                    activeTab === 'my_decks' ? 'text-white/90' : 'text-slate-500 dark:text-slate-400'
-                  }`}
-                >
-                  Quản lý {decks.length} bộ từ • 15 Chủ đề B1 • Bộ từ theo Đề thi • Chủ đề tự tạo
-                </div>
-              </div>
-            </div>
-          </button>
-
-          {/* Workspace 2: Phòng Luyện Tập */}
-          <button
-            type="button"
-            onClick={() => setActiveTab('study_hub')}
-            className={`flex items-center justify-between gap-3 py-3.5 px-5 rounded-xl text-left transition-all cursor-pointer ${
-              activeTab === 'study_hub'
-                ? 'bg-[#58CC02] text-white shadow-md shadow-lime-500/20 border-b-2 border-[#46a302]'
-                : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className={`p-2 rounded-xl ${
-                  activeTab === 'study_hub'
-                    ? 'bg-white/20 text-white'
-                    : 'bg-slate-100 dark:bg-slate-800 text-indigo-600'
-                }`}
-              >
-                <Layers className="w-5 h-5 shrink-0" />
-              </div>
-              <div>
-                <div className="text-sm font-black">
-                  2. Phòng Luyện Tập (Flashcard 3D · SRS SM-2 · Quiz & Game)
-                </div>
-                <div
-                  className={`text-[11px] font-medium ${
-                    activeTab === 'study_hub'
-                      ? 'text-white/90'
-                      : 'text-slate-500 dark:text-slate-400'
-                  }`}
-                >
-                  Đang chọn: {activeDeckObj?.name || 'Chưa chọn bộ từ'} ({activeDeckObj?.items?.length || 0} từ)
-                </div>
-              </div>
-            </div>
-          </button>
-        </div>
-      </div>
-
-      {/* ACTIVE WORKSPACE CONTENT */}
-      <div>
-        {activeTab === 'my_decks' && (
-          <VocabMyDecksTab
-            decks={decks}
-            folders={folders}
-            tests={tests}
-            activeDeckId={activeDeckId}
-            initialRelationshipFilter={initialRelFilter}
-            onSelectDeck={setActiveDeckId}
-            onStartPracticeDeck={handleStartPracticeDeck}
-            onUpdateDeckRelationship={handleUpdateDeckRelationship}
-            onCreateDeck={() => setIsDeckModalOpen(true)}
-            onCreateFolder={() => setIsFolderModalOpen(true)}
-            onOpenAiModal={() => setIsAiModalOpen(true)}
-            onOpenImportModal={() => setIsImportModalOpen(true)}
-            onOpenJsonModal={() => setIsJsonModalOpen(true)}
-            onLoadDefault15Topics={handleLoadDefault15Topics}
-            onToggleMasterWord={handleToggleMasterWord}
-            onDeleteWord={handleDeleteWord}
-            onDeleteDeck={handleDeleteDeck}
-            onDeleteFolder={handleDeleteFolder}
-          />
-        )}
-
-        {activeTab === 'study_hub' && (
-          <VocabStudyHubTab
-            decks={decks}
-            activeDeckId={activeDeckId}
-            onSelectDeck={setActiveDeckId}
-            srsRecords={srsRecords}
-            onRateSrsWord={handleRateSrsWord}
-            streakCount={streakCount}
-            coinCount={coinCount}
-            onEarnCoins={handleEarnCoins}
-          />
-        )}
-      </div>
-
-      {/* MODALS */}
-      {/* 1. Create / Edit Deck Modal */}
-      <VocabDeckModal
-        isOpen={isDeckModalOpen}
-        onClose={() => setIsDeckModalOpen(false)}
-        onSave={handleCreateDeck}
-        folders={folders}
-        tests={tests}
-      />
-
-      {/* 2. Create Folder Modal */}
-      <VocabFolderModal
-        isOpen={isFolderModalOpen}
-        onClose={() => setIsFolderModalOpen(false)}
-        onSave={handleCreateFolder}
-      />
-
-      {/* 3. AI Generation Modal */}
+      {/* AI Vocabulary Generation Modal (Section 13) */}
       <VocabAiModal
         isOpen={isAiModalOpen}
         onClose={() => setIsAiModalOpen(false)}
-        decks={decks}
-        activeDeckId={activeDeckId}
-        onAddWordsToDeck={handleAddWordsToDeck}
+        decks={personalDecks}
+        activeDeckId={aiTargetDeckId}
+        userId={currentUserId}
+        onAddWordsToDeck={(deckId, words) =>
+          handleAddWordsToPersonalDeck(deckId, words, 'keep_both')
+        }
         onRequestCreateDeck={() => {
-          setIsAiModalOpen(false);
-          setIsDeckModalOpen(true);
+          const newId = handleCreatePersonalDeck({
+            title: `Bộ từ AI (${new Date().toLocaleDateString('vi-VN')})`,
+            description: 'Tạo tự động từ cửa sổ AI',
+          });
+          setAiTargetDeckId(newId);
         }}
       />
 
-      {/* 4. Quick Import Modal (Paste with |, CSV, Grid) */}
+      {/* Quick Import/Export CSV, TSV, JSON Modal (Section 12) */}
       <VocabQuickImportModal
-        isOpen={isImportModalOpen}
-        onClose={() => setIsImportModalOpen(false)}
-        decks={decks}
-        activeDeckId={activeDeckId}
-        onAddWordsToDeck={handleAddWordsToDeck}
-        onOpenJsonModal={() => {
-          setIsImportModalOpen(false);
-          setIsJsonModalOpen(true);
-        }}
+        isOpen={isQuickImportOpen}
+        onClose={() => setIsQuickImportOpen(false)}
+        decks={personalDecks}
+        activeDeckId={importTargetDeckId}
+        onAddWordsToDeck={(deckId, words, strategy) =>
+          handleAddWordsToPersonalDeck(deckId, words, strategy || 'skip')
+        }
         onRequestCreateDeck={() => {
-          setIsImportModalOpen(false);
-          setIsDeckModalOpen(true);
+          const newId = handleCreatePersonalDeck({
+            title: `Bộ từ Nhập File (${new Date().toLocaleDateString('vi-VN')})`,
+            description: 'Tạo từ cửa sổ Nhập CSV/JSON',
+          });
+          setImportTargetDeckId(newId);
         }}
-      />
-
-      {/* 5. JSON Batch Import & AI Prompt Modal */}
-      <VocabAiPromptModal
-        isOpen={isJsonModalOpen}
-        onClose={() => setIsJsonModalOpen(false)}
-        decks={decks}
-        tests={tests}
-        activeDeckId={activeDeckId}
-        onAddWordsToDeck={handleAddWordsToDeck}
-        onCreateDeckWithWords={handleCreateDeckWithWords}
-        onBatchImportVocab={handleBatchImportVocab}
       />
     </div>
   );
 };
+
+export default VocabularyB1View;

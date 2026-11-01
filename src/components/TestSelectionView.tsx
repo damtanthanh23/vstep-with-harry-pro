@@ -109,12 +109,12 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
   const [filterTag, setFilterTag] = useState<string>('all');
   const [customTags, setCustomTags] = useState<string[]>(() => getAllExamCategories());
   const [selectedVocabTestFilterId, setSelectedVocabTestFilterId] = useState<string | undefined>(undefined);
-  const [vocabWorkspace, setVocabWorkspace] = useState<'my_decks' | 'study_hub'>('my_decks');
+  const [vocabWorkspace, setVocabWorkspace] = useState<'my_decks' | 'study_hub' | 'roadmaps'>('roadmaps');
   const [navHistoryStack, setNavHistoryStack] = useState<
     Array<{
       tab: NavTabType;
       vocabTestFilterId?: string;
-      vocabWorkspace: 'my_decks' | 'study_hub';
+      vocabWorkspace: 'my_decks' | 'study_hub' | 'roadmaps';
     }>
   >([]);
   const [streakDays, setStreakDays] = useState<number>(() => getStreakStatus().currentStreak);

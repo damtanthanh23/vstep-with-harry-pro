@@ -17,9 +17,11 @@ export interface ExtendedVocabItem extends VocabItem {
 export interface UserVocabDeck {
   id: string;
   name: string;
+  title?: string;
   description?: string;
   icon: string;
   folderId?: string;
+  isCustom?: boolean;
   categoryType?: VocabDeckCategoryType;
   officialTopicCode?: string;
   linkedTestId?: string;

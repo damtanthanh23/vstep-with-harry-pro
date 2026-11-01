@@ -174,10 +174,12 @@ export interface UserProfile {
   address?: string;
   age?: number;
   targetScores?: UserTargetScores;
+  vocabStats?: import('./studentManagement').UserVocabStats;
   photoURL?: string;
   role: 'admin' | 'co_teacher' | 'student';
   assignedBy?: string;
   createdAt: number;
+  lastLoginAt?: number;
   lastActiveAt?: number;
 }
 

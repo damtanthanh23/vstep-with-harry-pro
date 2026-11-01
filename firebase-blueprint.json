@@ -55,6 +55,18 @@
       },
       "required": ["attemptId", "testId", "testTitle", "mode", "score", "totalQuestions", "percentage", "grade", "listeningScore", "readingScore", "timeSpentSeconds", "completedAt"]
     },
+    "InProgressAttempt": {
+      "title": "InProgressAttempt",
+      "description": "Active in-progress test session draft for a student",
+      "type": "object",
+      "properties": {
+        "testId": { "type": "string", "description": "Unique test ID" },
+        "testTitle": { "type": "string", "description": "Title of test" },
+        "elapsedSeconds": { "type": "number", "description": "Time elapsed so far" },
+        "answers": { "type": "object", "description": "Answers chosen so far" }
+      },
+      "required": ["testId", "elapsedSeconds", "answers"]
+    },
     "FeedbackReport": {
       "title": "FeedbackReport",
       "description": "Student bug report or suggestion submitted from any screen or question",
@@ -92,6 +104,10 @@
     "/users/{userId}/attempts/{attemptId}": {
       "schema": "UserExamAttempt",
       "description": "Sub-collection of user exam attempts and results"
+    },
+    "/users/{userId}/inProgress/{testId}": {
+      "schema": "InProgressAttempt",
+      "description": "Sub-collection of active in-progress drafts"
     },
     "/users/{userId}/vocabSrs/{docId}": {
       "schema": "UserProfile",
