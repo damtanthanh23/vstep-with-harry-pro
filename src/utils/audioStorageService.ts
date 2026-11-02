@@ -1,9 +1,22 @@
 import { doc, getDoc } from 'firebase/firestore';
-import { db, safeSetDoc, canWriteToFirestore } from '../firebase';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import {
+  db,
+  storage,
+  safeSetDoc,
+  canWriteToFirestore,
+  APP_SITE_ID,
+  STORAGE_AUDIO_FOLDER,
+  AUDIO_KEY_PREFIX,
+  FIREBASE_STORAGE_BUCKET,
+} from '../firebase';
+
+export { APP_SITE_ID, STORAGE_AUDIO_FOLDER, AUDIO_KEY_PREFIX, FIREBASE_STORAGE_BUCKET };
 
 const IDB_NAME = 'langcert_audio_storage_v1';
 const IDB_STORE = 'audio_blobs';
-const CLOUD_CHUNK_CHAR_LIMIT = 550000; // ~550KB per Firestore document (well below 1MiB limit)
+const STORAGE_URL_MAP_LS_KEY = 'vstep_firebase_storage_urls_v1';
+const CLOUD_CHUNK_CHAR_LIMIT = 320000; // ~320KB per Firestore document for smooth WebChannel streaming
 const INLINE_SPEAKING_DATA_URL_MAX_CHARS = 220000; // ~220KB max inline per part so 3 parts fit comfortably in 1 Firestore doc
 
 interface StoredAudioRecord {
@@ -11,11 +24,175 @@ interface StoredAudioRecord {
   fileName: string;
   mimeType: string;
   blob: Blob;
+  arrayBuffer?: ArrayBuffer;
+  storageUrl?: string;
   updatedAt: number;
+}
+
+export interface AudioCloudSyncState {
+  active: boolean;
+  status: 'idle' | 'syncing' | 'completed' | 'error';
+  testTitle: string;
+  currentFileName: string;
+  percent: number;
+  completedFiles: number;
+  totalFiles: number;
+  message: string;
+  storageUrl?: string;
+}
+
+export interface StorageConnectionTestResult {
+  ok: boolean;
+  bucket: string;
+  storagePath: string;
+  downloadUrl?: string;
+  testedAt: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+let currentCloudSyncState: AudioCloudSyncState = {
+  active: false,
+  status: 'idle',
+  testTitle: '',
+  currentFileName: '',
+  percent: 0,
+  completedFiles: 0,
+  totalFiles: 0,
+  message: '',
+};
+
+const cloudSyncListeners = new Set<(state: AudioCloudSyncState) => void>();
+const storageUrlReadyListeners = new Set<(key: string, storageUrl: string) => void>();
+let autoDismissTimer: ReturnType<typeof setTimeout> | null = null;
+
+// In-memory + localStorage cache mapping audioKey -> Firebase Storage CDN downloadUrl
+const storageCdnUrlCache = new Map<string, string>();
+try {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const raw = window.localStorage.getItem(STORAGE_URL_MAP_LS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      Object.entries(parsed).forEach(([k, v]) => {
+        if (k && typeof v === 'string' && v.startsWith('http')) {
+          storageCdnUrlCache.set(k, v);
+        }
+      });
+    }
+  }
+} catch {
+  // Ignore localStorage parse errors
+}
+
+function recordFirebaseStorageUrl(keys: string[], storageUrl: string): void {
+  if (!storageUrl || !storageUrl.startsWith('http')) return;
+  keys.forEach((k) => {
+    const cleaned = cleanAudioStorageKey(k);
+    if (cleaned) {
+      storageCdnUrlCache.set(cleaned, storageUrl);
+    }
+    if (k) {
+      storageCdnUrlCache.set(k, storageUrl);
+    }
+  });
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const obj: Record<string, string> = {};
+      storageCdnUrlCache.forEach((v, k) => {
+        obj[k] = v;
+      });
+      window.localStorage.setItem(STORAGE_URL_MAP_LS_KEY, JSON.stringify(obj));
+    }
+  } catch {
+    // Ignore quota errors
+  }
+  keys.forEach((k) => {
+    const cleaned = cleanAudioStorageKey(k);
+    if (cleaned) {
+      storageUrlReadyListeners.forEach((cb) => cb(cleaned, storageUrl));
+    }
+  });
+}
+
+export function getCachedFirebaseStorageUrl(rawKey: string): string | null {
+  if (!rawKey) return null;
+  const cleaned = cleanAudioStorageKey(rawKey);
+  const vstepKey = ensureVstepAudioKey(cleaned);
+  return (
+    storageCdnUrlCache.get(vstepKey) ||
+    storageCdnUrlCache.get(cleaned) ||
+    storageCdnUrlCache.get(rawKey) ||
+    null
+  );
+}
+
+export function subscribeToFirebaseStorageUrlReady(
+  listener: (key: string, storageUrl: string) => void
+): () => void {
+  storageUrlReadyListeners.add(listener);
+  return () => {
+    storageUrlReadyListeners.delete(listener);
+  };
+}
+
+export function notifyAudioCloudSyncBanner(patch: Partial<AudioCloudSyncState>): void {
+  updateAudioCloudSyncState(patch);
+}
+
+function updateAudioCloudSyncState(patch: Partial<AudioCloudSyncState>) {
+  if (autoDismissTimer) {
+    clearTimeout(autoDismissTimer);
+    autoDismissTimer = null;
+  }
+  currentCloudSyncState = {
+    ...currentCloudSyncState,
+    ...patch,
+  };
+  cloudSyncListeners.forEach((listener) => listener(currentCloudSyncState));
+
+  if (currentCloudSyncState.status === 'completed') {
+    autoDismissTimer = setTimeout(() => {
+      currentCloudSyncState = {
+        ...currentCloudSyncState,
+        active: false,
+        status: 'idle',
+      };
+      cloudSyncListeners.forEach((listener) => listener(currentCloudSyncState));
+    }, 5000);
+  }
+}
+
+export function getAudioCloudSyncState(): AudioCloudSyncState {
+  return currentCloudSyncState;
+}
+
+export function subscribeToAudioCloudSync(
+  listener: (state: AudioCloudSyncState) => void
+): () => void {
+  cloudSyncListeners.add(listener);
+  listener(currentCloudSyncState);
+  return () => {
+    cloudSyncListeners.delete(listener);
+  };
+}
+
+export function dismissAudioCloudSyncBanner(): void {
+  if (autoDismissTimer) {
+    clearTimeout(autoDismissTimer);
+    autoDismissTimer = null;
+  }
+  currentCloudSyncState = {
+    ...currentCloudSyncState,
+    active: false,
+    status: 'idle',
+  };
+  cloudSyncListeners.forEach((listener) => listener(currentCloudSyncState));
 }
 
 // Keep an in-memory map of active Object URLs so we never lose a newly uploaded file's blob URL
 const activeObjectUrlCache = new Map<string, string>();
+// Keep an in-memory map of detached memory Blobs so active session uploads are 100% immune to OS file handle revocation
+const activeMemoryBlobCache = new Map<string, Blob>();
 
 /**
  * Strips `idb-audio://` prefix and any `?v=...` version query parameter
@@ -30,13 +207,56 @@ export function cleanAudioStorageKey(rawKey: string): string {
 }
 
 /**
+ * Ensures the audio key strictly starts with `vstep_` (AUDIO_KEY_PREFIX) without doubling `vstep_vstep_`.
+ */
+export function ensureVstepAudioKey(rawKey: string): string {
+  const cleaned = cleanAudioStorageKey(rawKey);
+  if (!cleaned) return `${AUDIO_KEY_PREFIX}audio_default`;
+  if (cleaned.startsWith(AUDIO_KEY_PREFIX)) {
+    return cleaned;
+  }
+  return `${AUDIO_KEY_PREFIX}${cleaned}`;
+}
+
+/**
+ * Returns the VSTEP-namespaced fallback file key `vstep_file_{fileName}`
+ */
+export function ensureVstepFileFallbackKey(fileName: string): string {
+  const safeName = (fileName || 'audio.mp3').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  if (safeName.startsWith(`${AUDIO_KEY_PREFIX}file_`)) {
+    return safeName;
+  }
+  if (safeName.startsWith('file_')) {
+    return `${AUDIO_KEY_PREFIX}${safeName}`;
+  }
+  return `${AUDIO_KEY_PREFIX}file_${safeName}`;
+}
+
+/**
+ * Returns legacy unprefixed `file_{fileName}` for backward-compatible reads
+ */
+function getLegacyFileFallbackKey(fileName: string): string {
+  const safeName = (fileName || 'audio.mp3').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  return safeName.startsWith('file_') ? safeName : `file_${safeName}`;
+}
+
+/**
+ * Builds the isolated VSTEP Firebase Cloud Storage object path:
+ * `vstep/exam_audio/vstep_{cleanKey}.mp3`
+ */
+export function getVstepStoragePath(rawKey: string): string {
+  const vstepKey = ensureVstepAudioKey(rawKey).replace(/\.mp3$/i, '');
+  return `${STORAGE_AUDIO_FOLDER}/${vstepKey}.mp3`;
+}
+
+/**
  * Sanitizes key strictly for Firestore `/test_audio_chunks/{chunkId}` rules (`^[a-zA-Z0-9_\-]+$`)
  */
 export function toFirestoreChunkKey(rawKey: string): string {
   const cleaned = cleanAudioStorageKey(rawKey)
     .replace(/[^a-zA-Z0-9_-]/g, '_')
     .slice(0, 95);
-  return cleaned || 'audio_default';
+  return cleaned || 'vstep_audio_default';
 }
 
 export function blobToBase64DataUrl(blob: Blob): Promise<string> {
@@ -52,6 +272,16 @@ export function blobToBase64DataUrl(blob: Blob): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+}
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  const CHUNK_SZ = 0x8000;
+  const parts: string[] = [];
+  for (let i = 0; i < bytes.length; i += CHUNK_SZ) {
+    const sub = bytes.subarray(i, Math.min(bytes.length, i + CHUNK_SZ));
+    parts.push(String.fromCharCode.apply(null, sub as unknown as number[]));
+  }
+  return btoa(parts.join(''));
 }
 
 function openAudioDatabase(): Promise<IDBDatabase> {
@@ -77,20 +307,40 @@ export async function saveAudioToIndexedDB(
   blob: Blob,
   fileName = 'audio.mp3'
 ): Promise<string> {
-  const baseKey = cleanAudioStorageKey(key);
+  const baseKey = ensureVstepAudioKey(key);
+  const legacyKey = cleanAudioStorageKey(key);
   const versionedIdbUri = `idb-audio://${baseKey}?v=${Date.now()}`;
   const plainIdbUri = `idb-audio://${baseKey}`;
-  const safeFileKey = fileName
-    ? `file_${fileName.replace(/[^a-zA-Z0-9_.-]/g, '_')}`
-    : '';
+  const vstepFileKey = fileName ? ensureVstepFileFallbackKey(fileName) : '';
+  const legacyFileKey = fileName ? getLegacyFileFallbackKey(fileName) : '';
 
-  // Create and cache a live Object URL immediately BEFORE async IndexedDB write
-  const freshObjUrl = URL.createObjectURL(blob);
+  const mimeType = blob.type || 'audio/mpeg';
+  let detachedBuffer: ArrayBuffer | undefined;
+  let detachedBlob: Blob = blob;
+
+  try {
+    detachedBuffer = await blob.arrayBuffer();
+    detachedBlob = new Blob([detachedBuffer], { type: mimeType });
+  } catch (err) {
+    console.warn('Could not read ArrayBuffer into memory before IDB save:', err);
+  }
+
+  // Create and cache a live Object URL & Memory Blob immediately (0ms) BEFORE async IndexedDB write
+  const freshObjUrl = URL.createObjectURL(detachedBlob);
   activeObjectUrlCache.set(baseKey, freshObjUrl);
+  activeObjectUrlCache.set(legacyKey, freshObjUrl);
   activeObjectUrlCache.set(plainIdbUri, freshObjUrl);
   activeObjectUrlCache.set(versionedIdbUri, freshObjUrl);
-  if (safeFileKey) {
-    activeObjectUrlCache.set(safeFileKey, freshObjUrl);
+  activeMemoryBlobCache.set(baseKey, detachedBlob);
+  activeMemoryBlobCache.set(legacyKey, detachedBlob);
+
+  if (vstepFileKey) {
+    activeObjectUrlCache.set(vstepFileKey, freshObjUrl);
+    activeMemoryBlobCache.set(vstepFileKey, detachedBlob);
+  }
+  if (legacyFileKey) {
+    activeObjectUrlCache.set(legacyFileKey, freshObjUrl);
+    activeMemoryBlobCache.set(legacyFileKey, detachedBlob);
   }
 
   try {
@@ -103,20 +353,32 @@ export async function saveAudioToIndexedDB(
       const record: StoredAudioRecord = {
         key: baseKey,
         fileName,
-        mimeType: blob.type || 'audio/mpeg',
-        blob,
+        mimeType,
+        blob: detachedBlob,
+        ...(detachedBuffer ? { arrayBuffer: detachedBuffer } : {}),
         updatedAt: now,
       };
       store.put(record);
 
-      // Also cache by fileName as a secondary fallback key
-      if (safeFileKey) {
+      // Also save under legacy unprefixed key if different so backward-compatible lookups succeed
+      if (legacyKey && legacyKey !== baseKey) {
         store.put({
-          key: safeFileKey,
-          fileName,
-          mimeType: blob.type || 'audio/mpeg',
-          blob,
-          updatedAt: now,
+          ...record,
+          key: legacyKey,
+        });
+      }
+
+      // Also cache by VSTEP fileName key (`vstep_file_...`) and legacy (`file_...`)
+      if (vstepFileKey) {
+        store.put({
+          ...record,
+          key: vstepFileKey,
+        });
+      }
+      if (legacyFileKey && legacyFileKey !== vstepFileKey) {
+        store.put({
+          ...record,
+          key: legacyFileKey,
         });
       }
 
@@ -134,17 +396,59 @@ export async function loadAudioBlobFromIndexedDB(key: string): Promise<Blob | nu
   try {
     const cleanKey = cleanAudioStorageKey(key);
     if (!cleanKey) return null;
+    const vstepKey = ensureVstepAudioKey(cleanKey);
+
+    if (activeMemoryBlobCache.has(vstepKey)) {
+      return activeMemoryBlobCache.get(vstepKey)!;
+    }
+    if (activeMemoryBlobCache.has(cleanKey)) {
+      return activeMemoryBlobCache.get(cleanKey)!;
+    }
+
     const dbInstance = await openAudioDatabase();
-    return await new Promise<Blob | null>((resolve) => {
-      const tx = dbInstance.transaction(IDB_STORE, 'readonly');
-      const store = tx.objectStore(IDB_STORE);
-      const req = store.get(cleanKey);
-      req.onsuccess = () => {
-        const res = req.result as StoredAudioRecord | undefined;
-        resolve(res?.blob || null);
-      };
-      req.onerror = () => resolve(null);
-    });
+    const candidateKeys = vstepKey !== cleanKey ? [vstepKey, cleanKey] : [cleanKey];
+
+    for (const candidate of candidateKeys) {
+      const record = await new Promise<StoredAudioRecord | undefined>((resolve) => {
+        const tx = dbInstance.transaction(IDB_STORE, 'readonly');
+        const store = tx.objectStore(IDB_STORE);
+        const req = store.get(candidate);
+        req.onsuccess = () => resolve(req.result as StoredAudioRecord | undefined);
+        req.onerror = () => resolve(undefined);
+      });
+
+      if (!record) continue;
+
+      if (record.storageUrl && record.storageUrl.startsWith('http')) {
+        recordFirebaseStorageUrl([vstepKey, cleanKey], record.storageUrl);
+      }
+
+      // 1. If record has a detached ArrayBuffer stored in IDB, reconstruct a fresh memory Blob (100% immune to NotReadableError)
+      if (record.arrayBuffer && record.arrayBuffer.byteLength > 0) {
+        const memBlob = new Blob([record.arrayBuffer], {
+          type: record.mimeType || 'audio/mpeg',
+        });
+        activeMemoryBlobCache.set(vstepKey, memBlob);
+        activeMemoryBlobCache.set(cleanKey, memBlob);
+        return memBlob;
+      }
+
+      // 2. If record only has `blob` (e.g., from an older session), verify the browser hasn't revoked the OS File handle
+      if (record.blob && record.blob.size > 0) {
+        try {
+          const probeSlice = record.blob.slice(0, Math.min(64, record.blob.size));
+          await probeSlice.arrayBuffer();
+          activeMemoryBlobCache.set(vstepKey, record.blob);
+          activeMemoryBlobCache.set(cleanKey, record.blob);
+          return record.blob;
+        } catch {
+          // OS File handle from an older session was revoked by the browser (NotReadableError)
+          continue;
+        }
+      }
+    }
+
+    return null;
   } catch {
     return null;
   }
@@ -169,97 +473,649 @@ export function base64ToBlob(base64: string, mimeType = 'audio/mpeg'): Blob {
 }
 
 /**
- * Splits an audio Blob into ~550KB base64 chunks and stores them in Cloud Firestore
- * `/test_audio_chunks/{chunkKey}_meta` and `/test_audio_chunks/{chunkKey}_c0..N`
- * so any device (Students or Admin) can stream/reconstruct the audio seamlessly.
+ * Fast helper to read a Firestore document with a strict timeout so background checks never hang
+ */
+async function getDocWithTimeout(docRef: ReturnType<typeof doc>, timeoutMs = 3500) {
+  const timeoutPromise = new Promise<null>((resolve) =>
+    setTimeout(() => resolve(null), timeoutMs)
+  );
+  return Promise.race([getDoc(docRef), timeoutPromise]);
+}
+
+/**
+ * Diagnostic test function for the "Kiểm tra kết nối Storage" button:
+ * Writes `vstep/exam_audio/_connection_test.txt` to bucket `harrytoeicbackup.firebasestorage.app`
+ * and retrieves its direct CDN link via `getDownloadURL`.
+ */
+export async function testFirebaseStorageConnection(): Promise<StorageConnectionTestResult> {
+  const storagePath = `${STORAGE_AUDIO_FOLDER}/_connection_test.txt`;
+  const testedAt = new Date().toLocaleString('vi-VN');
+
+  try {
+    const testRef = ref(storage, storagePath);
+    const payloadText = [
+      `VSTEP Firebase Cloud Storage Connection Verified`,
+      `APP_SITE_ID: ${APP_SITE_ID}`,
+      `STORAGE_BUCKET: ${FIREBASE_STORAGE_BUCKET}`,
+      `STORAGE_AUDIO_FOLDER: ${STORAGE_AUDIO_FOLDER}`,
+      `AUDIO_KEY_PREFIX: ${AUDIO_KEY_PREFIX}`,
+      `TestedAt: ${new Date().toISOString()}`,
+    ].join('\n');
+
+    const testBlob = new Blob([payloadText], { type: 'text/plain;charset=utf-8' });
+    const uploadTask = uploadBytesResumable(testRef, testBlob, {
+      contentType: 'text/plain;charset=utf-8',
+      customMetadata: {
+        site: APP_SITE_ID,
+        purpose: 'connection_test',
+      },
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        try {
+          uploadTask.cancel();
+        } catch {
+          // Ignore
+        }
+        reject(
+          new Error(
+            'Quá thời gian chờ (12 giây) khi ghi vào Firebase Storage. Vui lòng kiểm tra Storage Rules của bucket harrytoeicbackup.firebasestorage.app.'
+          )
+        );
+      }, 12000);
+
+      uploadTask.on(
+        'state_changed',
+        undefined,
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+        () => {
+          clearTimeout(timer);
+          resolve();
+        }
+      );
+    });
+
+    const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+    return {
+      ok: true,
+      bucket: FIREBASE_STORAGE_BUCKET,
+      storagePath,
+      downloadUrl,
+      testedAt,
+    };
+  } catch (err: unknown) {
+    const errorCode = (err as { code?: string })?.code || 'storage/error';
+    const rawMsg =
+      err instanceof Error ? err.message : String(err || 'Lỗi kết nối Firebase Storage');
+    return {
+      ok: false,
+      bucket: FIREBASE_STORAGE_BUCKET,
+      storagePath,
+      testedAt,
+      errorCode,
+      errorMessage: rawMsg,
+    };
+  }
+}
+
+/**
+ * Uploads binary MP3 Blob directly to Firebase Cloud Storage under isolated namespace:
+ * `vstep/exam_audio/vstep_{cleanKey}.mp3` using `uploadBytesResumable`, retrieves the CDN link
+ * via `getDownloadURL`, and saves `storageUrl` into Firestore `test_audio_chunks/vstep_{cleanKey}_meta`.
+ */
+export async function uploadAudioBlobToFirebaseStorage(
+  rawKey: string,
+  blob: Blob,
+  fileName = 'audio.mp3',
+  onPercent?: (percent: number) => void
+): Promise<string | null> {
+  const vstepKey = ensureVstepAudioKey(rawKey);
+  const legacyKey = cleanAudioStorageKey(rawKey);
+  const vstepFileKey = fileName ? ensureVstepFileFallbackKey(fileName) : '';
+  const storagePath = getVstepStoragePath(vstepKey);
+
+  try {
+    const audioRef = ref(storage, storagePath);
+    const mimeType = blob.type || 'audio/mpeg';
+
+    const uploadTask = uploadBytesResumable(audioRef, blob, {
+      contentType: mimeType,
+      customMetadata: {
+        site: APP_SITE_ID,
+        audioKey: vstepKey,
+        originalFileName: fileName,
+      },
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      let lastActivityTime = Date.now();
+      let hasProgressed = false;
+
+      // Watchdog so if Firebase Storage Rules block or stall at 0 bytes, we fail fast (10s) and let fallback run
+      const stallInterval = setInterval(() => {
+        const elapsed = Date.now() - lastActivityTime;
+        const timeoutLimit = hasProgressed ? 25000 : 10000;
+        if (elapsed > timeoutLimit) {
+          clearInterval(stallInterval);
+          try {
+            uploadTask.cancel();
+          } catch {
+            // Ignore
+          }
+          reject(new Error('Firebase Storage upload timed out or blocked by Storage Rules'));
+        }
+      }, 2000);
+
+      uploadTask.on(
+        'state_changed',
+        (snapshot) => {
+          lastActivityTime = Date.now();
+          if (snapshot.bytesTransferred > 0) {
+            hasProgressed = true;
+          }
+          if (snapshot.totalBytes > 0) {
+            const pct = Math.min(
+              99,
+              Math.max(5, Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100))
+            );
+            onPercent?.(pct);
+          }
+        },
+        (error) => {
+          clearInterval(stallInterval);
+          reject(error);
+        },
+        () => {
+          clearInterval(stallInterval);
+          resolve();
+        }
+      );
+    });
+
+    const storageUrl = await getDownloadURL(uploadTask.snapshot.ref);
+    if (!storageUrl) return null;
+
+    onPercent?.(100);
+    recordFirebaseStorageUrl([vstepKey, legacyKey, vstepFileKey], storageUrl);
+
+    // Save `storageUrl` into Firestore `test_audio_chunks/vstep_{cleanKey}_meta` so any Student device
+    // looking up `vstep_{cleanKey}` or `vstep_file_{fileName}` immediately gets the direct CDN link!
+    if (canWriteToFirestore()) {
+      const now = Date.now();
+      const vstepChunkKey = toFirestoreChunkKey(vstepKey);
+      const metaPayload = {
+        key: vstepChunkKey,
+        site: APP_SITE_ID,
+        bucket: FIREBASE_STORAGE_BUCKET,
+        storagePath,
+        storageUrl,
+        fileName,
+        mimeType,
+        byteSize: blob.size,
+        totalChunks: 0,
+        updatedAt: now,
+      };
+
+      const metaWrites: Promise<boolean>[] = [
+        safeSetDoc(doc(db, 'test_audio_chunks', `${vstepChunkKey}_meta`), metaPayload, undefined, 6000),
+      ];
+
+      const legacyChunkKey = toFirestoreChunkKey(legacyKey);
+      if (legacyChunkKey && legacyChunkKey !== vstepChunkKey) {
+        metaWrites.push(
+          safeSetDoc(
+            doc(db, 'test_audio_chunks', `${legacyChunkKey}_meta`),
+            { ...metaPayload, key: legacyChunkKey },
+            undefined,
+            6000
+          )
+        );
+      }
+
+      if (vstepFileKey) {
+        const fileChunkKey = toFirestoreChunkKey(vstepFileKey);
+        metaWrites.push(
+          safeSetDoc(
+            doc(db, 'test_audio_chunks', `${fileChunkKey}_meta`),
+            { ...metaPayload, key: fileChunkKey },
+            undefined,
+            6000
+          )
+        );
+      }
+
+      await Promise.allSettled(metaWrites);
+    }
+
+    return storageUrl;
+  } catch (err) {
+    console.warn('Firebase Storage direct upload notice (falling back to Server/Firestore chunks):', err);
+    return null;
+  }
+}
+
+/**
+ * Checks whether an audio file exists in Firebase Cloud Storage (`vstep/exam_audio/vstep_{cleanKey}.mp3`)
+ * or has a `storageUrl` recorded in Firestore `test_audio_chunks/vstep_{cleanKey}_meta`.
+ */
+export async function resolveFirebaseStorageCdnUrl(
+  rawKey: string,
+  fallbackFileName?: string
+): Promise<string | null> {
+  const cached = getCachedFirebaseStorageUrl(rawKey);
+  if (cached) return cached;
+
+  if (fallbackFileName) {
+    const cachedByFile = getCachedFirebaseStorageUrl(ensureVstepFileFallbackKey(fallbackFileName));
+    if (cachedByFile) return cachedByFile;
+  }
+
+  const vstepKey = ensureVstepAudioKey(rawKey);
+  const legacyKey = cleanAudioStorageKey(rawKey);
+  const vstepFileKey = fallbackFileName ? ensureVstepFileFallbackKey(fallbackFileName) : '';
+
+  // 1. Check Firestore `test_audio_chunks/vstep_{cleanKey}_meta` for saved `storageUrl`
+  try {
+    const candidateChunkKeys = Array.from(
+      new Set(
+        [
+          toFirestoreChunkKey(vstepKey),
+          legacyKey ? toFirestoreChunkKey(legacyKey) : '',
+          vstepFileKey ? toFirestoreChunkKey(vstepFileKey) : '',
+        ].filter(Boolean)
+      )
+    );
+
+    for (const cKey of candidateChunkKeys) {
+      const metaSnap = await getDocWithTimeout(doc(db, 'test_audio_chunks', `${cKey}_meta`), 3000);
+      if (metaSnap && metaSnap.exists()) {
+        const data = metaSnap.data() as { storageUrl?: string };
+        if (data?.storageUrl && data.storageUrl.startsWith('http')) {
+          recordFirebaseStorageUrl([vstepKey, legacyKey, vstepFileKey], data.storageUrl);
+          return data.storageUrl;
+        }
+      }
+    }
+  } catch {
+    // Ignore and try direct Storage lookup
+  }
+
+  // 2. Try direct `getDownloadURL` on `vstep/exam_audio/vstep_{cleanKey}.mp3` in Firebase Storage
+  const storageCandidatePaths = Array.from(
+    new Set(
+      [
+        getVstepStoragePath(vstepKey),
+        vstepFileKey ? getVstepStoragePath(vstepFileKey) : '',
+      ].filter(Boolean)
+    )
+  );
+
+  for (const sPath of storageCandidatePaths) {
+    try {
+      const fileRef = ref(storage, sPath);
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500));
+      const url = await Promise.race([getDownloadURL(fileRef), timeoutPromise]);
+      if (url && typeof url === 'string' && url.startsWith('http')) {
+        recordFirebaseStorageUrl([vstepKey, legacyKey, vstepFileKey], url);
+        return url;
+      }
+    } catch {
+      // Object does not exist at this path or Storage rules restricted
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Checks whether the MP3 file already exists on the Express server (`/api/audio/exists/:key`)
+ * Supports both `vstep_` prefixed keys and legacy keys.
+ */
+export async function checkAudioExistsOnServer(
+  rawKey: string,
+  expectedByteSize?: number,
+  fallbackFileName?: string
+): Promise<{ exists: boolean; streamUrl?: string }> {
+  try {
+    const cleanKey = cleanAudioStorageKey(rawKey);
+    const vstepKey = ensureVstepAudioKey(cleanKey);
+    if (!cleanKey && !fallbackFileName) return { exists: false };
+
+    const candidateKeys = Array.from(
+      new Set([
+        vstepKey,
+        cleanKey,
+        fallbackFileName ? ensureVstepFileFallbackKey(fallbackFileName) : '',
+        fallbackFileName ? getLegacyFileFallbackKey(fallbackFileName) : '',
+      ].filter(Boolean))
+    );
+
+    const query = fallbackFileName
+      ? `?fileName=${encodeURIComponent(fallbackFileName)}`
+      : '';
+
+    for (const lookupKey of candidateKeys) {
+      const resp = await fetch(`/api/audio/exists/${encodeURIComponent(lookupKey)}${query}`);
+      if (!resp.ok) continue;
+      const data = (await resp.json()) as {
+        exists?: boolean;
+        byteSize?: number;
+        streamUrl?: string;
+      };
+      if (!data?.exists) continue;
+      if (
+        expectedByteSize &&
+        expectedByteSize > 0 &&
+        data.byteSize &&
+        data.byteSize !== expectedByteSize
+      ) {
+        continue;
+      }
+      return {
+        exists: true,
+        streamUrl: data.streamUrl || `/api/audio/stream/${encodeURIComponent(lookupKey)}${query}`,
+      };
+    }
+    return { exists: false };
+  } catch {
+    return { exists: false };
+  }
+}
+
+/**
+ * Uploads an audio Blob to `/api/audio/upload-chunk` in 384KB JSON base64 chunks
+ * so every chunk passes cleanly through proxies and reports real-time 0% -> 100% progress.
+ */
+export async function uploadAudioBlobToServer(
+  rawKey: string,
+  blob: Blob,
+  fileName = 'audio.mp3',
+  onPercent?: (percent: number) => void
+): Promise<boolean> {
+  try {
+    const vstepKey = ensureVstepAudioKey(rawKey);
+    const fullBuffer = await blob.arrayBuffer();
+    if (!fullBuffer || fullBuffer.byteLength <= 0) {
+      return false;
+    }
+
+    const bytes = new Uint8Array(fullBuffer);
+    const CHUNK_BYTE_SIZE = 384 * 1024; // 384KB per chunk (~512KB JSON body)
+    const totalChunks = Math.max(1, Math.ceil(bytes.length / CHUNK_BYTE_SIZE));
+    const mimeType = blob.type || 'audio/mpeg';
+
+    for (let idx = 0; idx < totalChunks; idx++) {
+      const start = idx * CHUNK_BYTE_SIZE;
+      const end = Math.min(bytes.length, start + CHUNK_BYTE_SIZE);
+      const slice = bytes.subarray(start, end);
+      const chunkBase64 = uint8ArrayToBase64(slice);
+
+      let chunkOk = false;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const resp = await fetch('/api/audio/upload-chunk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              key: vstepKey,
+              fileName,
+              mimeType,
+              chunkIndex: idx,
+              totalChunks,
+              chunkBase64,
+            }),
+          });
+          if (resp.ok) {
+            chunkOk = true;
+            break;
+          }
+        } catch {
+          // Retry once
+        }
+      }
+
+      if (!chunkOk) {
+        return false;
+      }
+
+      const pct = Math.min(99, Math.max(5, Math.round(((idx + 1) / totalChunks) * 100)));
+      onPercent?.(pct);
+    }
+
+    onPercent?.(100);
+    return true;
+  } catch (err) {
+    console.warn('Error uploading audio chunks to server:', err);
+    return false;
+  }
+}
+
+/**
+ * Checks whether a Cloud/Storage/Server audio entry already exists and is complete
+ */
+export async function checkAudioExistsOnCloud(
+  rawKey: string,
+  expectedByteSize?: number,
+  fallbackFileName?: string
+): Promise<boolean> {
+  // 1. Check Firebase Cloud Storage CDN (`vstep/exam_audio/vstep_{cleanKey}.mp3`)
+  const storageUrl = await resolveFirebaseStorageCdnUrl(rawKey, fallbackFileName);
+  if (storageUrl) return true;
+
+  // 2. Check fast Express server storage (<10ms)
+  const serverRes = await checkAudioExistsOnServer(rawKey, expectedByteSize, fallbackFileName);
+  if (serverRes.exists) return true;
+
+  // 3. Fallback check in Firestore chunks (check both `vstep_` key and legacy key)
+  try {
+    const candidateChunkKeys = Array.from(
+      new Set([
+        toFirestoreChunkKey(ensureVstepAudioKey(rawKey)),
+        toFirestoreChunkKey(rawKey),
+      ])
+    );
+
+    for (const chunkKey of candidateChunkKeys) {
+      const metaRef = doc(db, 'test_audio_chunks', `${chunkKey}_meta`);
+      const metaSnap = await getDocWithTimeout(metaRef, 3500);
+      if (!metaSnap || !metaSnap.exists()) continue;
+
+      const meta = metaSnap.data() as {
+        totalChunks?: number;
+        byteSize?: number;
+        storageUrl?: string;
+      };
+      if (meta?.storageUrl && meta.storageUrl.startsWith('http')) {
+        return true;
+      }
+      const totalChunks = Number(meta?.totalChunks) || 0;
+      if (totalChunks <= 0) continue;
+
+      if (
+        expectedByteSize &&
+        expectedByteSize > 0 &&
+        meta.byteSize !== expectedByteSize
+      ) {
+        continue;
+      }
+
+      const lastChunkRef = doc(db, 'test_audio_chunks', `${chunkKey}_c${totalChunks - 1}`);
+      const lastChunkSnap = await getDocWithTimeout(lastChunkRef, 3500);
+      if (lastChunkSnap && lastChunkSnap.exists()) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Primary Upload Pipeline:
+ * 1. Uploads binary MP3 directly to Firebase Cloud Storage (`vstep/exam_audio/vstep_{cleanKey}.mp3`)
+ *    via `uploadBytesResumable`, retrieves CDN `storageUrl` via `getDownloadURL`, and saves `storageUrl`
+ *    into Firestore `test_audio_chunks/vstep_{cleanKey}_meta`.
+ * 2. Also mirrors to Express server `/api/audio/upload-chunk` and falls back to Firestore base64 chunks
+ *    if Firebase Storage Rules are not yet opened.
  */
 export async function saveAudioBlobToCloudChunks(
   rawKey: string,
   blob: Blob,
-  fileName = 'audio.mp3'
+  fileName = 'audio.mp3',
+  onProgress?: (uploaded: number, total: number) => void
 ): Promise<boolean> {
-  if (!canWriteToFirestore()) return false;
+  const vstepKey = ensureVstepAudioKey(rawKey);
+  onProgress?.(5, 100);
+
+  // 1. Primary: Upload binary Blob directly to Firebase Cloud Storage (`vstep/exam_audio/vstep_{cleanKey}.mp3`)
+  const storageUrl = await uploadAudioBlobToFirebaseStorage(vstepKey, blob, fileName, (pct) => {
+    onProgress?.(pct, 100);
+  });
+
+  if (storageUrl) {
+    // Also mirror in background to Express server for local preview redundancy (non-blocking)
+    uploadAudioBlobToServer(vstepKey, blob, fileName).catch(() => {});
+    return true;
+  }
+
+  // 2. Fallback A: High-speed 384KB chunked JSON upload to Express server
+  const uploadedToServer = await uploadAudioBlobToServer(vstepKey, blob, fileName, (pct) => {
+    onProgress?.(pct, 100);
+  });
+
+  // 3. Fallback B: If Firebase Storage Rules were not yet opened, split into Firestore chunks (`test_audio_chunks`)
+  if (!canWriteToFirestore()) {
+    return uploadedToServer;
+  }
+
   try {
-    const chunkKey = toFirestoreChunkKey(rawKey);
+    const chunkKey = toFirestoreChunkKey(vstepKey);
     const dataUrl = await blobToBase64DataUrl(blob);
     const rawBase64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-    if (!rawBase64) return false;
+    if (!rawBase64) return uploadedToServer;
 
     const chunks: string[] = [];
     for (let i = 0; i < rawBase64.length; i += CLOUD_CHUNK_CHAR_LIMIT) {
       chunks.push(rawBase64.slice(i, i + CLOUD_CHUNK_CHAR_LIMIT));
     }
 
-    // Cap at 35 chunks (~14MB MP3) to prevent excessive Firestore writes
-    if (chunks.length > 35) {
-      console.warn('Audio file exceeds 14MB cloud chunk limit; saved in local IndexedDB only.');
-      return false;
+    if (chunks.length > 110) {
+      return uploadedToServer;
     }
 
     const now = Date.now();
-    for (let i = 0; i < chunks.length; i++) {
-      const chunkDocRef = doc(db, 'test_audio_chunks', `${chunkKey}_c${i}`);
-      await safeSetDoc(chunkDocRef, {
-        key: chunkKey,
-        index: i,
-        data: chunks[i],
-        updatedAt: now,
-      });
+    const BATCH_SIZE = 2;
+    if (!uploadedToServer) {
+      onProgress?.(0, chunks.length);
+    }
+
+    for (let start = 0; start < chunks.length; start += BATCH_SIZE) {
+      const slice = chunks.slice(start, start + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        slice.map((chunkData, idx) => {
+          const chunkIndex = start + idx;
+          const chunkDocRef = doc(db, 'test_audio_chunks', `${chunkKey}_c${chunkIndex}`);
+          return safeSetDoc(
+            chunkDocRef,
+            {
+              key: chunkKey,
+              site: APP_SITE_ID,
+              index: chunkIndex,
+              data: chunkData,
+              updatedAt: now,
+            },
+            undefined,
+            6500
+          );
+        })
+      );
+
+      if (batchResults.some((ok) => !ok)) {
+        return uploadedToServer;
+      }
+
+      if (!uploadedToServer) {
+        onProgress?.(Math.min(chunks.length, start + slice.length), chunks.length);
+      }
     }
 
     const metaDocRef = doc(db, 'test_audio_chunks', `${chunkKey}_meta`);
-    await safeSetDoc(metaDocRef, {
-      key: chunkKey,
-      fileName,
-      mimeType: blob.type || 'audio/mpeg',
-      totalChunks: chunks.length,
-      updatedAt: now,
-    });
+    const metaSaved = await safeSetDoc(
+      metaDocRef,
+      {
+        key: chunkKey,
+        site: APP_SITE_ID,
+        fileName,
+        mimeType: blob.type || 'audio/mpeg',
+        byteSize: blob.size,
+        totalChunks: chunks.length,
+        updatedAt: now,
+      },
+      undefined,
+      6500
+    );
 
-    return true;
+    return metaSaved || uploadedToServer;
   } catch (err) {
     console.warn('Cloud audio chunk upload notice:', err);
-    return false;
+    return uploadedToServer;
   }
 }
 
 /**
  * Downloads and reassembles an audio Blob from Cloud Firestore `/test_audio_chunks/{chunkKey}_meta`
+ * Supports both `vstep_` prefixed keys and legacy unprefixed keys.
  */
 export async function loadAudioBlobFromCloudChunks(
   rawKey: string
 ): Promise<{ blob: Blob; fileName: string } | null> {
   try {
-    const chunkKey = toFirestoreChunkKey(rawKey);
-    const metaRef = doc(db, 'test_audio_chunks', `${chunkKey}_meta`);
-    const metaSnap = await getDoc(metaRef);
-    if (!metaSnap.exists()) return null;
+    const candidateChunkKeys = Array.from(
+      new Set([
+        toFirestoreChunkKey(ensureVstepAudioKey(rawKey)),
+        toFirestoreChunkKey(rawKey),
+      ])
+    );
 
-    const meta = metaSnap.data() as {
-      totalChunks?: number;
-      mimeType?: string;
-      fileName?: string;
-    };
-    const totalChunks = Number(meta?.totalChunks) || 0;
-    if (totalChunks <= 0 || totalChunks > 50) return null;
+    for (const chunkKey of candidateChunkKeys) {
+      const metaRef = doc(db, 'test_audio_chunks', `${chunkKey}_meta`);
+      const metaSnap = await getDocWithTimeout(metaRef, 5000);
+      if (!metaSnap || !metaSnap.exists()) continue;
 
-    const chunkPromises: Promise<string>[] = [];
-    for (let i = 0; i < totalChunks; i++) {
-      const cRef = doc(db, 'test_audio_chunks', `${chunkKey}_c${i}`);
-      chunkPromises.push(
-        getDoc(cRef).then((snap) => (snap.exists() ? String(snap.data()?.data || '') : ''))
-      );
+      const meta = metaSnap.data() as {
+        totalChunks?: number;
+        mimeType?: string;
+        fileName?: string;
+        storageUrl?: string;
+      };
+
+      const totalChunks = Number(meta?.totalChunks) || 0;
+      if (totalChunks <= 0 || totalChunks > 120) continue;
+
+      const chunkPromises: Promise<string>[] = [];
+      for (let i = 0; i < totalChunks; i++) {
+        const cRef = doc(db, 'test_audio_chunks', `${chunkKey}_c${i}`);
+        chunkPromises.push(
+          getDoc(cRef).then((snap) => (snap.exists() ? String(snap.data()?.data || '') : ''))
+        );
+      }
+
+      const parts = await Promise.all(chunkPromises);
+      if (parts.some((p) => !p)) continue;
+
+      const combinedBase64 = parts.join('');
+      const blob = base64ToBlob(combinedBase64, meta.mimeType || 'audio/mpeg');
+      return {
+        blob,
+        fileName: meta.fileName || `${chunkKey}.mp3`,
+      };
     }
-
-    const parts = await Promise.all(chunkPromises);
-    if (parts.some((p) => !p)) return null;
-
-    const combinedBase64 = parts.join('');
-    const blob = base64ToBlob(combinedBase64, meta.mimeType || 'audio/mpeg');
-    return {
-      blob,
-      fileName: meta.fileName || `${chunkKey}.mp3`,
-    };
+    return null;
   } catch (err) {
     console.warn('Cloud audio chunk load notice:', err);
     return null;
@@ -268,8 +1124,6 @@ export async function loadAudioBlobFromCloudChunks(
 
 /**
  * Persists a student's Speaking voice recording (compressed Opus/WebM) for cross-device & Admin playback.
- * - If the base64 DataURL is <= 220KB, returns the inline `data:audio/webm;base64,...` directly so it saves inside `speakingSubmission`.
- * - If larger, stores in IndexedDB + Cloud Firestore chunks (`test_audio_chunks`) and returns `idb-audio://spk_...`.
  */
 export async function persistSpeakingAudioBlob(
   blob: Blob,
@@ -286,12 +1140,12 @@ export async function persistSpeakingAudioBlob(
       };
     }
 
-    const spkKey = `spk_${Date.now()}_p${partNumber}`;
-    await saveAudioToIndexedDB(spkKey, blob, `speaking_part${partNumber}.webm`);
+    const spkKey = ensureVstepAudioKey(`spk_${Date.now()}_p${partNumber}`);
+    await saveAudioToIndexedDB(spkKey, blob, `vstep_speaking_part${partNumber}.webm`);
     const idbUri = `idb-audio://${spkKey}`;
     activeObjectUrlCache.set(idbUri, playableUrl);
     activeObjectUrlCache.set(spkKey, playableUrl);
-    saveAudioBlobToCloudChunks(spkKey, blob, `speaking_part${partNumber}.webm`).catch(() => {});
+    saveAudioBlobToCloudChunks(spkKey, blob, `vstep_speaking_part${partNumber}.webm`).catch(() => {});
     return {
       playableUrl,
       persistentDataUrl: idbUri,
@@ -305,27 +1159,357 @@ export async function persistSpeakingAudioBlob(
 }
 
 /**
- * Persists an uploaded audio File/Blob into IndexedDB AND syncs chunks to Cloud Firestore
- * so students on any computer/phone can stream the custom exam Listening MP3.
+ * Persists an uploaded audio File/Blob into IndexedDB immediately (0ms) AND starts background
+ * Firebase Cloud Storage upload (`vstep/exam_audio/vstep_{cleanKey}.mp3`) with live % progress.
  */
 export async function persistExamAudioFile(
   file: File,
   testId: string,
   partScope: 'full' | number = 'full'
-): Promise<{ persistentUrl: string; playableUrl: string; audioKey: string }> {
+): Promise<{
+  persistentUrl: string;
+  playableUrl: string;
+  audioKey: string;
+}> {
   const rawKey = `${testId}_${partScope === 'full' ? 'full' : `part${partScope}`}`;
-  const safeKey = cleanAudioStorageKey(rawKey);
-  const versionedIdbUri = await saveAudioToIndexedDB(safeKey, file, file.name);
-  const playableUrl = activeObjectUrlCache.get(versionedIdbUri) || URL.createObjectURL(file);
+  const vstepKey = ensureVstepAudioKey(rawKey);
+  const versionedIdbUri = await saveAudioToIndexedDB(vstepKey, file, file.name);
+  const detachedBlob = activeMemoryBlobCache.get(vstepKey) || file;
+  const playableUrl = activeObjectUrlCache.get(versionedIdbUri) || URL.createObjectURL(detachedBlob);
 
-  // Sync audio chunks to Cloud Firestore in background for multi-device playback
-  saveAudioBlobToCloudChunks(safeKey, file, file.name).catch(() => {});
+  // Trigger non-blocking background upload to Firebase Storage (`vstep/exam_audio/vstep_{cleanKey}.mp3`)
+  startBackgroundTestAudioCloudSync(
+    partScope === 'full' ? 'Audio Toàn Bài' : `Listening Part ${partScope}`,
+    [
+      {
+        label: partScope === 'full' ? 'Audio toàn bài' : `Part ${partScope}`,
+        fileName: file.name,
+        canonicalKey: vstepKey,
+        blob: detachedBlob,
+      },
+    ],
+    true
+  );
 
   return {
     persistentUrl: versionedIdbUri,
     playableUrl,
-    audioKey: safeKey,
+    audioKey: vstepKey,
   };
+}
+
+export interface ResolvedLocalSlotItem {
+  label: string;
+  fileName: string;
+  canonicalKey: string;
+  blob: Blob;
+}
+
+let lastRetryableSyncJob: {
+  testTitle: string;
+  items: ResolvedLocalSlotItem[];
+} | null = null;
+
+export function retryLastAudioCloudSync(): void {
+  if (lastRetryableSyncJob && lastRetryableSyncJob.items.length > 0) {
+    startBackgroundTestAudioCloudSync(
+      lastRetryableSyncJob.testTitle,
+      lastRetryableSyncJob.items,
+      true
+    );
+  }
+}
+
+async function resolveLocalBlobForSlot(
+  rawUrl: string | undefined,
+  fileName: string | undefined,
+  canonicalKey: string
+): Promise<{ blob: Blob; key: string } | null> {
+  const trimmed = (rawUrl || '').trim();
+  if (trimmed.startsWith('idb-audio://')) {
+    const cleanKey = cleanAudioStorageKey(trimmed);
+    const vstepKey = ensureVstepAudioKey(cleanKey);
+    const b = (await loadAudioBlobFromIndexedDB(vstepKey)) || (await loadAudioBlobFromIndexedDB(cleanKey));
+    if (b) return { blob: b, key: vstepKey };
+  }
+
+  if (canonicalKey) {
+    const vstepCanonical = ensureVstepAudioKey(canonicalKey);
+    const bByCanonical =
+      (await loadAudioBlobFromIndexedDB(vstepCanonical)) ||
+      (await loadAudioBlobFromIndexedDB(canonicalKey));
+    if (bByCanonical) return { blob: bByCanonical, key: vstepCanonical };
+  }
+
+  if (fileName) {
+    const vstepFileKey = ensureVstepFileFallbackKey(fileName);
+    const legacyFileKey = getLegacyFileFallbackKey(fileName);
+    const b =
+      (await loadAudioBlobFromIndexedDB(vstepFileKey)) ||
+      (await loadAudioBlobFromIndexedDB(legacyFileKey));
+    if (b) {
+      const cleanKey = trimmed.startsWith('idb-audio://')
+        ? ensureVstepAudioKey(trimmed)
+        : ensureVstepAudioKey(canonicalKey || vstepFileKey);
+      return { blob: b, key: cleanKey };
+    }
+  }
+
+  if (trimmed.startsWith('blob:')) {
+    try {
+      const resp = await fetch(trimmed);
+      if (resp.ok) {
+        const b = await resp.blob();
+        return { blob: b, key: ensureVstepAudioKey(canonicalKey) };
+      }
+    } catch {
+      // Stale blob URL
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Step 1 (Instant < 50ms): Normalizes local IndexedDB audio URLs (or already-resolved Firebase Storage CDN URLs)
+ * and collects local Blobs BEFORE `saveTestToFirestore` runs, so saving/publishing completes in ~1 second.
+ */
+export async function prepareLocalTestAudioBeforeSave(params: {
+  testId: string;
+  audioMode: 'single' | 'per_part';
+  audioUrl?: string;
+  audioFileName?: string;
+  partAudioUrls?: { part1?: string; part2?: string; part3?: string; part4?: string };
+  partAudioFileNames?: { part1?: string; part2?: string; part3?: string; part4?: string };
+}): Promise<{
+  audioUrl?: string;
+  partAudioUrls: { part1?: string; part2?: string; part3?: string; part4?: string };
+  localItemsToSync: ResolvedLocalSlotItem[];
+  unreadableSlotLabels: string[];
+}> {
+  const nextPartAudioUrls = { ...(params.partAudioUrls || {}) };
+  let nextSingleAudioUrl = params.audioUrl;
+  const localItemsToSync: ResolvedLocalSlotItem[] = [];
+  const unreadableSlotLabels: string[] = [];
+
+  // 1. Check single full-test audio if present
+  if ((params.audioUrl && params.audioUrl.trim()) || params.audioFileName) {
+    const raw = (params.audioUrl || '').trim();
+    const fName = params.audioFileName || 'full_audio.mp3';
+    const isRemoteHttp = raw.startsWith('http://') || raw.startsWith('https://');
+    const canonicalKey = raw.startsWith('idb-audio://')
+      ? ensureVstepAudioKey(raw)
+      : ensureVstepAudioKey(`${params.testId}_full`);
+
+    // If we already uploaded this key to Firebase Cloud Storage in this session, attach the CDN `storageUrl` directly!
+    const cachedStorageUrl = getCachedFirebaseStorageUrl(canonicalKey);
+    if (cachedStorageUrl) {
+      nextSingleAudioUrl = cachedStorageUrl;
+    }
+
+    if (!isRemoteHttp) {
+      const localFound = await resolveLocalBlobForSlot(raw, params.audioFileName, canonicalKey);
+      if (localFound) {
+        if (!cachedStorageUrl && !raw.startsWith('idb-audio://')) {
+          nextSingleAudioUrl = await saveAudioToIndexedDB(canonicalKey, localFound.blob, fName);
+        }
+        if (!cachedStorageUrl) {
+          localItemsToSync.push({
+            label: 'Audio toàn bài',
+            fileName: fName,
+            canonicalKey,
+            blob: localFound.blob,
+          });
+        }
+      } else if (!cachedStorageUrl) {
+        const existsRemotely = await checkAudioExistsOnCloud(canonicalKey, undefined, fName);
+        if (!existsRemotely && params.audioMode === 'single') {
+          unreadableSlotLabels.push(`Audio toàn bài (${fName})`);
+        }
+      }
+    }
+  }
+
+  // 2. Check per-part audio slots (Part 1, 2, 3, and 4 if present)
+  for (const pNum of [1, 2, 3, 4] as const) {
+    const partKey = `part${pNum}` as const;
+    const raw = (nextPartAudioUrls[partKey] || '').trim();
+    const fName = params.partAudioFileNames?.[partKey];
+    if (!raw && !fName) continue;
+
+    const isRemoteHttp = raw.startsWith('http://') || raw.startsWith('https://');
+    const canonicalKey = raw.startsWith('idb-audio://')
+      ? ensureVstepAudioKey(raw)
+      : ensureVstepAudioKey(`${params.testId}_part${pNum}`);
+    const displayFileName = fName || `Part_${pNum}.mp3`;
+
+    const cachedStorageUrl = getCachedFirebaseStorageUrl(canonicalKey);
+    if (cachedStorageUrl) {
+      nextPartAudioUrls[partKey] = cachedStorageUrl;
+    }
+
+    if (isRemoteHttp) continue;
+
+    const localFound = await resolveLocalBlobForSlot(raw, fName, canonicalKey);
+    if (localFound) {
+      if (!cachedStorageUrl && !raw.startsWith('idb-audio://')) {
+        nextPartAudioUrls[partKey] = await saveAudioToIndexedDB(
+          canonicalKey,
+          localFound.blob,
+          displayFileName
+        );
+      }
+      if (!cachedStorageUrl) {
+        localItemsToSync.push({
+          label: `Part ${pNum}`,
+          fileName: displayFileName,
+          canonicalKey,
+          blob: localFound.blob,
+        });
+      }
+    } else if (pNum <= 3 && !cachedStorageUrl) {
+      const existsRemotely = await checkAudioExistsOnCloud(canonicalKey, undefined, displayFileName);
+      if (!existsRemotely) {
+        unreadableSlotLabels.push(`Part ${pNum} (${displayFileName})`);
+      }
+    }
+  }
+
+  return {
+    audioUrl: nextSingleAudioUrl,
+    partAudioUrls: nextPartAudioUrls,
+    localItemsToSync,
+    unreadableSlotLabels,
+  };
+}
+
+/**
+ * Step 2 (Non-blocking Background Task): Uploads all MP3 files directly to Firebase Cloud Storage
+ * (`vstep/exam_audio/vstep_{cleanKey}.mp3`) with live 0% -> 100% progress.
+ */
+export function startBackgroundTestAudioCloudSync(
+  testTitle: string,
+  items: ResolvedLocalSlotItem[],
+  forceUpload = false
+): void {
+  if (!items || items.length === 0) return;
+
+  lastRetryableSyncJob = { testTitle, items };
+
+  void (async () => {
+    const totalFiles = items.length;
+    updateAudioCloudSyncState({
+      active: true,
+      status: 'syncing',
+      testTitle,
+      currentFileName: items[0].fileName,
+      percent: 5,
+      completedFiles: 0,
+      totalFiles,
+      message: `Đang tải ${totalFiles} file MP3 lên Firebase Storage (${STORAGE_AUDIO_FOLDER})...`,
+    });
+
+    let syncedFiles = 0;
+    let lastStorageUrl: string | undefined;
+
+    for (let idx = 0; idx < items.length; idx++) {
+      const item = items[idx];
+      const vstepKey = ensureVstepAudioKey(item.canonicalKey);
+      const basePercent = Math.round((idx / totalFiles) * 100);
+
+      updateAudioCloudSyncState({
+        active: true,
+        status: 'syncing',
+        testTitle,
+        currentFileName: item.fileName,
+        percent: Math.max(5, basePercent),
+        completedFiles: idx,
+        totalFiles,
+        message: `Đang tải ${item.label} (${item.fileName}) lên ${STORAGE_AUDIO_FOLDER}/${vstepKey}.mp3...`,
+      });
+
+      if (!forceUpload) {
+        const existingCdn = await resolveFirebaseStorageCdnUrl(vstepKey, item.fileName);
+        if (existingCdn) {
+          syncedFiles++;
+          lastStorageUrl = existingCdn;
+          const nextPct = Math.round(((idx + 1) / totalFiles) * 100);
+          updateAudioCloudSyncState({
+            active: true,
+            status: 'syncing',
+            testTitle,
+            currentFileName: item.fileName,
+            percent: nextPct,
+            completedFiles: idx + 1,
+            totalFiles,
+            storageUrl: existingCdn,
+            message: `Đã có sẵn trên Firebase Storage CDN: ${item.label} (${nextPct}%)`,
+          });
+          continue;
+        }
+      }
+
+      const ok = await saveAudioBlobToCloudChunks(
+        vstepKey,
+        item.blob,
+        item.fileName,
+        (uploaded, total) => {
+          const fileFraction = total > 0 ? uploaded / total : 0;
+          const overallPercent = Math.min(
+            99,
+            Math.max(5, Math.round(((idx + fileFraction) / totalFiles) * 100))
+          );
+          updateAudioCloudSyncState({
+            active: true,
+            status: 'syncing',
+            testTitle,
+            currentFileName: item.fileName,
+            percent: overallPercent,
+            completedFiles: idx,
+            totalFiles,
+            message: `Đang tải ${item.label} lên Firebase Storage: ${item.fileName} (${overallPercent}%)...`,
+          });
+        }
+      );
+
+      if (ok) {
+        syncedFiles++;
+        const resolvedUrl = getCachedFirebaseStorageUrl(vstepKey);
+        if (resolvedUrl) {
+          lastStorageUrl = resolvedUrl;
+        }
+      } else {
+        break;
+      }
+    }
+
+    if (syncedFiles === totalFiles) {
+      updateAudioCloudSyncState({
+        active: true,
+        status: 'completed',
+        testTitle,
+        currentFileName: items[items.length - 1].fileName,
+        percent: 100,
+        completedFiles: totalFiles,
+        totalFiles,
+        storageUrl: lastStorageUrl,
+        message: lastStorageUrl
+          ? `Đã đồng bộ ${totalFiles}/${totalFiles} MP3 lên Firebase Storage (${STORAGE_AUDIO_FOLDER}) (100%)!`
+          : `Hoàn tất đồng bộ ${totalFiles}/${totalFiles} file MP3 lên Cloud (100%)!`,
+      });
+    } else {
+      updateAudioCloudSyncState({
+        active: true,
+        status: 'error',
+        testTitle,
+        currentFileName: items[Math.min(syncedFiles, items.length - 1)].fileName,
+        percent: Math.round((syncedFiles / totalFiles) * 100),
+        completedFiles: syncedFiles,
+        totalFiles,
+        message: `Đã đồng bộ ${syncedFiles}/${totalFiles} file MP3. Hãy bấm "Đổi MP3" chọn lại file từ máy hoặc bấm "Thử lại".`,
+      });
+    }
+  })();
 }
 
 /**
@@ -335,7 +1519,6 @@ export function normalizeExternalAudioUrl(url: string): string {
   const trimmed = (url || '').trim();
   if (!trimmed) return '';
 
-  // Google Drive: https://drive.google.com/file/d/FILE_ID/view?usp=sharing
   const gdriveMatch =
     trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/) ||
     trimmed.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
@@ -343,7 +1526,6 @@ export function normalizeExternalAudioUrl(url: string): string {
     return `https://docs.google.com/uc?export=download&id=${gdriveMatch[1]}`;
   }
 
-  // Dropbox: ?dl=0 -> ?raw=1
   if (trimmed.includes('dropbox.com') && trimmed.includes('?dl=0')) {
     return trimmed.replace('?dl=0', '?raw=1');
   }
@@ -352,8 +1534,11 @@ export function normalizeExternalAudioUrl(url: string): string {
 }
 
 /**
- * Resolves any stored audio URL (`idb-audio://...`, `data:audio/...`, stale `blob:...`, or remote URL)
- * into a guaranteed playable browser URL, with automatic Cloud Firestore chunk recovery.
+ * Resolves any stored audio URL (`idb-audio://...`, Firebase Storage CDN `https://firebasestorage.googleapis.com/...`,
+ * `data:audio/...`, stale `blob:...`, or remote URL) into a guaranteed playable browser URL:
+ * 1. Local IndexedDB (0ms for Teacher's browser)
+ * 2. Direct Firebase Cloud Storage CDN URL (`vstep/exam_audio/vstep_{cleanKey}.mp3` or `storageUrl` in Firestore `_meta`)
+ * 3. Fallback to Express Server Stream (`/api/audio/stream/:key`) & Firestore base64 chunks (`test_audio_chunks`)
  */
 export async function resolvePlayableAudioUrl(
   rawUrl: string,
@@ -367,37 +1552,76 @@ export async function resolvePlayableAudioUrl(
     return activeObjectUrlCache.get(trimmed)!;
   }
 
-  // 2. Handle idb-audio:// key (with or without ?v=timestamp) -> local IndexedDB first, then Cloud Firestore chunks
+  // 2. If `rawUrl` is already a Firebase Storage CDN link or remote HTTP URL, check if we have a 0ms local blob first, otherwise return the CDN URL immediately
+  if (trimmed.startsWith('https://firebasestorage.googleapis.com/') || trimmed.startsWith('https://storage.googleapis.com/')) {
+    return trimmed;
+  }
+
+  // 3. Handle idb-audio:// key -> Local IndexedDB (0ms) -> Firebase Storage CDN (`storageUrl`) -> Server Stream -> Firestore Chunks
   if (trimmed.startsWith('idb-audio://')) {
     const cleanKey = cleanAudioStorageKey(trimmed);
+    const vstepKey = ensureVstepAudioKey(cleanKey);
+
+    if (activeObjectUrlCache.has(vstepKey)) {
+      const cachedUrl = activeObjectUrlCache.get(vstepKey)!;
+      activeObjectUrlCache.set(trimmed, cachedUrl);
+      return cachedUrl;
+    }
     if (activeObjectUrlCache.has(cleanKey)) {
       const cachedUrl = activeObjectUrlCache.get(cleanKey)!;
       activeObjectUrlCache.set(trimmed, cachedUrl);
       return cachedUrl;
     }
 
-    const localBlob = await loadAudioBlobFromIndexedDB(cleanKey);
+    // 3a. Local IndexedDB (0ms instant playback for the Teacher who uploaded it)
+    const localBlob =
+      (await loadAudioBlobFromIndexedDB(vstepKey)) ||
+      (await loadAudioBlobFromIndexedDB(cleanKey));
     if (localBlob) {
       const objUrl = URL.createObjectURL(localBlob);
       activeObjectUrlCache.set(trimmed, objUrl);
+      activeObjectUrlCache.set(vstepKey, objUrl);
       activeObjectUrlCache.set(cleanKey, objUrl);
+      activeObjectUrlCache.set(`idb-audio://${vstepKey}`, objUrl);
       activeObjectUrlCache.set(`idb-audio://${cleanKey}`, objUrl);
       return objUrl;
     }
 
-    // Not in local IndexedDB (e.g. Student/Admin opened on a different device) -> fetch from Cloud Firestore chunks
-    const cloudAudio = await loadAudioBlobFromCloudChunks(cleanKey);
+    // 3b. Direct Firebase Cloud Storage CDN URL (`vstep/exam_audio/vstep_{cleanKey}.mp3` or `test_audio_chunks/vstep_{cleanKey}_meta`)
+    // Students on any device play directly from Firebase Storage CDN without downloading/reassembling base64 chunks!
+    const storageCdnUrl = await resolveFirebaseStorageCdnUrl(vstepKey, fallbackFileName);
+    if (storageCdnUrl) {
+      activeObjectUrlCache.set(trimmed, storageCdnUrl);
+      activeObjectUrlCache.set(vstepKey, storageCdnUrl);
+      activeObjectUrlCache.set(cleanKey, storageCdnUrl);
+      activeObjectUrlCache.set(`idb-audio://${vstepKey}`, storageCdnUrl);
+      return storageCdnUrl;
+    }
+
+    // 3c. Check Fast Express Server Stream (/api/audio/stream/:key)
+    const serverCheck = await checkAudioExistsOnServer(vstepKey, undefined, fallbackFileName);
+    if (serverCheck.exists && serverCheck.streamUrl) {
+      activeObjectUrlCache.set(trimmed, serverCheck.streamUrl);
+      activeObjectUrlCache.set(vstepKey, serverCheck.streamUrl);
+      activeObjectUrlCache.set(cleanKey, serverCheck.streamUrl);
+      return serverCheck.streamUrl;
+    }
+
+    // 3d. Fallback to Cloud Firestore base64 chunks (if Storage Rules were not yet opened)
+    const cloudAudio =
+      (await loadAudioBlobFromCloudChunks(vstepKey)) ||
+      (await loadAudioBlobFromCloudChunks(cleanKey));
     if (cloudAudio?.blob) {
-      await saveAudioToIndexedDB(cleanKey, cloudAudio.blob, cloudAudio.fileName);
-      const objUrl = activeObjectUrlCache.get(cleanKey) || URL.createObjectURL(cloudAudio.blob);
+      await saveAudioToIndexedDB(vstepKey, cloudAudio.blob, cloudAudio.fileName);
+      const objUrl = activeObjectUrlCache.get(vstepKey) || URL.createObjectURL(cloudAudio.blob);
       activeObjectUrlCache.set(trimmed, objUrl);
+      activeObjectUrlCache.set(vstepKey, objUrl);
       activeObjectUrlCache.set(cleanKey, objUrl);
-      activeObjectUrlCache.set(`idb-audio://${cleanKey}`, objUrl);
       return objUrl;
     }
   }
 
-  // 3. Handle inline base64 data:audio/... URL -> convert to Blob ObjectURL so browser never stalls on huge strings
+  // 4. Handle inline base64 data:audio/... URL
   if (trimmed.startsWith('data:audio') || trimmed.startsWith('data:application/octet-stream')) {
     try {
       const mimeMatch = trimmed.match(/^data:([^;]+);base64,/);
@@ -411,7 +1635,7 @@ export async function resolvePlayableAudioUrl(
     }
   }
 
-  // 4. If it's a blob: URL, check if it's still alive in the current session via a quick fetch check
+  // 5. If it's a blob: URL, check if it's still alive in the current session
   if (trimmed.startsWith('blob:')) {
     try {
       const resp = await fetch(trimmed);
@@ -419,26 +1643,60 @@ export async function resolvePlayableAudioUrl(
         return trimmed;
       }
     } catch {
-      // Stale blob URL from a previous browser session! Try recovering by fallbackFileName in IndexedDB
+      // Stale blob URL from a previous browser session
     }
   }
 
-  // 5. Try recovering by fallbackFileName in IndexedDB or Cloud if rawUrl was a stale blob: or empty
+  // 6. Try recovering by fallbackFileName (`vstep_file_{fileName}` and legacy `file_{fileName}`)
   if (fallbackFileName) {
-    const safeFileKey = `file_${fallbackFileName.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
-    if (activeObjectUrlCache.has(safeFileKey)) {
-      return activeObjectUrlCache.get(safeFileKey)!;
+    const vstepFileKey = ensureVstepFileFallbackKey(fallbackFileName);
+    const legacyFileKey = getLegacyFileFallbackKey(fallbackFileName);
+
+    if (activeObjectUrlCache.has(vstepFileKey)) {
+      return activeObjectUrlCache.get(vstepFileKey)!;
     }
-    const recoveredBlob = await loadAudioBlobFromIndexedDB(safeFileKey);
+    if (activeObjectUrlCache.has(legacyFileKey)) {
+      return activeObjectUrlCache.get(legacyFileKey)!;
+    }
+
+    const recoveredBlob =
+      (await loadAudioBlobFromIndexedDB(vstepFileKey)) ||
+      (await loadAudioBlobFromIndexedDB(legacyFileKey));
     if (recoveredBlob) {
       const objUrl = URL.createObjectURL(recoveredBlob);
-      activeObjectUrlCache.set(safeFileKey, objUrl);
+      activeObjectUrlCache.set(vstepFileKey, objUrl);
+      activeObjectUrlCache.set(legacyFileKey, objUrl);
+      if (trimmed) activeObjectUrlCache.set(trimmed, objUrl);
+      return objUrl;
+    }
+
+    const storageByFile = await resolveFirebaseStorageCdnUrl(vstepFileKey, fallbackFileName);
+    if (storageByFile) {
+      activeObjectUrlCache.set(vstepFileKey, storageByFile);
+      if (trimmed) activeObjectUrlCache.set(trimmed, storageByFile);
+      return storageByFile;
+    }
+
+    const serverByFile = await checkAudioExistsOnServer(vstepFileKey, undefined, fallbackFileName);
+    if (serverByFile.exists && serverByFile.streamUrl) {
+      activeObjectUrlCache.set(vstepFileKey, serverByFile.streamUrl);
+      if (trimmed) activeObjectUrlCache.set(trimmed, serverByFile.streamUrl);
+      return serverByFile.streamUrl;
+    }
+
+    const cloudByFile =
+      (await loadAudioBlobFromCloudChunks(vstepFileKey)) ||
+      (await loadAudioBlobFromCloudChunks(legacyFileKey));
+    if (cloudByFile?.blob) {
+      await saveAudioToIndexedDB(vstepFileKey, cloudByFile.blob, cloudByFile.fileName);
+      const objUrl = activeObjectUrlCache.get(vstepFileKey) || URL.createObjectURL(cloudByFile.blob);
+      activeObjectUrlCache.set(vstepFileKey, objUrl);
       if (trimmed) activeObjectUrlCache.set(trimmed, objUrl);
       return objUrl;
     }
   }
 
-  // 6. Standard http/https URL (with Google Drive / Dropbox normalization)
+  // 7. Standard http/https URL (with Google Drive / Dropbox normalization)
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('/')) {
     return normalizeExternalAudioUrl(trimmed);
   }

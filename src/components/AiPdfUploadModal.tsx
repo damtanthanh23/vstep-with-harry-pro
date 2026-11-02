@@ -108,7 +108,7 @@ export const AiPdfUploadModal: React.FC<AiPdfUploadModalProps> = ({
       setLoadingStep('Đang hoàn tất đối chiếu bằng chứng & chuẩn hóa cấu trúc đề thi...');
       const data = await response.json();
 
-      const newTestId = `ai-test-${Date.now()}`;
+      const newTestId = `vstep-ai-test-${Date.now()}`;
       const normalized = normalizeImportedExamData({
         ...data,
         title: data.title || examTitle,

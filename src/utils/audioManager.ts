@@ -24,10 +24,13 @@ class AudioManager {
   private pendingAutoPlay: boolean = false;
   private isResolvingUrl: boolean = false;
   private audioLoadFailed: boolean = false;
+  private isExpectingRealFile: boolean = false;
+  private lastRequestedRawUrl: string = '';
+  private lastRequestedFileName: string | undefined = undefined;
   private unlockGestureHandler: (() => void) | null = null;
   private listeners: Set<() => void> = new Set();
 
-  // Fallback Script Narration Engine state (used ONLY when no MP3 is uploaded or MP3 URL is missing)
+  // Fallback Script Narration Engine state (used ONLY when a demo test has NO MP3 configured at all)
   private fallbackScriptText: string = '';
   private fallbackPartKey: string = '';
   private scriptSegments: ScriptUtteranceSegment[] = [];
@@ -71,8 +74,9 @@ class AudioManager {
         // Ignore empty src reset events
         if (!this.customAudioUrl) return;
         this.audioLoadFailed = true;
-        if (this.pendingAutoPlay && this.fallbackScriptText.trim().length > 0) {
-          this.pendingAutoPlay = false;
+        this.pendingAutoPlay = false;
+        // Only fall back to script narration if no real MP3 was expected
+        if (!this.isExpectingRealFile && this.fallbackScriptText.trim().length > 0) {
           this.startScriptNarration();
         }
         this.notifyListeners();
@@ -178,6 +182,9 @@ class AudioManager {
     this.clearGestureUnlock();
     this.audioLoadFailed = false;
     this.isResolvingUrl = false;
+    this.isExpectingRealFile = true;
+    this.lastRequestedRawUrl = '';
+    this.lastRequestedFileName = file.name;
 
     // Create direct Object URL immediately from the uploaded File so there is zero latency or stale cache
     const directObjUrl = URL.createObjectURL(file);
@@ -211,13 +218,18 @@ class AudioManager {
   public async setCustomAudioUrl(
     url: string,
     fileName?: string,
-    autoPlayWhenReady = false
+    autoPlayWhenReady = false,
+    forceReload = false
   ) {
     const cleanUrl = (url || '').trim();
     const compositeKey = `${cleanUrl}::${fileName || ''}`;
 
+    this.lastRequestedRawUrl = cleanUrl;
+    this.lastRequestedFileName = fileName;
+
     // Avoid resetting audio.src ONLY if the exact same versioned audio track is already loaded and healthy
     if (
+      !forceReload &&
       this.rawSourceKey === compositeKey &&
       this.customAudioUrl &&
       this.audio &&
@@ -235,6 +247,7 @@ class AudioManager {
     this.audioLoadFailed = false;
 
     if (!cleanUrl && !fileName) {
+      this.isExpectingRealFile = false;
       this.customAudioUrl = null;
       if (this.audio) {
         this.audio.pause();
@@ -247,6 +260,7 @@ class AudioManager {
       return;
     }
 
+    this.isExpectingRealFile = true;
     this.isResolvingUrl = true;
     this.pendingAutoPlay = autoPlayWhenReady;
     this.stopScriptNarration(true);
@@ -277,15 +291,25 @@ class AudioManager {
         this.safeTriggerHtmlAudioPlay();
       }
     } else {
+      // Real MP3 was expected for this test, but was not found on Cloud or local IndexedDB.
+      // Do NOT start the silent fake timer (`startScriptNarration`), and clearly mark audioLoadFailed!
       this.customAudioUrl = null;
       this.audioLoadFailed = true;
-      if (this.pendingAutoPlay && this.fallbackScriptText.trim().length > 0) {
-        this.pendingAutoPlay = false;
-        this.startScriptNarration();
-      }
+      this.pendingAutoPlay = false;
+      this.stopScriptNarration(true);
     }
 
     this.notifyListeners();
+  }
+
+  public async retryLoadAudio(autoPlay = true) {
+    if (!this.lastRequestedRawUrl && !this.lastRequestedFileName) return;
+    await this.setCustomAudioUrl(
+      this.lastRequestedRawUrl,
+      this.lastRequestedFileName,
+      autoPlay,
+      true
+    );
   }
 
   private safeTriggerHtmlAudioPlay() {
@@ -311,10 +335,10 @@ class AudioManager {
             // Interrupted while new track is loading: queue play for `canplay` / `loadeddata`
             this.pendingAutoPlay = true;
           } else {
-            // Only fall back to Script Narration if no custom audio is available or if media element truly errored
             if (this.audio?.error) {
               this.audioLoadFailed = true;
-              if (this.fallbackScriptText.trim().length > 0) {
+              this.pendingAutoPlay = false;
+              if (!this.isExpectingRealFile && this.fallbackScriptText.trim().length > 0) {
                 this.startScriptNarration();
               }
             } else {
@@ -333,25 +357,38 @@ class AudioManager {
       return;
     }
 
-    // 1. If we have an uploaded/configured HTML5 audio track, ALWAYS prioritize playing it!
-    if (this.audio && this.customAudioUrl) {
-      this.stopScriptNarration(false);
+    // 1. If the test expects a real MP3 file, NEVER fall back to silent fake timer narration
+    if (this.isExpectingRealFile) {
+      this.stopScriptNarration(true);
 
-      // If a previous attempt had marked audioLoadFailed, reset and reload once when user clicks Play
-      if (this.audioLoadFailed) {
-        this.audioLoadFailed = false;
-        this.pendingAutoPlay = true;
-        this.audio.src = this.customAudioUrl;
-        this.audio.load();
-        this.notifyListeners();
+      // If the MP3 failed to resolve earlier (e.g. Teacher just synced it to Cloud), retry loading from Cloud now
+      if (!this.customAudioUrl || this.audioLoadFailed) {
+        this.retryLoadAudio(true);
         return;
       }
 
+      if (this.audio) {
+        if (this.audio.readyState >= 2) {
+          this.pendingAutoPlay = false;
+          this.safeTriggerHtmlAudioPlay();
+        } else {
+          this.pendingAutoPlay = true;
+          if (this.audio.networkState === HTMLMediaElement.NETWORK_EMPTY) {
+            this.audio.load();
+          }
+        }
+        this.notifyListeners();
+      }
+      return;
+    }
+
+    // 2. If we have an uploaded/configured HTML5 audio track, play it
+    if (this.audio && this.customAudioUrl) {
+      this.stopScriptNarration(false);
       if (this.audio.readyState >= 2) {
         this.pendingAutoPlay = false;
         this.safeTriggerHtmlAudioPlay();
       } else {
-        // Wait for `loadeddata` / `canplay` event to call `safeTriggerHtmlAudioPlay()` cleanly
         this.pendingAutoPlay = true;
         if (this.audio.networkState === HTMLMediaElement.NETWORK_EMPTY) {
           this.audio.load();
@@ -361,8 +398,8 @@ class AudioManager {
       return;
     }
 
-    // 2. Otherwise (when no MP3 file is attached), play the British English Script Narration fallback
-    if (this.fallbackScriptText.trim().length > 0) {
+    // 3. Otherwise ( ONLY when a demo test has NO MP3 attached at all), play the British English Script Narration fallback
+    if (!this.isExpectingRealFile && this.fallbackScriptText.trim().length > 0) {
       this.startScriptNarration();
     }
   }
@@ -379,6 +416,7 @@ class AudioManager {
   }
 
   private startScriptNarration() {
+    if (this.isExpectingRealFile) return;
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
     if (this.scriptSegments.length === 0 && this.fallbackScriptText) {
       this.buildScriptSegments(this.fallbackScriptText);
@@ -522,7 +560,21 @@ class AudioManager {
     return !!(this.audio && !this.audio.paused && !this.audio.ended);
   }
 
+  public isLoadingAudio(): boolean {
+    return this.isResolvingUrl;
+  }
+
+  public hasMissingAudioError(): boolean {
+    return this.isExpectingRealFile && this.audioLoadFailed && !this.isResolvingUrl;
+  }
+
   public getCurrentTime(): number {
+    if (this.isExpectingRealFile) {
+      if (this.audio && this.customAudioUrl && !this.audioLoadFailed && !this.isResolvingUrl) {
+        return this.audio.currentTime || 0;
+      }
+      return 0;
+    }
     if (this.audio && this.customAudioUrl && !this.audioLoadFailed) {
       return this.audio.currentTime || 0;
     }
@@ -530,6 +582,19 @@ class AudioManager {
   }
 
   public getDuration(): number {
+    if (this.isExpectingRealFile) {
+      if (
+        this.audio &&
+        this.customAudioUrl &&
+        !this.audioLoadFailed &&
+        !this.isResolvingUrl &&
+        !isNaN(this.audio.duration) &&
+        this.audio.duration > 0
+      ) {
+        return this.audio.duration;
+      }
+      return 0;
+    }
     if (
       this.audio &&
       this.customAudioUrl &&
@@ -543,8 +608,21 @@ class AudioManager {
   }
 
   public seek(seconds: number) {
-    const maxDur = this.getDuration() || 9999;
+    const maxDur = this.getDuration() || 0;
+    if (maxDur <= 0) return;
     const clamped = Math.max(0, Math.min(maxDur, seconds));
+
+    if (this.isExpectingRealFile) {
+      if (this.audio && this.customAudioUrl && !this.audioLoadFailed) {
+        try {
+          this.audio.currentTime = clamped;
+        } catch {
+          // Ignore seek before metadata ready
+        }
+        this.notifyListeners();
+      }
+      return;
+    }
 
     if (this.audio && this.customAudioUrl && !this.audioLoadFailed) {
       try {
@@ -605,6 +683,9 @@ class AudioManager {
   }
 
   public hasAudioSource(): boolean {
+    if (this.isExpectingRealFile) {
+      return !!(this.customAudioUrl && !this.audioLoadFailed);
+    }
     return !!(
       (this.customAudioUrl && !this.audioLoadFailed) ||
       this.fallbackScriptText.trim().length > 0

@@ -1,6 +1,7 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -10,11 +11,18 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const AUDIO_UPLOAD_DIR = path.resolve(__dirname, 'public', 'uploads', 'audio');
+try {
+  fs.mkdirSync(AUDIO_UPLOAD_DIR, { recursive: true });
+} catch {
+  // Ignore
+}
+
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json({ limit: '60mb' }));
+app.use(express.urlencoded({ limit: '60mb', extended: true }));
 
 import { generateSmartDiagnosticReport } from './src/utils/aiDiagnosticFallback.ts';
 
@@ -1011,6 +1019,314 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
   }
 });
 
+// ============================================================================
+// HIGH-SPEED PERSISTENT SERVER AUDIO STORAGE & STREAMING API (/api/audio/*)
+// ============================================================================
+function sanitizeServerAudioKey(rawKey: string): string {
+  return (
+    (rawKey || '')
+      .trim()
+      .replace(/^idb-audio:\/\//, '')
+      .split('?')[0]
+      .replace(/[^a-zA-Z0-9_.-]/g, '_')
+      .slice(0, 120) || 'audio_default'
+  );
+}
+
+function resolveExistingServerAudioFile(
+  rawKey: string,
+  fallbackFileName?: string
+): { resolvedKey: string; audioPath: string; metaPath: string } | null {
+  const candidates: string[] = [];
+  const primaryKey = sanitizeServerAudioKey(rawKey);
+  if (primaryKey) candidates.push(primaryKey);
+
+  if (fallbackFileName) {
+    const aliasKey = sanitizeServerAudioKey(`file_${fallbackFileName}`);
+    if (aliasKey && !candidates.includes(aliasKey)) {
+      candidates.push(aliasKey);
+    }
+  }
+
+  for (const key of candidates) {
+    const audioPath = path.join(AUDIO_UPLOAD_DIR, `${key}.mp3`);
+    const metaPath = path.join(AUDIO_UPLOAD_DIR, `${key}.meta.json`);
+    if (fs.existsSync(audioPath)) {
+      try {
+        const stat = fs.statSync(audioPath);
+        if (stat.size > 0) {
+          return { resolvedKey: key, audioPath, metaPath };
+        }
+      } catch {
+        // Ignore
+      }
+    }
+  }
+  return null;
+}
+
+app.get('/api/audio/exists/:key', (req, res) => {
+  try {
+    const rawKey = String(req.params.key || '');
+    const fallbackFileName = req.query.fileName ? String(req.query.fileName) : undefined;
+    const found = resolveExistingServerAudioFile(rawKey, fallbackFileName);
+    if (!found) {
+      return res.json({ exists: false });
+    }
+    const stat = fs.statSync(found.audioPath);
+    let meta: Record<string, unknown> = {};
+    if (fs.existsSync(found.metaPath)) {
+      try {
+        meta = JSON.parse(fs.readFileSync(found.metaPath, 'utf-8'));
+      } catch {
+        // Ignore
+      }
+    }
+    return res.json({
+      exists: true,
+      key: found.resolvedKey,
+      byteSize: stat.size,
+      fileName: meta.fileName || fallbackFileName || `${found.resolvedKey}.mp3`,
+      mimeType: meta.mimeType || 'audio/mpeg',
+      streamUrl: `/api/audio/stream/${encodeURIComponent(found.resolvedKey)}?v=${stat.mtimeMs}`,
+    });
+  } catch {
+    return res.json({ exists: false });
+  }
+});
+
+app.get('/api/audio/stream/:key', (req, res) => {
+  try {
+    const rawKey = String(req.params.key || '');
+    const fallbackFileName = req.query.fileName ? String(req.query.fileName) : undefined;
+    const found = resolveExistingServerAudioFile(rawKey, fallbackFileName);
+    if (!found) {
+      return res.status(404).json({ error: 'Audio file not found on server' });
+    }
+    let mimeType = 'audio/mpeg';
+    if (fs.existsSync(found.metaPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(found.metaPath, 'utf-8'));
+        if (meta.mimeType) mimeType = String(meta.mimeType);
+      } catch {
+        // Ignore
+      }
+    }
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.sendFile(found.audioPath);
+  } catch (err) {
+    console.warn('Error streaming audio:', err);
+    return res.status(500).end();
+  }
+});
+
+/**
+ * Chunked JSON Audio Upload Endpoint (`POST /api/audio/upload-chunk`)
+ * Accepts 384KB base64 chunks via standard application/json so proxies never block or drop large MP3s.
+ */
+app.post('/api/audio/upload-chunk', async (req, res) => {
+  try {
+    const {
+      key,
+      fileName = 'audio.mp3',
+      mimeType = 'audio/mpeg',
+      chunkIndex,
+      totalChunks,
+      chunkBase64,
+    } = req.body || {};
+
+    const safeKey = sanitizeServerAudioKey(String(key || ''));
+    const idx = Number(chunkIndex);
+    const total = Number(totalChunks);
+
+    if (!safeKey || Number.isNaN(idx) || Number.isNaN(total) || total <= 0 || !chunkBase64) {
+      return res.status(400).json({ error: 'Invalid chunk parameters' });
+    }
+
+    const cleanB64 = String(chunkBase64).includes(',')
+      ? String(chunkBase64).split(',')[1]
+      : String(chunkBase64);
+    const chunkBuf = Buffer.from(cleanB64, 'base64');
+
+    const partPath = path.join(AUDIO_UPLOAD_DIR, `${safeKey}.mp3.part`);
+    const finalAudioPath = path.join(AUDIO_UPLOAD_DIR, `${safeKey}.mp3`);
+    const finalMetaPath = path.join(AUDIO_UPLOAD_DIR, `${safeKey}.meta.json`);
+
+    if (idx === 0) {
+      await fs.promises.writeFile(partPath, chunkBuf);
+    } else {
+      await fs.promises.appendFile(partPath, chunkBuf);
+    }
+
+    // If this is the final chunk, atomically promote .part to .mp3 and create fileName alias
+    if (idx >= total - 1) {
+      await fs.promises.rename(partPath, finalAudioPath);
+      const stat = await fs.promises.stat(finalAudioPath);
+      const metaPayload = {
+        key: safeKey,
+        fileName: String(fileName || `${safeKey}.mp3`),
+        mimeType: String(mimeType || 'audio/mpeg'),
+        byteSize: stat.size,
+        updatedAt: Date.now(),
+      };
+      await fs.promises.writeFile(finalMetaPath, JSON.stringify(metaPayload));
+
+      if (fileName) {
+        const aliasKey = sanitizeServerAudioKey(`file_${fileName}`);
+        if (aliasKey && aliasKey !== safeKey) {
+          const aliasAudioPath = path.join(AUDIO_UPLOAD_DIR, `${aliasKey}.mp3`);
+          const aliasMetaPath = path.join(AUDIO_UPLOAD_DIR, `${aliasKey}.meta.json`);
+          await fs.promises.copyFile(finalAudioPath, aliasAudioPath);
+          await fs.promises.writeFile(
+            aliasMetaPath,
+            JSON.stringify({ ...metaPayload, key: aliasKey })
+          );
+        }
+      }
+
+      return res.json({
+        ok: true,
+        completed: true,
+        key: safeKey,
+        byteSize: stat.size,
+        streamUrl: `/api/audio/stream/${encodeURIComponent(safeKey)}?v=${Date.now()}`,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      completed: false,
+      chunkIndex: idx,
+    });
+  } catch (err) {
+    console.error('Error in /api/audio/upload-chunk:', err);
+    return res.status(500).json({ error: 'Chunk upload failed on server' });
+  }
+});
+
+app.post(
+  '/api/audio/upload-binary/:key',
+  express.raw({ type: '*/*', limit: '60mb' }),
+  async (req, res) => {
+    try {
+      const safeKey = sanitizeServerAudioKey(String(req.params.key || ''));
+      const fileName = String(req.query.fileName || `${safeKey}.mp3`);
+      const mimeType = String(req.headers['x-audio-mime'] || req.headers['content-type'] || 'audio/mpeg');
+      const bodyBuffer = Buffer.isBuffer(req.body) ? req.body : null;
+
+      if (!bodyBuffer || bodyBuffer.length === 0) {
+        return res.status(400).json({ error: 'Empty audio buffer' });
+      }
+
+      const audioPath = path.join(AUDIO_UPLOAD_DIR, `${safeKey}.mp3`);
+      const metaPath = path.join(AUDIO_UPLOAD_DIR, `${safeKey}.meta.json`);
+      const metaPayload = {
+        key: safeKey,
+        fileName,
+        mimeType,
+        byteSize: bodyBuffer.length,
+        updatedAt: Date.now(),
+      };
+
+      await fs.promises.writeFile(audioPath, bodyBuffer);
+      await fs.promises.writeFile(metaPath, JSON.stringify(metaPayload));
+
+      if (fileName) {
+        const aliasKey = sanitizeServerAudioKey(`file_${fileName}`);
+        if (aliasKey && aliasKey !== safeKey) {
+          const aliasAudioPath = path.join(AUDIO_UPLOAD_DIR, `${aliasKey}.mp3`);
+          const aliasMetaPath = path.join(AUDIO_UPLOAD_DIR, `${aliasKey}.meta.json`);
+          await fs.promises.writeFile(aliasAudioPath, bodyBuffer);
+          await fs.promises.writeFile(
+            aliasMetaPath,
+            JSON.stringify({ ...metaPayload, key: aliasKey })
+          );
+        }
+      }
+
+      return res.json({
+        ok: true,
+        key: safeKey,
+        byteSize: bodyBuffer.length,
+        streamUrl: `/api/audio/stream/${encodeURIComponent(safeKey)}?v=${Date.now()}`,
+      });
+    } catch (err) {
+      console.error('Error saving binary audio on server:', err);
+      return res.status(500).json({ error: 'Failed to save audio on server' });
+    }
+  }
+);
+
+// ============================================================================
+// PERSISTENT SERVER-SIDE CUSTOM TESTS STORE (/api/tests)
+// Guarantees exams saved by Teacher are immediately visible to Students even if Firestore daily quota is exhausted
+// ============================================================================
+const SERVER_TESTS_FILE = path.resolve(__dirname, 'public', 'uploads', 'custom_tests.json');
+
+function readServerTestsMap(): Record<string, any> {
+  try {
+    if (!fs.existsSync(SERVER_TESTS_FILE)) return {};
+    const raw = fs.readFileSync(SERVER_TESTS_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function writeServerTestsMap(map: Record<string, any>): void {
+  try {
+    fs.mkdirSync(path.dirname(SERVER_TESTS_FILE), { recursive: true });
+    fs.writeFileSync(SERVER_TESTS_FILE, JSON.stringify(map));
+  } catch (err) {
+    console.warn('Error writing custom_tests.json on server:', err);
+  }
+}
+
+app.get('/api/tests', (_req, res) => {
+  const map = readServerTestsMap();
+  return res.json({ tests: Object.values(map) });
+});
+
+app.post('/api/tests', (req, res) => {
+  try {
+    const testPayload = req.body;
+    if (!testPayload || !testPayload.id) {
+      return res.status(400).json({ error: 'Missing test id' });
+    }
+    const map = readServerTestsMap();
+    map[String(testPayload.id)] = {
+      ...testPayload,
+      updatedAt: testPayload.updatedAt || Date.now(),
+    };
+    writeServerTestsMap(map);
+    return res.json({ ok: true, id: testPayload.id });
+  } catch (err) {
+    console.warn('Error saving test to /api/tests:', err);
+    return res.status(500).json({ error: 'Failed to save test on server' });
+  }
+});
+
+app.delete('/api/tests/:id', (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!id) return res.status(400).json({ error: 'Missing test id' });
+    const map = readServerTestsMap();
+    if (map[id]) {
+      delete map[id];
+      writeServerTestsMap(map);
+    }
+    return res.json({ ok: true });
+  } catch {
+    return res.status(500).json({ error: 'Failed to delete test on server' });
+  }
+});
+
 // Setup Vite middlewares for dev or static serving for prod
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
@@ -1033,4 +1349,6 @@ async function startServer() {
 }
 
 startServer();
+
+
 

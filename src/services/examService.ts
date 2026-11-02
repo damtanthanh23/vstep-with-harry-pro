@@ -188,7 +188,13 @@ export function getLocalCustomTestsBackup(): TestMetadata[] {
     const rawV1 = localStorage.getItem('langcert_custom_tests_backup_v1');
     if (rawV1) {
       const parsedV1 = JSON.parse(rawV1);
-      if (parsedV1 && typeof parsedV1 === 'object' && !Array.isArray(parsedV1)) {
+      if (Array.isArray(parsedV1)) {
+        parsedV1.forEach((item: any) => {
+          if (item && item.id) {
+            map[item.id] = item;
+          }
+        });
+      } else if (parsedV1 && typeof parsedV1 === 'object') {
         Object.assign(map, parsedV1);
       }
     }
@@ -251,28 +257,105 @@ export function getLocalCustomTestsBackup(): TestMetadata[] {
   }
 }
 
+function payloadToTestMetadata(data: CustomTestPayload): TestMetadata {
+  const hydratedQuestions = hydrateQuestionsFromStorage(data.questions || []);
+  return {
+    id: data.id,
+    title: data.title,
+    subtitle: data.subtitle || 'Đề thi VSTEP 4 Kỹ năng tùy chỉnh',
+    description: data.description || data.subtitle,
+    totalQuestions: data.totalQuestions || (hydratedQuestions.length || 75),
+    durationMinutes: data.durationMinutes || 172,
+    isAvailable: true,
+    isCustom: true,
+    status: data.status || (data.categoryTag === 'Đề Nháp' ? 'draft' : 'published'),
+    categoryTag: data.categoryTag || (data.status === 'draft' ? 'Đề Nháp' : 'Đề thi minh họa'),
+    createdAt: data.createdAt,
+    updatedAt: data.updatedAt || data.createdAt,
+    creatorId: data.creatorId,
+    creatorEmail: data.creatorEmail,
+    audioMode: data.audioMode || 'single',
+    audioUrl: data.audioUrl,
+    audioFileName: data.audioFileName,
+    partAudioUrls: data.partAudioUrls,
+    partAudioFileNames: data.partAudioFileNames,
+    questions: hydratedQuestions,
+    writingTasks: data.writingTasks || SAMPLE_B1_WRITING_TASKS,
+    speakingTasks: data.speakingTasks || SAMPLE_VSTEP_SPEAKING_TASKS,
+    vocabulary: data.vocabulary,
+  };
+}
+
 /**
- * Real-time listener for custom tests uploaded to Firestore (with local backup fallback)
+ * Real-time listener for custom tests uploaded to Server (/api/tests), Firestore, and local backup
  */
 export function subscribeToCustomTests(
   onUpdate: (tests: TestMetadata[]) => void,
   onError?: (err: Error) => void
 ) {
   const collectionRef = collection(db, 'tests');
+  const serverTestsMap = new Map<string, TestMetadata>();
+  const firestoreTestsMap = new Map<string, TestMetadata>();
 
-  return onSnapshot(
+  const emitCombined = () => {
+    const merged = new Map<string, TestMetadata>();
+    getLocalCustomTestsBackup().forEach((t) => merged.set(t.id, t));
+    firestoreTestsMap.forEach((t) => {
+      const existing = merged.get(t.id);
+      if (!existing || (t.updatedAt || t.createdAt || 0) >= (existing.updatedAt || existing.createdAt || 0)) {
+        merged.set(t.id, t);
+      }
+    });
+    serverTestsMap.forEach((t) => {
+      const existing = merged.get(t.id);
+      if (!existing || (t.updatedAt || t.createdAt || 0) >= (existing.updatedAt || existing.createdAt || 0)) {
+        merged.set(t.id, t);
+      }
+    });
+
+    const sorted = Array.from(merged.values()).sort(
+      (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
+    );
+    onUpdate(sorted);
+  };
+
+  // Fetch persistent server tests immediately
+  void (async () => {
+    try {
+      const resp = await fetch('/api/tests');
+      if (resp.ok) {
+        const json = (await resp.json()) as { tests?: CustomTestPayload[] };
+        if (Array.isArray(json?.tests)) {
+          json.tests.forEach((raw) => {
+            if (raw && raw.id) {
+              serverTestsMap.set(raw.id, payloadToTestMetadata(raw));
+            }
+          });
+          emitCombined();
+        }
+      }
+    } catch {
+      // Ignore server fetch error
+    }
+  })();
+
+  const unsubFirestore = onSnapshot(
     collectionRef,
     (snapshot) => {
-      const testsMap = new Map<string, TestMetadata>();
-
-      // 1. Load local backups first
-      getLocalCustomTestsBackup().forEach((t) => testsMap.set(t.id, t));
-
-      // 2. Override with authoritative Cloud Firestore snapshot
+      firestoreTestsMap.clear();
       const updatedBackupMap: Record<string, CustomTestPayload> = {};
       try {
         const raw = localStorage.getItem('langcert_custom_tests_backup_v1');
-        if (raw) Object.assign(updatedBackupMap, JSON.parse(raw));
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((item: any) => {
+              if (item && item.id) updatedBackupMap[item.id] = item;
+            });
+          } else if (parsed && typeof parsed === 'object') {
+            Object.assign(updatedBackupMap, parsed);
+          }
+        }
       } catch {
         // Ignore
       }
@@ -280,33 +363,8 @@ export function subscribeToCustomTests(
       snapshot.forEach((docSnap) => {
         const data = docSnap.data() as CustomTestPayload;
         if (!data || !data.id) return;
-        const hydratedQuestions = hydrateQuestionsFromStorage(data.questions || []);
-        const remoteMeta: TestMetadata = {
-          id: data.id,
-          title: data.title,
-          subtitle: data.subtitle || 'Đề thi VSTEP 4 Kỹ năng tùy chỉnh',
-          description: data.description || data.subtitle,
-          totalQuestions: data.totalQuestions || (hydratedQuestions.length || 75),
-          durationMinutes: data.durationMinutes || 172,
-          isAvailable: true,
-          isCustom: true,
-          status: data.status || (data.categoryTag === 'Đề Nháp' ? 'draft' : 'published'),
-          categoryTag: data.categoryTag || (data.status === 'draft' ? 'Đề Nháp' : 'Đề thi minh họa'),
-          createdAt: data.createdAt,
-          updatedAt: data.updatedAt || data.createdAt,
-          creatorId: data.creatorId,
-          creatorEmail: data.creatorEmail,
-          audioMode: data.audioMode || 'single',
-          audioUrl: data.audioUrl,
-          audioFileName: data.audioFileName,
-          partAudioUrls: data.partAudioUrls,
-          partAudioFileNames: data.partAudioFileNames,
-          questions: hydratedQuestions,
-          writingTasks: data.writingTasks || SAMPLE_B1_WRITING_TASKS,
-          speakingTasks: data.speakingTasks || SAMPLE_VSTEP_SPEAKING_TASKS,
-          vocabulary: data.vocabulary,
-        };
-        testsMap.set(data.id, remoteMeta);
+        const remoteMeta = payloadToTestMetadata(data);
+        firestoreTestsMap.set(data.id, remoteMeta);
         updatedBackupMap[data.id] = data;
       });
 
@@ -316,20 +374,18 @@ export function subscribeToCustomTests(
         // Ignore storage quota
       }
 
-      const combined = Array.from(testsMap.values()).sort(
-        (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
-      );
-      onUpdate(combined);
+      emitCombined();
     },
     (error) => {
-      console.warn('Firestore custom test subscription notice (using local backup):', error);
-      const localBackups = getLocalCustomTestsBackup().sort(
-        (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
-      );
-      onUpdate(localBackups);
+      console.warn('Firestore custom test subscription notice (using server + local backup):', error);
+      emitCombined();
       if (onError) onError(error);
     }
   );
+
+  return () => {
+    unsubFirestore();
+  };
 }
 
 /**
@@ -362,15 +418,27 @@ export async function deleteAnyTestFromSystem(testId: string): Promise<void> {
   try {
     const rawV1 = localStorage.getItem('langcert_custom_tests_backup_v1');
     if (rawV1) {
-      const mapV1: Record<string, CustomTestPayload> = JSON.parse(rawV1);
-      if (mapV1 && mapV1[testId]) {
+      const parsed = JSON.parse(rawV1);
+      const mapV1: Record<string, CustomTestPayload> = {};
+      if (Array.isArray(parsed)) {
+        parsed.forEach((item: any) => {
+          if (item && item.id && item.id !== testId) mapV1[item.id] = item;
+        });
+      } else if (parsed && typeof parsed === 'object') {
+        Object.assign(mapV1, parsed);
         delete mapV1[testId];
-        localStorage.setItem('langcert_custom_tests_backup_v1', JSON.stringify(mapV1));
       }
+      localStorage.setItem('langcert_custom_tests_backup_v1', JSON.stringify(mapV1));
     }
     localStorage.removeItem('langcert_custom_tests_backup');
   } catch {
     // Ignore local storage errors
+  }
+
+  try {
+    await fetch(`/api/tests/${encodeURIComponent(testId)}`, { method: 'DELETE' });
+  } catch {
+    // Ignore server delete error
   }
 
   if (!canWriteToFirestore()) return;
@@ -422,8 +490,8 @@ export function sanitizeForFirestore<T>(obj: T): T {
 }
 
 /**
- * Save a new or edited custom test to Firestore and local backup storage.
- * Returns { syncedToCloud: boolean } so UI can display true Cloud Firestore sync status.
+ * Save a new or edited custom test to Server (/api/tests), Firestore, and local backup storage.
+ * Returns { syncedToCloud: boolean } so UI can display true Server/Cloud sync status.
  */
 export async function saveTestToFirestore(
   payload: CustomTestPayload
@@ -438,7 +506,17 @@ export async function saveTestToFirestore(
   try {
     const backupKey = 'langcert_custom_tests_backup_v1';
     const raw = localStorage.getItem(backupKey);
-    const existingMap: Record<string, CustomTestPayload> = raw ? JSON.parse(raw) : {};
+    const existingMap: Record<string, CustomTestPayload> = {};
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        parsed.forEach((item: any) => {
+          if (item && item.id) existingMap[item.id] = item;
+        });
+      } else if (parsed && typeof parsed === 'object') {
+        Object.assign(existingMap, parsed);
+      }
+    }
     existingMap[payload.id] = compactedPayload;
     localStorage.setItem(backupKey, JSON.stringify(existingMap));
     localStorage.removeItem('langcert_custom_tests_backup');
@@ -446,8 +524,23 @@ export async function saveTestToFirestore(
     console.warn('Notice saving local custom test backup:', err);
   }
 
+  // 1. Save immediately to persistent Server endpoint (/api/tests)
+  let savedToServer = false;
+  try {
+    const resp = await fetch('/api/tests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(compactedPayload),
+    });
+    if (resp.ok) {
+      savedToServer = true;
+    }
+  } catch {
+    // Ignore if offline
+  }
+
   if (!canWriteToFirestore()) {
-    return { syncedToCloud: false };
+    return { syncedToCloud: savedToServer };
   }
 
   try {
@@ -465,10 +558,10 @@ export async function saveTestToFirestore(
         updatedAt: Date.now(),
       });
     }
-    return { syncedToCloud: synced };
+    return { syncedToCloud: synced || savedToServer };
   } catch (error) {
-    console.warn('Firestore test save notice (saved to local backup):', error);
-    return { syncedToCloud: false };
+    console.warn('Firestore test save notice (saved to server/local backup):', error);
+    return { syncedToCloud: savedToServer };
   }
 }
 

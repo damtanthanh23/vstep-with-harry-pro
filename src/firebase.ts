@@ -10,7 +10,13 @@ import {
   setLogLevel,
   disableNetwork,
 } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
+
+export const APP_SITE_ID = 'vstep';
+export const STORAGE_AUDIO_FOLDER = 'vstep/exam_audio';
+export const AUDIO_KEY_PREFIX = 'vstep_';
+export const FIREBASE_STORAGE_BUCKET = 'harrytoeicbackup.firebasestorage.app';
 
 // Silence internal @firebase/firestore SDK backoff/quota console spam so resilient local fallbacks run cleanly
 try {
@@ -19,24 +25,24 @@ try {
   // Ignore
 }
 
-const app = initializeApp(firebaseConfig);
+const app = initializeApp({
+  ...firebaseConfig,
+  storageBucket: firebaseConfig.storageBucket || FIREBASE_STORAGE_BUCKET,
+});
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const storage = getStorage(app, `gs://${FIREBASE_STORAGE_BUCKET}`);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 const QUOTA_TRIPPED_DATE_KEY = 'langcert_fs_quota_exhausted_utc_date_v2';
-let quotaTrippedInMemory = false;
 
-// Clear any legacy false-positive quota flag from previous sessionStorage key
+// Clear any legacy false-positive quota flags from sessionStorage
 try {
   sessionStorage.removeItem('langcert_fs_quota_exhausted_utc_date');
+  sessionStorage.removeItem(QUOTA_TRIPPED_DATE_KEY);
 } catch {
   // Ignore
-}
-
-function getTodayUtcDateString(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 export function isQuotaError(error: unknown): boolean {
@@ -51,29 +57,11 @@ export function isQuotaError(error: unknown): boolean {
 }
 
 export function canWriteToFirestore(): boolean {
-  if (quotaTrippedInMemory) return false;
-  try {
-    const trippedDate = sessionStorage.getItem(QUOTA_TRIPPED_DATE_KEY);
-    if (trippedDate === getTodayUtcDateString()) {
-      quotaTrippedInMemory = true;
-      return false;
-    }
-  } catch {
-    // Ignore storage access issues
-  }
   return true;
 }
 
-export function markFirestoreQuotaExhausted(error?: unknown): void {
-  if (error && !isQuotaError(error)) {
-    return;
-  }
-  quotaTrippedInMemory = true;
-  try {
-    sessionStorage.setItem(QUOTA_TRIPPED_DATE_KEY, getTodayUtcDateString());
-  } catch {
-    // Ignore
-  }
+export function markFirestoreQuotaExhausted(_error?: unknown): void {
+  // Do not lock the entire session on transient write rate limits
 }
 
 /**
@@ -83,7 +71,8 @@ export function markFirestoreQuotaExhausted(error?: unknown): void {
 export async function safeSetDoc<T>(
   reference: DocumentReference<T>,
   data: T,
-  options?: SetOptions
+  options?: SetOptions,
+  timeoutMs: number = 12000
 ): Promise<boolean> {
   if (!canWriteToFirestore()) return false;
 
@@ -93,7 +82,7 @@ export async function safeSetDoc<T>(
       : setDoc(reference, data);
 
     const timeoutPromise = new Promise<'timeout'>((resolve) =>
-      setTimeout(() => resolve('timeout'), 20000)
+      setTimeout(() => resolve('timeout'), timeoutMs)
     );
 
     const result = await Promise.race([
@@ -102,7 +91,7 @@ export async function safeSetDoc<T>(
     ]);
 
     if (result === 'timeout') {
-      console.warn('Firestore write took longer than 20s; continuing in background.');
+      console.warn(`Firestore write took longer than ${timeoutMs}ms; continuing in background.`);
       return false;
     }
     return true;

@@ -30,6 +30,7 @@ import { SubmitModal } from './components/SubmitModal';
 import { ResultsView } from './components/ResultsView';
 import { ImageZoomModal } from './components/ImageZoomModal';
 import { ExamBuilderView } from './components/ExamBuilderView';
+import { AudioCloudSyncBanner } from './components/AudioCloudSyncBanner';
 import { AdminPinModal } from './components/AdminPinModal';
 import { ExamHistoryModal } from './components/ExamHistoryModal';
 import { WritingSectionStage } from './components/WritingSectionStage';
@@ -1020,35 +1021,37 @@ export default function App() {
       const partKey = `part${currentGroup.partNumber}` as 'part1' | 'part2' | 'part3' | 'part4';
       const partUrl =
         activeTestMetadata.partAudioUrls?.[partKey] || activeTestMetadata.audioUrl || '';
+      const explicitPartFileName = activeTestMetadata.partAudioFileNames?.[partKey];
       const partName =
-        activeTestMetadata.partAudioFileNames?.[partKey] ||
-        `Listening Part ${currentGroup.partNumber}`;
+        explicitPartFileName || `Listening Part ${currentGroup.partNumber}`;
 
       setCustomAudioName(partName);
       setActiveAudioBadgeLabel(`Audio Part ${currentGroup.partNumber}`);
 
-      if (partUrl) {
-        examAudioManager.setCustomAudioUrl(partUrl, partName, shouldAutoPlayNow);
-      } else if (shouldAutoPlayNow) {
-        examAudioManager.autoPlayForListeningPart(partFallbackScript, partName);
+      if (partUrl || explicitPartFileName) {
+        examAudioManager.setCustomAudioUrl(
+          partUrl,
+          explicitPartFileName || partName,
+          shouldAutoPlayNow
+        );
+      } else {
+        examAudioManager.setCustomAudioUrl('', undefined, shouldAutoPlayNow);
       }
-    } else if (activeTestMetadata.audioUrl) {
+    } else if (activeTestMetadata.audioUrl || activeTestMetadata.audioFileName) {
       // 3. Single Full-Test Audio Track configured in ExamBuilder (Database / IndexedDB)
       const fullAudioName = activeTestMetadata.audioFileName || 'Audio toàn bài';
       setCustomAudioName(fullAudioName);
       setActiveAudioBadgeLabel('Audio toàn bài');
       examAudioManager.setCustomAudioUrl(
-        activeTestMetadata.audioUrl,
-        fullAudioName,
+        activeTestMetadata.audioUrl || '',
+        activeTestMetadata.audioFileName || fullAudioName,
         shouldAutoPlayNow
       );
     } else {
-      // 4. Fallback Script Narration when no MP3 file is attached
+      // 4. Fallback Script Narration when no MP3 file is attached at all
       setCustomAudioName(undefined);
       setActiveAudioBadgeLabel(`Audio Part ${activePartNum}`);
-      if (shouldAutoPlayNow) {
-        examAudioManager.autoPlayForListeningPart(partFallbackScript, partLabel);
-      }
+      examAudioManager.setCustomAudioUrl('', undefined, shouldAutoPlayNow);
     }
   }, [
     currentScreen,
@@ -2478,6 +2481,9 @@ export default function App() {
           onClose={() => setIsAdminFeedbackModalOpen(false)}
           reports={feedbackReports}
         />
+
+        {/* Floating Non-blocking Background Audio Cloud Sync Progress Bar */}
+        <AudioCloudSyncBanner />
       </>
     );
   }

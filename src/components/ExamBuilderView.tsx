@@ -33,7 +33,21 @@ import {
 } from 'lucide-react';
 import { Question, TestMetadata, StimulusCard, PartAudioMap, VocabItem, getPartRelativeNumber } from '../types/exam';
 import { playDictionaryAudio } from '../utils/dictionaryAudio';
-import { persistExamAudioFile, resolvePlayableAudioUrl } from '../utils/audioStorageService';
+import {
+  persistExamAudioFile,
+  resolvePlayableAudioUrl,
+  prepareLocalTestAudioBeforeSave,
+  startBackgroundTestAudioCloudSync,
+  notifyAudioCloudSyncBanner,
+  testFirebaseStorageConnection,
+  StorageConnectionTestResult,
+  subscribeToFirebaseStorageUrlReady,
+  ensureVstepAudioKey,
+  FIREBASE_STORAGE_BUCKET,
+  STORAGE_AUDIO_FOLDER,
+  APP_SITE_ID,
+} from '../utils/audioStorageService';
+import { AudioCloudSyncBanner } from './AudioCloudSyncBanner';
 import {
   DEFAULT_EXAM_CATEGORIES,
   getCustomExamTags,
@@ -243,8 +257,8 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
   const { currentUser } = useAuth();
   const isEditing = !!initialTest;
 
-  // Initialize with initialTest if editing, or 100% BLANK template when creating a new exam manually
-  const [testId] = useState(initialTest?.id || `custom-test-${Date.now()}`);
+  // Initialize with initialTest if editing, or 100% BLANK template when creating a new exam manually (strictly prefixed with vstep-test-)
+  const [testId] = useState(initialTest?.id || `vstep-test-${Date.now()}`);
   const [testTitle, setTestTitle] = useState(
     initialTest?.title || ''
   );
@@ -288,6 +302,46 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
   );
   const [resolvedSinglePlayableUrl, setResolvedSinglePlayableUrl] = useState<string>('');
   const [resolvedPartPlayableUrls, setResolvedPartPlayableUrls] = useState<PartAudioMap>({});
+  const [isTestingStorage, setIsTestingStorage] = useState<boolean>(false);
+  const [storageTestResult, setStorageTestResult] = useState<StorageConnectionTestResult | null>(
+    null
+  );
+
+  // Automatically replace idb-audio:// URLs with the direct Firebase Storage CDN URL (`storageUrl`)
+  // as soon as background upload to `vstep/exam_audio/vstep_{cleanKey}.mp3` completes
+  useEffect(() => {
+    const fullKey = ensureVstepAudioKey(`${testId}_full`);
+    const p1Key = ensureVstepAudioKey(`${testId}_part1`);
+    const p2Key = ensureVstepAudioKey(`${testId}_part2`);
+    const p3Key = ensureVstepAudioKey(`${testId}_part3`);
+    const p4Key = ensureVstepAudioKey(`${testId}_part4`);
+
+    const unsub = subscribeToFirebaseStorageUrlReady((readyKey, cdnUrl) => {
+      if (readyKey === fullKey) {
+        setAudioUrl(cdnUrl);
+      } else if (readyKey === p1Key) {
+        setPartAudioUrls((prev) => ({ ...prev, part1: cdnUrl }));
+      } else if (readyKey === p2Key) {
+        setPartAudioUrls((prev) => ({ ...prev, part2: cdnUrl }));
+      } else if (readyKey === p3Key) {
+        setPartAudioUrls((prev) => ({ ...prev, part3: cdnUrl }));
+      } else if (readyKey === p4Key) {
+        setPartAudioUrls((prev) => ({ ...prev, part4: cdnUrl }));
+      }
+    });
+    return () => unsub();
+  }, [testId]);
+
+  const handleTestStorageConnection = async () => {
+    setIsTestingStorage(true);
+    setStorageTestResult(null);
+    try {
+      const res = await testFirebaseStorageConnection();
+      setStorageTestResult(res);
+    } finally {
+      setIsTestingStorage(false);
+    }
+  };
 
   const [questions, setQuestions] = useState<Question[]>(() => {
     if (initialQuestions && initialQuestions.length > 0) {
@@ -841,8 +895,10 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
       const persisted = await persistExamAudioFile(file, testId, 'full');
       setAudioUrl(persisted.persistentUrl);
       setResolvedSinglePlayableUrl(persisted.playableUrl || immediateBlobUrl);
-      setQuickFillNotice(`Đã nạp và lưu bền vững file nghe "${file.name}"!`);
-      setTimeout(() => setQuickFillNotice(null), 3000);
+      setQuickFillNotice(
+        `Đã nạp file nghe "${file.name}" (Đang đồng bộ ngầm lên Cloud ở góc phải màn hình)!`
+      );
+      setTimeout(() => setQuickFillNotice(null), 3500);
     } catch (err) {
       console.warn('Fallback to object URL:', err);
       setAudioUrl(immediateBlobUrl);
@@ -872,8 +928,10 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
         ...prev,
         [key]: persisted.playableUrl || immediateBlobUrl,
       }));
-      setQuickFillNotice(`Đã nạp và lưu bền vững file nghe Part ${partNum}: "${file.name}"!`);
-      setTimeout(() => setQuickFillNotice(null), 3000);
+      setQuickFillNotice(
+        `Đã nạp MP3 Part ${partNum}: "${file.name}" (Đang đồng bộ ngầm lên Cloud ở góc phải)!`
+      );
+      setTimeout(() => setQuickFillNotice(null), 3500);
     } catch (err) {
       console.warn('Fallback to object URL:', err);
       setPartAudioUrls((prev) => ({ ...prev, [key]: immediateBlobUrl }));
@@ -1024,6 +1082,24 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
     const trimmedAudioFileName = audioFileName.trim();
     const nowTs = Date.now();
 
+    // 1. Instant local IndexedDB preparation (<50ms, zero network blocking)
+    const localPrep = await prepareLocalTestAudioBeforeSave({
+      testId,
+      audioMode,
+      audioUrl: trimmedAudioUrl,
+      audioFileName: trimmedAudioFileName,
+      partAudioUrls,
+      partAudioFileNames,
+    });
+
+    const finalAudioUrl = (localPrep.audioUrl ?? trimmedAudioUrl).trim();
+    const finalPartAudioUrls = localPrep.partAudioUrls || partAudioUrls;
+
+    if (finalAudioUrl !== trimmedAudioUrl) {
+      setAudioUrl(finalAudioUrl);
+    }
+    setPartAudioUrls(finalPartAudioUrls);
+
     const payload: TestMetadata & {
       isCustom: boolean;
       questions: Question[];
@@ -1051,32 +1127,15 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
       creatorId: initialTest?.creatorId || currentUser?.uid || 'anonymous-admin',
       creatorEmail: initialTest?.creatorEmail || currentUser?.email || 'admin@vstep.vn',
       audioMode,
-      ...(trimmedAudioUrl ? { audioUrl: trimmedAudioUrl } : {}),
+      ...(finalAudioUrl ? { audioUrl: finalAudioUrl } : {}),
       ...(trimmedAudioFileName ? { audioFileName: trimmedAudioFileName } : {}),
-      partAudioUrls,
+      partAudioUrls: finalPartAudioUrls,
       partAudioFileNames,
       questions,
       writingTasks,
       speakingTasks,
       ...(attachedVocabulary.length > 0 ? { vocabulary: attachedVocabulary } : {}),
     };
-
-    // Persist a compacted local backup under the unified key so tests work offline
-    try {
-      const compactedPayload = {
-        ...payload,
-        questions: compactQuestionsForStorage(questions),
-      };
-      const rawBackup = localStorage.getItem('langcert_custom_tests_backup_v1');
-      const existingList: TestMetadata[] = rawBackup ? JSON.parse(rawBackup) : [];
-      const mergedList = [
-        compactedPayload,
-        ...existingList.filter((item) => item.id !== payload.id),
-      ];
-      localStorage.setItem('langcert_custom_tests_backup_v1', JSON.stringify(mergedList));
-    } catch (storageErr) {
-      console.warn('Could not write local test backup:', storageErr);
-    }
 
     const timeStr = new Date().toLocaleTimeString('vi-VN', {
       hour: '2-digit',
@@ -1085,15 +1144,33 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
     });
 
     try {
+      // 2. Save exam metadata FIRST to Server (/api/tests) + Firestore (~0.2 - 1s)
       const { syncedToCloud } = await saveTestToFirestore(payload);
       setLastSavedAtText(syncedToCloud ? `Đã đồng bộ Cloud ${timeStr}` : `Sao lưu máy ${timeStr}`);
       if (onSaveProgress) {
         onSaveProgress(payload);
       }
 
+      // 3. Kick off non-blocking background MP3 Cloud sync with live % progress bar
+      if (localPrep.localItemsToSync.length > 0) {
+        startBackgroundTestAudioCloudSync(effectiveTitle, localPrep.localItemsToSync);
+      } else if (localPrep.unreadableSlotLabels.length > 0) {
+        notifyAudioCloudSyncBanner({
+          active: true,
+          status: 'error',
+          testTitle: effectiveTitle,
+          currentFileName: localPrep.unreadableSlotLabels.join(', '),
+          percent: 0,
+          completedFiles: 0,
+          totalFiles: localPrep.unreadableSlotLabels.length,
+          message: `Bấm "Chọn lại MP3" cho ${localPrep.unreadableSlotLabels.join(', ')} (file phiên cũ đã hết hạn đọc)`,
+        });
+        setIsMetaExpanded(true);
+      }
+
       if (!syncedToCloud && currentUser) {
         setSaveError(
-          'Cảnh báo: Đề thi mới chỉ lưu tạm trên trình duyệt này, chưa đồng bộ lên Cloud Firestore. Vui lòng kiểm tra kết nối mạng hoặc tài khoản Admin.'
+          'Cảnh báo: Đề thi mới chỉ lưu tạm trên trình duyệt này, chưa đồng bộ lên Cloud. Vui lòng kiểm tra kết nối mạng.'
         );
       }
 
@@ -1101,11 +1178,11 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
         setSaveSuccess(true);
         setTimeout(() => {
           onTestSaved(payload);
-        }, 700);
+        }, 350);
       } else {
         setInPlaceSavedMessage(
           syncedToCloud
-            ? `Đã đồng bộ Bản Nháp (${resolvedCategoryTag}) lên Cloud Firestore lúc ${timeStr}!`
+            ? `Đã lưu bộ đề (${resolvedCategoryTag}) lên Cloud lúc ${timeStr}!`
             : `Đã lưu tạm Bản Nháp trên trình duyệt này lúc ${timeStr} (Chưa đồng bộ Cloud).`
         );
         setTimeout(() => setInPlaceSavedMessage(null), 4000);
@@ -1573,10 +1650,13 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
           {/* Audio Configuration Section: 1 File vs 4 Separate Part Files */}
           <div className="mx-auto max-w-[1600px] rounded-2xl border-2 border-sky-200 bg-sky-50/50 p-4 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Headphones className="h-4 w-4 text-sky-600" />
                 <span className="text-xs font-black text-sky-950 uppercase tracking-wide">
-                  Cấu Hình File Nghe (Listening Audio Mode — Tự động phát & Lưu trữ bền vững)
+                  Cấu Hình File Nghe (Firebase Cloud Storage: {STORAGE_AUDIO_FOLDER}/)
+                </span>
+                <span className="rounded-lg bg-sky-100 border border-sky-300 px-2 py-0.5 text-[10px] font-black text-sky-900">
+                  Bucket: {FIREBASE_STORAGE_BUCKET} · Site: {APP_SITE_ID}
                 </span>
                 {isUploadingAudio && (
                   <span className="text-[11px] font-bold text-amber-700 animate-pulse">
@@ -1585,40 +1665,143 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                 )}
               </div>
 
-              {/* Segmented Option Toggle */}
-              <div className="inline-flex rounded-xl bg-white p-1 border border-sky-200 shadow-2xs">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Storage Connection Diagnostic Button */}
                 <button
                   type="button"
-                  onClick={() => setAudioMode('single')}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-black transition-all cursor-pointer ${
-                    audioMode === 'single'
-                      ? 'bg-sky-600 text-white shadow-2xs'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
+                  disabled={isTestingStorage}
+                  onClick={handleTestStorageConnection}
+                  className="inline-flex items-center gap-1.5 rounded-xl border-2 border-emerald-500 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 text-xs font-black text-emerald-900 shadow-2xs transition-all disabled:opacity-60 cursor-pointer"
+                  title={`Ghi thử file ${STORAGE_AUDIO_FOLDER}/_connection_test.txt lên bucket ${FIREBASE_STORAGE_BUCKET} và lấy link CDN`}
                 >
-                  1 File nghe cho toàn bài (Part 1–3)
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                  <span>
+                    {isTestingStorage
+                      ? 'Đang kiểm tra Storage...'
+                      : 'Kiểm tra kết nối Storage'}
+                  </span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setAudioMode('per_part')}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-black transition-all cursor-pointer ${
-                    audioMode === 'per_part'
-                      ? 'bg-sky-600 text-white shadow-2xs'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  Mỗi Part 1 file nghe riêng biệt (3 Files VSTEP)
-                </button>
+
+                {/* Segmented Option Toggle */}
+                <div className="inline-flex rounded-xl bg-white p-1 border border-sky-200 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setAudioMode('single')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-black transition-all cursor-pointer ${
+                      audioMode === 'single'
+                        ? 'bg-sky-600 text-white shadow-2xs'
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    1 File nghe cho toàn bài (Part 1–3)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAudioMode('per_part')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-black transition-all cursor-pointer ${
+                      audioMode === 'per_part'
+                        ? 'bg-sky-600 text-white shadow-2xs'
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    Mỗi Part 1 file nghe riêng biệt (3 Files VSTEP)
+                  </button>
+                </div>
               </div>
             </div>
+
+            {/* Storage Connection Diagnostic Result Banner */}
+            {storageTestResult && (
+              <div
+                className={`rounded-xl border-2 p-3 text-xs ${
+                  storageTestResult.ok
+                    ? 'border-emerald-400 bg-emerald-50 text-emerald-950'
+                    : 'border-amber-400 bg-amber-50 text-amber-950'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1 min-w-0">
+                    {storageTestResult.ok ? (
+                      <>
+                        <div className="font-black text-emerald-800 flex items-center gap-1.5">
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                          <span>
+                            Kết nối Firebase Cloud Storage thành công! ({storageTestResult.testedAt})
+                          </span>
+                        </div>
+                        <div className="text-[11px] font-medium text-emerald-900">
+                          Đã ghi thử file{' '}
+                          <code className="rounded bg-white px-1.5 py-0.5 font-mono font-bold border border-emerald-200">
+                            {storageTestResult.storagePath}
+                          </code>{' '}
+                          trên bucket{' '}
+                          <code className="rounded bg-white px-1.5 py-0.5 font-mono font-bold border border-emerald-200">
+                            {storageTestResult.bucket}
+                          </code>{' '}
+                          (Tách biệt hoàn toàn với TOEIC &amp; LanguageCert).
+                        </div>
+                        {storageTestResult.downloadUrl && (
+                          <div className="text-[11px] font-mono truncate text-emerald-700">
+                            CDN URL:{' '}
+                            <a
+                              href={storageTestResult.downloadUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="underline font-bold hover:text-emerald-900"
+                            >
+                              {storageTestResult.downloadUrl}
+                            </a>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <div className="font-black text-amber-900 flex items-center gap-1.5">
+                          <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                          <span>
+                            Chưa ghi được vào {storageTestResult.storagePath} ({storageTestResult.errorCode}) — Hệ thống đang tự động dùng chế độ Fallback (Server/Firestore Chunks)
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-amber-800">
+                          Chi tiết: {storageTestResult.errorMessage}
+                        </div>
+                        <div className="text-[11px] text-slate-700 bg-white rounded-lg p-2 border border-amber-200 font-mono leading-relaxed">
+                          Để mở quyền đọc/ghi riêng cho thư mục VSTEP trên Firebase Console &rarr; Storage &rarr; Rules (bucket{' '}
+                          <strong>{storageTestResult.bucket}</strong>), hãy thêm nhánh:
+                          <br />
+                          <code>
+                            match /vstep/exam_audio/&#123;allPaths=**&#125; &#123; allow read, write: if true; &#125;
+                          </code>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setStorageTestResult(null)}
+                    className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-100 shrink-0 cursor-pointer"
+                  >
+                    Đóng
+                  </button>
+                </div>
+              </div>
+            )}
 
             {audioMode === 'single' ? (
               <div className="flex flex-col gap-2.5 bg-white rounded-xl p-3 border border-sky-200">
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                   <div className="flex-1 min-w-0">
-                    <div className="text-[11px] font-bold text-sky-900 mb-1">
+                    <div
+                      className={`text-[11px] font-bold mb-1 ${
+                        audioFileName && !resolvedSinglePlayableUrl
+                          ? 'text-amber-700'
+                          : 'text-sky-900'
+                      }`}
+                    >
                       {audioFileName
-                        ? `✓ Đã nạp file nghe: ${audioFileName}`
+                        ? resolvedSinglePlayableUrl
+                          ? `✓ Đã nạp & đồng bộ file nghe: ${audioFileName}`
+                          : `⚠️ File "${audioFileName}" từ phiên cũ cần bấm "Chọn lại MP3" bên phải để tải lên Server`
                         : 'Đường dẫn MP3 hoặc tải file nghe cho toàn bộ 35 câu Listening (Part 1–3):'}
                     </div>
                     <input
@@ -1639,10 +1822,20 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 px-4 py-2.5 text-xs font-black text-white shadow-2xs cursor-pointer"
+                    className={`shrink-0 inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-black text-white shadow-2xs cursor-pointer ${
+                      audioFileName && !resolvedSinglePlayableUrl
+                        ? 'bg-amber-600 hover:bg-amber-700'
+                        : 'bg-sky-600 hover:bg-sky-700'
+                    }`}
                   >
                     <Upload className="h-4 w-4" />
-                    <span>{audioFileName ? 'Đổi File MP3 Khác' : 'Chọn File MP3 Chung'}</span>
+                    <span>
+                      {audioFileName
+                        ? resolvedSinglePlayableUrl
+                          ? 'Đổi File MP3 Khác'
+                          : 'Chọn lại MP3'
+                        : 'Chọn File MP3 Chung'}
+                    </span>
                   </button>
                 </div>
                 {resolvedSinglePlayableUrl && (
@@ -1666,6 +1859,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                   const pUrl = partAudioUrls[key] || '';
                   const pName = partAudioFileNames[key] || '';
                   const pPlayable = resolvedPartPlayableUrls[key] || '';
+                  const isExpiredLocalSlot = Boolean((pName || pUrl) && !pPlayable);
                   const partMeta: Record<number, { title: string; range: string; desc: string }> = {
                     1: {
                       title: 'Listening Part 1',
@@ -1687,7 +1881,11 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                   return (
                     <div
                       key={partNum}
-                      className="rounded-2xl bg-white border-2 border-sky-200 p-3.5 flex flex-col justify-between gap-2.5 shadow-2xs hover:border-sky-400 transition-all"
+                      className={`rounded-2xl bg-white border-2 p-3.5 flex flex-col justify-between gap-2.5 shadow-2xs transition-all ${
+                        isExpiredLocalSlot
+                          ? 'border-amber-400 hover:border-amber-500'
+                          : 'border-sky-200 hover:border-sky-400'
+                      }`}
                     >
                       <div>
                         <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -1705,9 +1903,18 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                       </div>
 
                       <div className="space-y-2 pt-1 border-t border-sky-100">
-                        {pName && (
+                        {pName && pPlayable && (
                           <div className="text-[11px] font-bold text-emerald-700 truncate bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                            ✓ {pName}
+                            ✓ Đã sẵn sàng: {pName}
+                          </div>
+                        )}
+                        {isExpiredLocalSlot && (
+                          <div
+                            className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-300 leading-snug"
+                            title="File MP3 từ phiên làm việc trước chưa được đẩy lên Server. Vui lòng bấm nút Chọn lại MP3 bên dưới để tải lên 100%."
+                          >
+                            ⚠️ {pName || `Part ${partNum}`} (Phiên cũ hết hạn đọc file — Hãy bấm{' '}
+                            <strong>Chọn lại MP3</strong> bên dưới)
                           </div>
                         )}
                         <div className="flex items-center gap-2">
@@ -1730,10 +1937,20 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                           <button
                             type="button"
                             onClick={() => partAudioInputRefs.current[partNum]?.click()}
-                            className="inline-flex items-center gap-1 rounded-xl bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-black text-white cursor-pointer shrink-0 shadow-2xs"
+                            className={`inline-flex items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-black text-white cursor-pointer shrink-0 shadow-2xs ${
+                              isExpiredLocalSlot
+                                ? 'bg-amber-600 hover:bg-amber-700'
+                                : 'bg-sky-600 hover:bg-sky-700'
+                            }`}
                           >
                             <Upload className="h-3.5 w-3.5" />
-                            <span>{pName ? 'Đổi MP3' : 'Up MP3'}</span>
+                            <span>
+                              {isExpiredLocalSlot
+                                ? 'Chọn lại MP3'
+                                : pName
+                                ? 'Đổi MP3'
+                                : 'Up MP3'}
+                            </span>
                           </button>
                         </div>
                         {pPlayable && (
@@ -3062,6 +3279,9 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
 
       {/* Image / Stimulus Zoom Modal for Preview */}
       <ImageZoomModal card={zoomCard} onClose={() => setZoomCard(null)} />
+
+      {/* Non-blocking Background Audio Cloud Sync Progress Bar */}
+      <AudioCloudSyncBanner />
     </div>
   );
 };

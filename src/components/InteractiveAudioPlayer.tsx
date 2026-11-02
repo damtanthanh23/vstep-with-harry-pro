@@ -9,6 +9,9 @@ import {
   Gauge,
   Headphones,
   Upload,
+  Loader2,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import { examAudioManager } from '../utils/audioManager';
 
@@ -26,6 +29,10 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
   isCompact = false,
 }) => {
   const [isPlaying, setIsPlaying] = useState(examAudioManager.isPlaying());
+  const [isLoadingAudio, setIsLoadingAudio] = useState(examAudioManager.isLoadingAudio());
+  const [hasMissingAudioError, setHasMissingAudioError] = useState(
+    examAudioManager.hasMissingAudioError()
+  );
   const [currentTime, setCurrentTime] = useState(examAudioManager.getCurrentTime());
   const [duration, setDuration] = useState(examAudioManager.getDuration());
   const [playbackRate, setPlaybackRate] = useState(examAudioManager.getPlaybackRate());
@@ -37,6 +44,8 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
   useEffect(() => {
     const unsubscribe = examAudioManager.subscribe(() => {
       setIsPlaying(examAudioManager.isPlaying());
+      setIsLoadingAudio(examAudioManager.isLoadingAudio());
+      setHasMissingAudioError(examAudioManager.hasMissingAudioError());
       setCurrentTime(examAudioManager.getCurrentTime());
       setDuration(examAudioManager.getDuration());
       setPlaybackRate(examAudioManager.getPlaybackRate());
@@ -68,6 +77,7 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isLoadingAudio || hasMissingAudioError) return;
     const val = parseFloat(e.target.value);
     setCurrentTime(val);
     examAudioManager.seek(val);
@@ -93,18 +103,39 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
 
   return (
     <div
-      className={`relative flex items-center gap-2 sm:gap-2.5 rounded-2xl bg-white/95 px-3 py-1.5 shadow-sm border-2 border-lime-500 text-slate-800 ${
-        isCompact ? 'text-xs' : 'text-sm'
-      }`}
+      className={`relative flex items-center gap-2 sm:gap-2.5 rounded-2xl bg-white/95 px-3 py-1.5 shadow-sm border-2 ${
+        hasMissingAudioError ? 'border-amber-500' : 'border-lime-500'
+      } text-slate-800 ${isCompact ? 'text-xs' : 'text-sm'}`}
     >
       {/* Play / Pause Button */}
       <button
         type="button"
         onClick={() => examAudioManager.togglePlay()}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-lime-500 hover:bg-lime-600 text-white shadow border-b-2 border-lime-700 active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer"
-        title={isPlaying ? 'Tạm dừng audio' : 'Phát audio'}
+        disabled={isLoadingAudio}
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white shadow border-b-2 active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer ${
+          isLoadingAudio
+            ? 'bg-sky-500 border-sky-700 opacity-85 cursor-wait'
+            : hasMissingAudioError
+            ? 'bg-amber-500 hover:bg-amber-600 border-amber-700'
+            : 'bg-lime-500 hover:bg-lime-600 border-lime-700'
+        }`}
+        title={
+          isLoadingAudio
+            ? 'Đang tải file MP3 từ Cloud...'
+            : hasMissingAudioError
+            ? 'Chưa tải được file MP3 (Bấm để thử tải lại từ Cloud)'
+            : isPlaying
+            ? 'Tạm dừng audio'
+            : 'Phát audio'
+        }
       >
-        {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
+        {isLoadingAudio ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : isPlaying ? (
+          <Pause className="h-4 w-4" />
+        ) : (
+          <Play className="h-4 w-4 ml-0.5" />
+        )}
       </button>
 
       {/* Audio Track Mode Badge (if per-part or named) */}
@@ -118,44 +149,74 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
         </span>
       )}
 
-      {/* Replay 5s */}
-      <button
-        type="button"
-        onClick={() => examAudioManager.seekRelative(-5)}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-lime-50 hover:text-lime-700 transition-colors cursor-pointer"
-        title="Lùi 5 giây"
-      >
-        <RotateCcw className="h-3.5 w-3.5" />
-      </button>
+      {/* Status Notice when Loading from Cloud or Missing on Cloud */}
+      {isLoadingAudio ? (
+        <div className="flex items-center gap-1.5 rounded-lg bg-sky-50 border border-sky-200 px-2.5 py-1 text-[11px] font-bold text-sky-700">
+          <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0 text-sky-600" />
+          <span className="truncate">Đang tải MP3 từ Cloud...</span>
+        </div>
+      ) : hasMissingAudioError ? (
+        <div
+          className="flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-300 px-2.5 py-1 text-[11px] font-bold text-amber-800"
+          title="File MP3 của phần này chưa được đồng bộ lên Cloud. Giáo viên cần mở bộ đề trong Trình soạn thảo và bấm Lưu Bản Nháp / Xuất Bản Chính Thức để đồng bộ MP3 lên Cloud cho học sinh."
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+          <span className="truncate max-w-[180px] sm:max-w-[250px]">
+            Chưa có MP3 trên Cloud (Cần GV bấm Lưu lại đề)
+          </span>
+          <button
+            type="button"
+            onClick={() => examAudioManager.retryLoadAudio(true)}
+            className="inline-flex items-center gap-1 rounded-md bg-amber-600 hover:bg-amber-700 px-1.5 py-0.5 text-[10px] font-black text-white transition-colors cursor-pointer shrink-0"
+            title="Thử tải lại file MP3 từ Cloud"
+          >
+            <RefreshCw className="h-2.5 w-2.5" />
+            <span>Tải lại</span>
+          </button>
+        </div>
+      ) : (
+        <>
+          {/* Replay 5s */}
+          <button
+            type="button"
+            onClick={() => examAudioManager.seekRelative(-5)}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-lime-50 hover:text-lime-700 transition-colors cursor-pointer"
+            title="Lùi 5 giây"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+          </button>
 
-      {/* Forward 5s */}
-      <button
-        type="button"
-        onClick={() => examAudioManager.seekRelative(5)}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-lime-50 hover:text-lime-700 transition-colors cursor-pointer"
-        title="Tiến 5 giây"
-      >
-        <RotateCw className="h-3.5 w-3.5" />
-      </button>
+          {/* Forward 5s */}
+          <button
+            type="button"
+            onClick={() => examAudioManager.seekRelative(5)}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-lime-50 hover:text-lime-700 transition-colors cursor-pointer"
+            title="Tiến 5 giây"
+          >
+            <RotateCw className="h-3.5 w-3.5" />
+          </button>
 
-      {/* Progress Bar & Time */}
-      <div className="flex flex-1 items-center gap-2 min-w-[110px] max-w-[240px]">
-        <span className="font-mono text-[11px] font-bold text-slate-500 shrink-0">
-          {formatTime(currentTime)}
-        </span>
-        <input
-          type="range"
-          min="0"
-          max={duration || 100}
-          value={currentTime}
-          onChange={handleSeek}
-          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-slate-200 accent-lime-500"
-          title="Tua thanh tiến trình"
-        />
-        <span className="font-mono text-[11px] font-bold text-slate-400 shrink-0">
-          {formatTime(duration)}
-        </span>
-      </div>
+          {/* Progress Bar & Time */}
+          <div className="flex flex-1 items-center gap-2 min-w-[110px] max-w-[240px]">
+            <span className="font-mono text-[11px] font-bold text-slate-500 shrink-0">
+              {formatTime(currentTime)}
+            </span>
+            <input
+              type="range"
+              min="0"
+              max={duration || 100}
+              value={currentTime}
+              onChange={handleSeek}
+              disabled={!duration}
+              className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-slate-200 accent-lime-500 disabled:opacity-50"
+              title="Tua thanh tiến trình"
+            />
+            <span className="font-mono text-[11px] font-bold text-slate-400 shrink-0">
+              {formatTime(duration)}
+            </span>
+          </div>
+        </>
+      )}
 
       {/* Speed Selector opening DOWNWARD so it is never clipped by the top viewport */}
       <div className="relative" ref={speedMenuRef}>
