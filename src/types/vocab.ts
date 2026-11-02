@@ -19,17 +19,22 @@ export interface UserVocabDeck {
   name: string;
   title?: string;
   description?: string;
-  icon: string;
+  icon?: string;
   folderId?: string;
   isCustom?: boolean;
+  visibility?: 'private' | 'public';
+  authorId?: string;
+  authorName?: string;
   categoryType?: VocabDeckCategoryType;
+  categoryTag?: string;
   officialTopicCode?: string;
   linkedTestId?: string;
   linkedTestTitle?: string;
   customTopicTag?: string;
   isPinned?: boolean;
-  itemCount: number;
-  items: ExtendedVocabItem[];
+  itemCount?: number;
+  items?: ExtendedVocabItem[];
+  words?: any[];
   createdAt: number;
   updatedAt: number;
 }
@@ -37,7 +42,8 @@ export interface UserVocabDeck {
 export interface UserVocabFolder {
   id: string;
   name: string;
-  deckIds: string[];
+  description?: string;
+  deckIds?: string[];
   createdAt: number;
 }
 

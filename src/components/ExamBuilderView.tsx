@@ -1297,7 +1297,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
           >
             <Music className="h-3.5 w-3.5 text-sky-600" />
-            <span>Cấu hình Tên, Nhãn & Audio ({audioMode === 'per_part' ? '4 File Part' : '1 File chung'})</span>
+            <span>Cấu hình Tên, Nhãn & Audio ({audioMode === 'per_part' ? '3 File Part' : '1 File chung'})</span>
             {isMetaExpanded ? (
               <ChevronUp className="h-3.5 w-3.5" />
             ) : (
@@ -1596,7 +1596,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                       : 'text-slate-600 hover:bg-slate-100'
                   }`}
                 >
-                  1 File nghe cho toàn bài (Part 1–4)
+                  1 File nghe cho toàn bài (Part 1–3)
                 </button>
                 <button
                   type="button"
@@ -1607,7 +1607,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                       : 'text-slate-600 hover:bg-slate-100'
                   }`}
                 >
-                  Mỗi Part 1 file nghe riêng biệt (4 Files)
+                  Mỗi Part 1 file nghe riêng biệt (3 Files VSTEP)
                 </button>
               </div>
             </div>
@@ -1619,7 +1619,7 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                     <div className="text-[11px] font-bold text-sky-900 mb-1">
                       {audioFileName
                         ? `✓ Đã nạp file nghe: ${audioFileName}`
-                        : 'Đường dẫn MP3 hoặc tải file nghe cho toàn bộ phần Listening:'}
+                        : 'Đường dẫn MP3 hoặc tải file nghe cho toàn bộ 35 câu Listening (Part 1–3):'}
                     </div>
                     <input
                       type="text"
@@ -1660,60 +1660,91 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {([1, 2, 3, 4] as const).map((partNum) => {
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                {([1, 2, 3] as const).map((partNum) => {
                   const key = `part${partNum}` as keyof PartAudioMap;
                   const pUrl = partAudioUrls[key] || '';
                   const pName = partAudioFileNames[key] || '';
                   const pPlayable = resolvedPartPlayableUrls[key] || '';
+                  const partMeta: Record<number, { title: string; range: string; desc: string }> = {
+                    1: {
+                      title: 'Listening Part 1',
+                      range: 'Câu 1 – 8',
+                      desc: '8 thông báo & hướng dẫn ngắn',
+                    },
+                    2: {
+                      title: 'Listening Part 2',
+                      range: 'Câu 9 – 20',
+                      desc: '3 đoạn hội thoại (mỗi đoạn 4 câu)',
+                    },
+                    3: {
+                      title: 'Listening Part 3',
+                      range: 'Câu 21 – 35',
+                      desc: '3 bài thuyết trình / bài giảng (mỗi bài 5 câu)',
+                    },
+                  };
+                  const meta = partMeta[partNum];
                   return (
                     <div
                       key={partNum}
-                      className="rounded-xl bg-white border border-sky-200 p-3 flex flex-col justify-between gap-2 shadow-2xs"
+                      className="rounded-2xl bg-white border-2 border-sky-200 p-3.5 flex flex-col justify-between gap-2.5 shadow-2xs hover:border-sky-400 transition-all"
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="inline-flex items-center gap-1 rounded-md bg-sky-100 px-2 py-0.5 text-[11px] font-black text-sky-900">
-                          <Music className="h-3 w-3 text-sky-600" />
-                          Listening Part {partNum}
-                        </span>
-                        <input
-                          ref={(el) => {
-                            partAudioInputRefs.current[partNum] = el;
-                          }}
-                          type="file"
-                          accept="audio/*"
-                          onChange={(e) => handlePartAudioUpload(partNum, e)}
-                          className="hidden"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => partAudioInputRefs.current[partNum]?.click()}
-                          className="inline-flex items-center gap-1 rounded-lg bg-sky-600 hover:bg-sky-700 px-2.5 py-1 text-[11px] font-bold text-white cursor-pointer"
-                        >
-                          <Upload className="h-3 w-3" />
-                          <span>{pName ? 'Đổi MP3' : 'Up MP3'}</span>
-                        </button>
-                      </div>
-                      {pName && (
-                        <div className="text-[11px] font-bold text-emerald-700 truncate">
-                          ✓ {pName}
+                      <div>
+                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                          <span className="inline-flex items-center gap-1 rounded-lg bg-sky-100 px-2.5 py-1 text-xs font-black text-sky-900">
+                            <Music className="h-3.5 w-3.5 text-sky-600" />
+                            <span>{meta.title}</span>
+                          </span>
+                          <span className="text-[11px] font-black text-sky-700 bg-sky-50 px-2 py-0.5 rounded-md border border-sky-200">
+                            {meta.range}
+                          </span>
                         </div>
-                      )}
-                      <input
-                        type="text"
-                        value={pUrl}
-                        onChange={(e) => handlePartAudioUrlChange(partNum, e.target.value)}
-                        placeholder={`Link MP3 cho Part ${partNum}...`}
-                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-mono text-slate-700 outline-hidden focus:border-sky-500 focus:bg-white"
-                      />
-                      {pPlayable && (
-                        <audio
-                          key={pPlayable}
-                          controls
-                          src={pPlayable}
-                          className="h-7 w-full mt-1"
-                        />
-                      )}
+                        <div className="text-[11px] text-slate-500 font-medium">
+                          {meta.desc}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 pt-1 border-t border-sky-100">
+                        {pName && (
+                          <div className="text-[11px] font-bold text-emerald-700 truncate bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                            ✓ {pName}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={pUrl}
+                            onChange={(e) => handlePartAudioUrlChange(partNum, e.target.value)}
+                            placeholder={`Link MP3 Part ${partNum}...`}
+                            className="flex-1 min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-mono text-slate-700 outline-hidden focus:border-sky-500 focus:bg-white"
+                          />
+                          <input
+                            ref={(el) => {
+                              partAudioInputRefs.current[partNum] = el;
+                            }}
+                            type="file"
+                            accept="audio/*"
+                            onChange={(e) => handlePartAudioUpload(partNum, e)}
+                            className="hidden"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => partAudioInputRefs.current[partNum]?.click()}
+                            className="inline-flex items-center gap-1 rounded-xl bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-black text-white cursor-pointer shrink-0 shadow-2xs"
+                          >
+                            <Upload className="h-3.5 w-3.5" />
+                            <span>{pName ? 'Đổi MP3' : 'Up MP3'}</span>
+                          </button>
+                        </div>
+                        {pPlayable && (
+                          <audio
+                            key={pPlayable}
+                            controls
+                            src={pPlayable}
+                            className="h-7 w-full mt-1"
+                          />
+                        )}
+                      </div>
                     </div>
                   );
                 })}

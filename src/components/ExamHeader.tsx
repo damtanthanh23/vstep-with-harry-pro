@@ -17,6 +17,8 @@ import {
   MessageSquareWarning,
   Sun,
   Moon,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { InteractiveAudioPlayer } from './InteractiveAudioPlayer';
 import { useAuth } from '../context/AuthContext';
@@ -70,6 +72,27 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
   const [isInstructionsModalOpen, setIsInstructionsModalOpen] = useState(false);
   const [isAudioPlayerDrawerOpen, setIsAudioPlayerDrawerOpen] = useState(false);
 
+  // Persistence: collapse/expand state for instruction ribbon
+  const [isInstructionCollapsed, setIsInstructionCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('exam_instruction_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleInstructionCollapse = () => {
+    setIsInstructionCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('exam_instruction_collapsed', String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
   const isTeacherOrAdmin = Boolean(canManageExams || isAdmin);
   const hasRealBackup = Boolean(lastSavedText && lastSavedText.trim().length > 0);
 
@@ -95,17 +118,39 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
       <div className="flex h-16 items-center justify-between px-3 sm:px-6 gap-2">
         {/* Left: Instructions dropdown & Audio player trigger */}
         <div className="flex items-center gap-2 sm:gap-2.5">
+          {/* Collapse/Expand Toggle Button: Shows "Hiện hướng dẫn" when collapsed */}
+          {isInstructionCollapsed ? (
+            <button
+              type="button"
+              onClick={handleToggleInstructionCollapse}
+              className="flex items-center gap-1.5 rounded-xl bg-white/25 hover:bg-white/35 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-black text-white shadow-2xs transition-all cursor-pointer whitespace-nowrap animate-in fade-in duration-200"
+              title="Mở lại thanh hướng dẫn làm bài"
+            >
+              <Eye className="h-4 w-4 text-lime-200 shrink-0" />
+              <span>Hiện hướng dẫn</span>
+              <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleToggleInstructionCollapse}
+              className="hidden sm:flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-black transition-all cursor-pointer whitespace-nowrap"
+              title="Thu gọn thanh hướng dẫn để giải phóng diện tích làm bài"
+            >
+              <EyeOff className="h-4 w-4 shrink-0" />
+              <span>Ẩn hướng dẫn</span>
+              <ChevronUp className="h-3.5 w-3.5 shrink-0" />
+            </button>
+          )}
+
+          {/* Quy chế thi modal popup */}
           <button
             type="button"
-            onClick={() => setIsInstructionsModalOpen(!isInstructionsModalOpen)}
-            className="flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 px-3 py-1.5 text-xs sm:text-sm font-black transition-colors cursor-pointer whitespace-nowrap"
+            onClick={() => setIsInstructionsModalOpen(true)}
+            className="flex items-center justify-center rounded-xl bg-white/20 hover:bg-white/30 p-2 text-white transition-colors cursor-pointer shrink-0"
+            title="Xem quy chế & hướng dẫn chi tiết từng kỹ năng thi VSTEP"
           >
-            <span>Hướng dẫn</span>
-            {isInstructionsModalOpen ? (
-              <ChevronUp className="h-4 w-4" />
-            ) : (
-              <ChevronDown className="h-4 w-4" />
-            )}
+            <HelpCircle className="h-4 w-4" />
           </button>
 
           {/* Inline Audio Player Bar on Desktop / Laptop (Hidden in Reading & Writing) */}
@@ -334,22 +379,43 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
         </div>
       )}
 
-      {/* Sub-header Ribbon with Instructions */}
-      <div className="bg-[#46a302] px-4 sm:px-6 py-2 text-xs sm:text-sm font-bold text-white flex items-center justify-between">
-        <p className="max-w-6xl leading-snug">
-          {instructionText}
-          {subInstruction && (
-            <span className="block font-semibold mt-0.5 text-lime-100">
-              {subInstruction}
-            </span>
-          )}
-        </p>
+      {/* Sub-header Ribbon with Instructions (Thu gọn / Mở rộng mượt mà & ghi nhớ localStorage) */}
+      <div
+        className={`transition-all duration-300 ease-in-out overflow-hidden ${
+          isInstructionCollapsed
+            ? 'max-h-0 opacity-0'
+            : 'max-h-48 opacity-100'
+        }`}
+      >
+        <div className="bg-[#46a302] px-4 sm:px-6 py-2 text-xs sm:text-sm font-bold text-white flex items-center justify-between gap-3 shadow-inner">
+          <p className="max-w-5xl leading-snug">
+            {instructionText}
+            {subInstruction && (
+              <span className="block font-semibold mt-0.5 text-lime-100">
+                {subInstruction}
+              </span>
+            )}
+          </p>
 
-        {mode === 'practice' && (
-          <span className="hidden sm:inline text-[11px] font-black uppercase tracking-wider bg-white/20 px-2.5 py-0.5 rounded-lg shrink-0 ml-4">
-            Chế độ luyện tập: Có Script, Dịch song ngữ & Lưu làm tiếp
-          </span>
-        )}
+          <div className="flex items-center gap-2 shrink-0">
+            {mode === 'practice' && (
+              <span className="hidden lg:inline text-[11px] font-black uppercase tracking-wider bg-white/20 px-2.5 py-0.5 rounded-lg whitespace-nowrap">
+                Luyện tập: Có Script, Dịch song ngữ &amp; Lưu làm tiếp
+              </span>
+            )}
+
+            {/* Nút Thu gọn ở góc phải của thanh hướng dẫn */}
+            <button
+              type="button"
+              onClick={handleToggleInstructionCollapse}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-black/15 hover:bg-black/30 px-2.5 sm:px-3 py-1 text-xs font-black text-white hover:text-lime-200 transition-all cursor-pointer whitespace-nowrap shadow-2xs"
+              title="Thu gọn thanh hướng dẫn để giải phóng không gian màn hình"
+            >
+              <ChevronUp className="h-3.5 w-3.5" />
+              <span>Thu gọn</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Instructions Modal Dropdown */}

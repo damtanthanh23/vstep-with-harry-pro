@@ -65,7 +65,11 @@ interface ResultsViewProps {
   writingSubmission?: WritingSubmission;
   writingTasks?: WritingTask[];
   writingScores?: { task1Score: number; task2Score: number };
-  onWritingGraded?: (scores: { task1Score: number; task2Score: number }) => void;
+  initialWritingEvaluation?: DetailedWritingEvaluation;
+  onWritingGraded?: (
+    scores: { task1Score: number; task2Score: number },
+    fullEvaluation?: DetailedWritingEvaluation
+  ) => void;
   speakingSubmission?: SpeakingSubmission;
   speakingTasks?: SpeakingTask[];
   speakingScores?: {
@@ -80,12 +84,14 @@ interface ResultsViewProps {
     part3Score: number;
     overallBand10: number;
   }) => void;
+  initialAiDiagnostic?: AIDiagnosticData | null;
+  onAiDiagnosticGenerated?: (report: AIDiagnosticData) => void;
   onRetake: () => void;
   onBackToTests: () => void;
   onOpenFeedback?: () => void;
 }
 
-interface AIDiagnosticData {
+export interface AIDiagnosticData {
   strengths: string[];
   weaknesses: string[];
   writingFeedback?: {
@@ -134,10 +140,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   writingSubmission,
   writingTasks = SAMPLE_B1_WRITING_TASKS,
   writingScores,
+  initialWritingEvaluation,
   onWritingGraded,
   speakingSubmission,
   speakingTasks = SAMPLE_VSTEP_SPEAKING_TASKS,
   speakingScores,
+  initialAiDiagnostic,
+  onAiDiagnosticGenerated,
   onRetake,
   onBackToTests,
   onOpenFeedback,
@@ -166,7 +175,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
   // Strict Writing Evaluation State (Deterministic fallback + Live AI Examiner upgrade)
   const [writingEvaluation, setWritingEvaluation] = useState<DetailedWritingEvaluation>(() =>
-    evaluateWritingStrictRubric(writingSubmission, writingTasks)
+    initialWritingEvaluation || evaluateWritingStrictRubric(writingSubmission, writingTasks)
   );
   const [isGradingWritingAi, setIsGradingWritingAi] = useState(false);
 
@@ -177,9 +186,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
   // Keep deterministic rubric in sync if writingSubmission or speakingSubmission changes
   useEffect(() => {
+    if (initialWritingEvaluation) {
+      setWritingEvaluation(initialWritingEvaluation);
+      return;
+    }
     const baseEval = evaluateWritingStrictRubric(writingSubmission, writingTasks);
     setWritingEvaluation(baseEval);
-  }, [writingSubmission, writingTasks]);
+  }, [writingSubmission, writingTasks, initialWritingEvaluation]);
 
   useEffect(() => {
     const baseSpeakEval = evaluateSpeakingStrictRubric(speakingSubmission, speakingTasks);
@@ -212,10 +225,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
           aiEval.task2Criteria
         ) {
           setWritingEvaluation(aiEval);
-          onWritingGraded?.({
-            task1Score: aiEval.task1Score,
-            task2Score: aiEval.task2Score,
-          });
+          onWritingGraded?.(
+            {
+              task1Score: aiEval.task1Score,
+              task2Score: aiEval.task2Score,
+            },
+            aiEval
+          );
         }
       }
     } catch (err) {
@@ -225,9 +241,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
     }
   };
 
-  // Automatically invoke AI Writing Examiner on mount if candidate submitted writing text
+  // Automatically invoke AI Writing Examiner on mount if candidate submitted writing text and not already graded
   useEffect(() => {
-    if (!writingSubmission) return;
+    if (!writingSubmission || initialWritingEvaluation) return;
     const hasEssay =
       writingSubmission.task1Text.trim().length > 0 ||
       writingSubmission.task2Text.trim().length > 0;
@@ -268,12 +284,18 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   ]);
 
   // AI Diagnostic State
-  const [aiData, setAiData] = useState<AIDiagnosticData | null>(null);
+  const [aiData, setAiData] = useState<AIDiagnosticData | null>(initialAiDiagnostic || null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [activeAiTab, setActiveAiTab] = useState<
     'strengths' | 'weaknesses' | 'writing' | 'plan' | 'resources'
   >('strengths');
+
+  useEffect(() => {
+    if (initialAiDiagnostic) {
+      setAiData(initialAiDiagnostic);
+    }
+  }, [initialAiDiagnostic]);
 
   const printAreaRef = useRef<HTMLDivElement | null>(null);
 
@@ -478,6 +500,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
       if (response.ok) {
         const data: AIDiagnosticData = await response.json();
         setAiData(data);
+        onAiDiagnosticGenerated?.(data);
         return;
       }
 
@@ -493,6 +516,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
         writingSubmission,
       });
       setAiData(fallbackData);
+      onAiDiagnosticGenerated?.(fallbackData);
     } catch (err: unknown) {
       console.warn('Network issue reaching server AI, falling back to smart diagnostic engine:', err);
       const fallbackData = generateSmartDiagnosticReport({
@@ -507,6 +531,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
         writingSubmission,
       });
       setAiData(fallbackData);
+      onAiDiagnosticGenerated?.(fallbackData);
     } finally {
       setIsAiLoading(false);
     }

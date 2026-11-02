@@ -1,4 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db, safeSetDoc } from '../firebase';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
@@ -39,6 +42,25 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(getSystemTheme);
 
+  // Hydrate theme preference from Cloud Firestore when user signs in
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid));
+        if (snap.exists()) {
+          const remoteMode = snap.data()?.preferences?.themeMode;
+          if (remoteMode === 'light' || remoteMode === 'dark' || remoteMode === 'system') {
+            setThemeModeState(remoteMode);
+          }
+        }
+      } catch {
+        // Ignore read error
+      }
+    });
+    return () => unsub();
+  }, []);
+
   // Listen for OS/System theme changes
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -69,16 +91,32 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [themeMode, resolvedTheme]);
 
+  const persistThemeToCloud = (nextMode: ThemeMode) => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    safeSetDoc(
+      doc(db, 'users', uid),
+      {
+        preferences: {
+          themeMode: nextMode,
+          updatedAt: Date.now(),
+        },
+      },
+      { merge: true }
+    ).catch(() => {});
+  };
+
   const toggleTheme = () => {
     setThemeModeState((prev) => {
-      if (prev === 'light') return 'dark';
-      if (prev === 'dark') return 'system';
-      return 'light';
+      const next: ThemeMode = prev === 'light' ? 'dark' : prev === 'dark' ? 'system' : 'light';
+      persistThemeToCloud(next);
+      return next;
     });
   };
 
   const setThemeMode = (newMode: ThemeMode) => {
     setThemeModeState(newMode);
+    persistThemeToCloud(newMode);
   };
 
   return (

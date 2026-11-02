@@ -18,7 +18,7 @@ export const ListeningPracticeView: React.FC<ListeningPracticeViewProps> = ({
   const [selectedTestId, setSelectedTestId] = useState<string>(tests[0]?.id || 'test-1');
 
   const listeningParts: Array<{
-    part: 1 | 2 | 3 | 4;
+    part: 1 | 2 | 3;
     title: string;
     range: string;
     desc: string;
@@ -26,31 +26,24 @@ export const ListeningPracticeView: React.FC<ListeningPracticeViewProps> = ({
   }> = [
     {
       part: 1,
-      title: 'Part 1: Độc thoại ngắn chọn đáp án',
-      range: 'Câu 1 - 7 (7 câu)',
-      desc: 'Nghe từng câu ngắn (phát 2 lần) và chọn câu đáp lại phù hợp nhất (A, B hoặc C).',
-      tip: 'Chú ý thì ngữ pháp và ngữ cảnh giao tiếp tự nhiên.',
+      title: 'Part 1: 8 Thông báo & Hướng dẫn ngắn',
+      range: 'Câu 1 – 8 (8 câu)',
+      desc: 'Nghe 8 đoạn thông báo hoặc chỉ dẫn ngắn và chọn đáp án A, B, C hoặc D.',
+      tip: 'Chú ý từ khóa chỉ địa điểm, thời gian, sự thay đổi lịch trình và đối tượng tiếp nhận thông báo.',
     },
     {
       part: 2,
-      title: 'Part 2: Đoạn đối thoại ngắn',
-      range: 'Câu 8 - 13 (6 câu)',
-      desc: 'Nghe 3 cuộc hội thoại độc lập (mỗi đoạn 2 câu hỏi, nghe 2 lần).',
-      tip: 'Xác định mục đích của người nói và chi tiết người đối thoại thảo luận.',
+      title: 'Part 2: 3 Đoạn hội thoại',
+      range: 'Câu 9 – 20 (12 câu)',
+      desc: 'Nghe 3 cuộc hội thoại tự nhiên (mỗi đoạn 4 câu hỏi trắc nghiệm A, B, C, D).',
+      tip: 'Xác định mối quan hệ giữa 2 người nói, mục đích thảo luận và quyết định cuối cùng.',
     },
     {
       part: 3,
-      title: 'Part 3: Điền từ vào ghi chú',
-      range: 'Câu 14 - 20 (7 câu)',
-      desc: 'Nghe một bài nói độc thoại và điền từ 1 đến 3 từ/chữ số vào chỗ trống trên biểu mẫu.',
-      tip: 'Đặc biệt chú ý chính tả, chữ số, ngày tháng và giới từ chỉ nơi chốn.',
-    },
-    {
-      part: 4,
-      title: 'Part 4: Phỏng vấn hoặc thảo luận dài',
-      range: 'Câu 21 - 26 (6 câu)',
-      desc: 'Nghe cuộc thảo luận/phỏng vấn dài giữa 2 người và chọn câu trả lời đúng (A, B hoặc C).',
-      tip: 'Lắng nghe quan điểm chính, cảm xúc và thái độ của nhân vật.',
+      title: 'Part 3: 3 Bài thuyết trình / Bài giảng học thuật',
+      range: 'Câu 21 – 35 (15 câu)',
+      desc: 'Nghe 3 bài giảng hoặc bài nói chuyện chuyên đề (mỗi bài 5 câu hỏi A, B, C, D).',
+      tip: 'Nắm chắc ý chính của bài giảng, luận điểm của diễn giả và các ví dụ minh họa cụ thể.',
     },
   ];
 
@@ -73,13 +66,13 @@ export const ListeningPracticeView: React.FC<ListeningPracticeViewProps> = ({
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 text-white font-black text-xs mb-2 backdrop-blur-xs">
             <Headphones className="h-3.5 w-3.5" />
-            <span>KỸ NĂNG NGHE LANGUAGECERT B1</span>
+            <span>KỸ NĂNG NGHE VSTEP (B1–B2–C1)</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-black tracking-tight">
             Luyện Nghe Chuyên Sâu Theo Part
           </h2>
           <p className="mt-1 text-xs sm:text-sm text-blue-100 max-w-xl">
-            Tổng cộng 26 câu hỏi chuẩn LanguageCert B1. Hỗ trợ chỉnh tốc độ audio 0.1x, tua ±5s, xem script và bấm dẫn chứng tự động highlight.
+            Tổng cộng 35 câu hỏi chuẩn VSTEP (Part 1–3). Hỗ trợ chỉnh tốc độ audio 0.1x, tua ±5s, xem script và bấm dẫn chứng tự động highlight.
           </p>
         </div>
 
@@ -126,7 +119,7 @@ export const ListeningPracticeView: React.FC<ListeningPracticeViewProps> = ({
                 : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
             }`}
           >
-            Tất cả (Part 1 - 4)
+            Tất cả (Part 1 - 3)
           </button>
           {listeningParts.map((p) => (
             <button

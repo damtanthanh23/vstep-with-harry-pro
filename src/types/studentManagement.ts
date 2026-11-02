@@ -24,10 +24,30 @@ export interface UserVocabStats {
   masteredCount: number;
   learningCount: number;
   totalDecks: number;
+  personalDecksCount?: number;
+  personalFoldersCount?: number;
   lastStudiedDeckName?: string;
   lastStudiedAt?: number;
   decks: UserVocabDeckSummary[];
   updatedAt: number;
+}
+
+export interface UserActiveDraftSummary {
+  testId: string;
+  testTitle: string;
+  mode: 'exam' | 'practice';
+  answeredCount: number;
+  totalQuestions: number;
+  writingWordCount?: number;
+  speakingWordCount?: number;
+  elapsedSeconds: number;
+  updatedAt: number;
+}
+
+export interface UserPreferences {
+  themeMode?: 'light' | 'dark' | 'system';
+  audioVolumePercent?: number;
+  updatedAt?: number;
 }
 
 export interface UserProfile {
@@ -42,6 +62,16 @@ export interface UserProfile {
   role: UserRole; // Default 'student', auto 'admin' if SUPER_ADMIN_EMAILS
   targetScores?: UserTargetScores;
   vocabStats?: UserVocabStats;
+  activeDraftSummary?: UserActiveDraftSummary | null;
+  preferences?: UserPreferences;
+  totalExamAttempts?: number;
+  bestVstepBandScore?: number;
+  bestRawScore?: number;
+  lastAttemptAt?: number;
+  lastTestTitle?: string;
+  currentStreak?: number;
+  longestStreak?: number;
+  pointsBalance?: number;
   assignedBy?: string;
   createdAt: number;
   lastLoginAt?: number;
@@ -77,8 +107,22 @@ export interface UserExamAttempt {
     part1Transcript?: string;
     part2Transcript?: string;
     part3Transcript?: string;
+    part1Text?: string;
+    part2Text?: string;
+    part3Text?: string;
+    part1WordCount?: number;
+    part2WordCount?: number;
+    part3WordCount?: number;
+    part1AudioDataUrl?: string;
+    part2AudioDataUrl?: string;
+    part3AudioDataUrl?: string;
+    part1DurationSec?: number;
+    part2DurationSec?: number;
+    part3DurationSec?: number;
     overallBand?: number;
   };
+  aiWritingEvaluation?: any;
+  aiDiagnosticReport?: any;
 }
 
 export interface InProgressAttempt {
@@ -91,6 +135,7 @@ export interface InProgressAttempt {
   elapsedSeconds: number;
   remainingSeconds?: number;
   timeRemainingSeconds?: number;
+  totalPausedSeconds?: number;
   answers: Record<number, string>;
   flagged?: Record<number, boolean>;
   flaggedQuestions?: number[];
@@ -113,3 +158,4 @@ export interface InProgressAttempt {
   speakingDraft?: any;
   speakingSubmission?: any;
 }
+

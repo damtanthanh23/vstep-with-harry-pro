@@ -33,6 +33,7 @@ interface ExamHistoryModalProps {
   onRestartTest?: (testId: string) => void;
   onRetakeTest?: (testId: string) => void;
   onReviewAttempt?: (attempt: UserExamAttempt) => void;
+  initialTestFilter?: string | null;
 }
 
 export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
@@ -44,11 +45,20 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
   onRestartTest,
   onRetakeTest,
   onReviewAttempt,
+  initialTestFilter,
 }) => {
   const { currentUser } = useAuth();
   const [attempts, setAttempts] = useState<UserExamAttempt[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedTestFilter, setSelectedTestFilter] = useState<string>('ALL');
+  const [selectedTestFilter, setSelectedTestFilter] = useState<string>(
+    initialTestFilter || 'ALL'
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedTestFilter(initialTestFilter || 'ALL');
+    }
+  }, [isOpen, initialTestFilter]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -128,7 +138,10 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
     return attempt.score - group.list[idx - 1].score;
   };
 
-  if (!isOpen) return null;
+  const currentFilteredTest = useMemo(() => {
+    if (selectedTestFilter === 'ALL') return null;
+    return tests.find((t) => t.id === selectedTestFilter);
+  }, [selectedTestFilter, tests]);
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -150,9 +163,17 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
     }
   };
 
-  const inProgressEntries = Object.values(inProgressMap).filter(
-    (item) => Object.keys(item.answers || {}).length > 0 || item.elapsedSeconds > 15
-  );
+  if (!isOpen) return null;
+
+  const inProgressEntries = Object.values(inProgressMap).filter((item) => {
+    const hasContent =
+      Object.keys(item.answers || {}).length > 0 || item.elapsedSeconds > 15;
+    if (!hasContent) return false;
+    if (selectedTestFilter !== 'ALL') {
+      return item.testId === selectedTestFilter;
+    }
+    return true;
+  });
 
   // Compute SVG chart points for activeChartGroup
   const chartAttempts = activeChartGroup?.list || [];
@@ -200,24 +221,44 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
       <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl border-2 border-slate-200 dark:border-slate-800 overflow-hidden">
         {/* Header */}
         <div className="px-6 py-4 bg-gradient-to-r from-[#58CC02] to-[#46A302] text-white flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-white/15 flex items-center justify-center border border-white/25 shadow-inner">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 rounded-2xl bg-white/15 flex items-center justify-center border border-white/25 shadow-inner shrink-0">
               <History className="w-5 h-5 text-white" />
             </div>
-            <div>
-              <h2 className="text-lg font-black tracking-tight">
-                Lịch Sử Bài Thi & Phân Tích Tiến Độ
-              </h2>
-              <p className="text-xs text-white/90 font-bold">
-                {currentUser
-                  ? `Tài khoản: ${currentUser.displayName || currentUser.email}`
-                  : 'Lưu trữ trên trình duyệt này'}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-black tracking-tight break-words">
+                  {selectedTestFilter !== 'ALL'
+                    ? `Lịch Sử & Biểu Đồ: ${currentFilteredTest?.title || attemptsByTest[selectedTestFilter]?.testTitle || selectedTestFilter}`
+                    : 'Lịch Sử Bài Thi & Phân Tích Tiến Độ'}
+                </h2>
+                {selectedTestFilter !== 'ALL' && (
+                  <span className="px-2 py-0.5 rounded-md bg-white/20 text-[11px] font-black border border-white/30 text-white shrink-0">
+                    Chỉ hiển thị bài này
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-white/90 font-bold flex items-center gap-2 flex-wrap">
+                <span>
+                  {currentUser
+                    ? `Tài khoản: ${currentUser.displayName || currentUser.email}`
+                    : 'Lưu trữ trên trình duyệt này'}
+                </span>
+                {selectedTestFilter !== 'ALL' && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTestFilter('ALL')}
+                    className="underline font-extrabold hover:text-white transition-opacity text-[11px] cursor-pointer"
+                  >
+                    (Xem tất cả đề thi)
+                  </button>
+                )}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
+            className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer shrink-0"
             title="Đóng"
           >
             <X className="w-5 h-5" />
@@ -313,6 +354,37 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                 Khi bạn nộp bài thi thử hoặc luyện tập, toàn bộ điểm số, biểu đồ tiến bộ và đáp án chi tiết của từng lần thi sẽ được lưu tại đây.
               </p>
             </div>
+          ) : displayedAttempts.length === 0 ? (
+            <div className="py-14 text-center bg-white dark:bg-slate-900 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-800 p-8">
+              <Award className="w-12 h-12 text-amber-500/80 mx-auto mb-3" />
+              <h3 className="text-base font-black text-slate-900 dark:text-white mb-1">
+                Chưa có lượt nộp bài nào cho {currentFilteredTest?.title || 'bộ đề này'}
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mb-5 leading-relaxed">
+                Bạn chưa có lượt hoàn thành nộp bài nào của riêng bộ đề này. Toàn bộ điểm số, lịch sử chi tiết và biểu đồ tiến độ sẽ tự động hiển thị ngay sau khi bạn nộp bài thi!
+              </p>
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedTestFilter('ALL')}
+                  className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-black text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
+                >
+                  Xem lịch sử của tất cả các đề ({attempts.length} lần làm)
+                </button>
+                {onRetakeTest && selectedTestFilter !== 'ALL' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onRetakeTest(selectedTestFilter);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-[#58CC02] hover:bg-[#46A302] text-xs font-black text-white shadow-xs transition-colors cursor-pointer"
+                  >
+                    Làm đề này ngay
+                  </button>
+                )}
+              </div>
+            </div>
           ) : (
             <>
               {/* 2. Test Filter Bar & Line Chart */}
@@ -323,11 +395,18 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                       <BarChart3 className="w-5 h-5" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-black text-slate-900 dark:text-white">
-                        Biểu Đồ Xu Hướng Điểm Số Theo Lần Thi
+                      <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                        <span>Biểu Đồ Xu Hướng Điểm Số Theo Lần Thi</span>
+                        {selectedTestFilter !== 'ALL' && (
+                          <span className="px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 text-[10px] font-black">
+                            Riêng đề này
+                          </span>
+                        )}
                       </h3>
                       <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                        Theo dõi điểm tăng hay giảm qua từng lần làm lại cùng một đề
+                        {selectedTestFilter !== 'ALL'
+                          ? `Theo dõi điểm tăng hay giảm qua các lần làm lại của ${currentFilteredTest?.title || 'đề này'}`
+                          : 'Theo dõi điểm tăng hay giảm qua từng lần làm lại cùng một đề'}
                       </p>
                     </div>
                   </div>
@@ -554,7 +633,9 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-black uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                    Chi Tiết Từng Lần Làm Bài ({displayedAttempts.length} lượt)
+                    {selectedTestFilter !== 'ALL'
+                      ? `Lịch Sử Làm Đề Này (${displayedAttempts.length} lượt)`
+                      : `Chi Tiết Từng Lần Làm Bài (${displayedAttempts.length} lượt)`}
                   </h3>
                 </div>
 

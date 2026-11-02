@@ -26,25 +26,37 @@ import {
   ShieldCheck,
   GraduationCap,
   UserCheck,
+  Folder,
+  ChevronDown,
+  ChevronUp,
+  Volume2,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import {
   UserProfile,
   UserRole,
   UserExamAttempt,
   UserTargetScores,
+  UserVocabStats,
   InProgressAttempt,
 } from '../../../types/studentManagement';
+import { UserVocabDeck, UserVocabFolder } from '../../../types/vocab';
 import {
   resolveTestTitle,
   isUserOnline,
   formatRelativeActiveTime,
   subscribeToStudentAttempts,
   fetchStudentInProgressMap,
+  fetchStudentPersonalVocabData,
   DEMO_ATTEMPTS,
   DEMO_IN_PROGRESS,
   SUPER_ADMIN_EMAILS,
 } from '../../../services/studentManagementService';
+import { computeVocabStatsFromPartition } from '../../../services/vocabCloudService';
+import { generateDefault15TopicDecks } from '../../../data/b1Official15TopicsData';
 import { getZodiacFromBirthDate } from '../ZodiacPixelMascot';
+import { resolvePlayableAudioUrl } from '../../../utils/audioStorageService';
 
 interface StudentDetail360ModalProps {
   student: UserProfile;
@@ -68,18 +80,62 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
   const [activeTab, setActiveTab] = useState<'analytics' | 'history' | 'vocab'>('analytics');
   const [attempts, setAttempts] = useState<UserExamAttempt[]>([]);
   const [inProgressMap, setInProgressMap] = useState<Record<string, InProgressAttempt>>({});
+  const [liveVocabStats, setLiveVocabStats] = useState<UserVocabStats | null>(null);
+  const [personalDecks, setPersonalDecks] = useState<UserVocabDeck[]>([]);
+  const [personalFolders, setPersonalFolders] = useState<UserVocabFolder[]>([]);
+  const [syncedAudioVolume, setSyncedAudioVolume] = useState<number | undefined>(undefined);
+  const [expandedPersonalDeckId, setExpandedPersonalDeckId] = useState<string | null>(null);
   const [isLoadingAttempts, setIsLoadingAttempts] = useState<boolean>(true);
   const [selectedAttemptDetail, setSelectedAttemptDetail] = useState<UserExamAttempt | null>(null);
+  const [resolvedSpeakingUrls, setResolvedSpeakingUrls] = useState<{
+    part1?: string;
+    part2?: string;
+    part3?: string;
+  }>({});
   const [selectedRole, setSelectedRole] = useState<UserRole>(student.role || 'student');
   const [roleChangeNotice, setRoleChangeNotice] = useState<string | null>(null);
   const [isUpdatingRole, setIsUpdatingRole] = useState<boolean>(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedAttemptDetail?.speakingSubmission) {
+      setResolvedSpeakingUrls({});
+      return;
+    }
+    const sub = selectedAttemptDetail.speakingSubmission as any;
+    const raw1 = sub.part1AudioDataUrl || sub.part1AudioUrl || '';
+    const raw2 = sub.part2AudioDataUrl || sub.part2AudioUrl || '';
+    const raw3 = sub.part3AudioDataUrl || sub.part3AudioUrl || '';
+
+    Promise.all([
+      raw1 ? resolvePlayableAudioUrl(raw1) : Promise.resolve(null),
+      raw2 ? resolvePlayableAudioUrl(raw2) : Promise.resolve(null),
+      raw3 ? resolvePlayableAudioUrl(raw3) : Promise.resolve(null),
+    ]).then(([u1, u2, u3]) => {
+      if (!cancelled) {
+        setResolvedSpeakingUrls({
+          part1: u1 || raw1 || undefined,
+          part2: u2 || raw2 || undefined,
+          part3: u3 || raw3 || undefined,
+        });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAttemptDetail]);
+
   // Sync role when student changes
   useEffect(() => {
     setSelectedRole(student.role || 'student');
+    setLiveVocabStats(student.vocabStats || null);
+    setPersonalDecks([]);
+    setPersonalFolders([]);
+    setExpandedPersonalDeckId(null);
   }, [student]);
 
-  // Load attempts & in-progress
+  // Load attempts, in-progress & live vocab_state + personal decks/folders
   useEffect(() => {
     if (!isOpen || !student) return;
 
@@ -90,6 +146,12 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
       setAttempts(demoList);
       const demoInProg = DEMO_IN_PROGRESS[student.uid];
       setInProgressMap(demoInProg ? { [demoInProg.testId]: demoInProg } : {});
+      setLiveVocabStats(student.vocabStats || null);
+      fetchStudentPersonalVocabData(student.uid).then((res) => {
+        setPersonalDecks(res.personalDecks);
+        setPersonalFolders(res.personalFolders);
+        setSyncedAudioVolume(res.audioVolumePercent);
+      });
       setIsLoadingAttempts(false);
       return;
     }
@@ -108,6 +170,22 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
     fetchStudentInProgressMap(student.uid)
       .then((map: Record<string, InProgressAttempt>) => {
         setInProgressMap(map);
+      })
+      .catch(() => {});
+
+    // Fetch live vocab_state/main + personal vocab_decks so vocabulary tab reflects real-time cloud data
+    fetchStudentPersonalVocabData(student.uid)
+      .then((res) => {
+        setPersonalDecks(res.personalDecks);
+        setPersonalFolders(res.personalFolders);
+        setSyncedAudioVolume(res.audioVolumePercent ?? student.preferences?.audioVolumePercent);
+        if (res.rawPartitionState || res.personalDecks.length > 0) {
+          const allDecks = [...generateDefault15TopicDecks(), ...res.personalDecks];
+          const computed = computeVocabStatsFromPartition(res.rawPartitionState || {}, allDecks);
+          computed.personalDecksCount = res.personalDecks.length;
+          computed.personalFoldersCount = res.personalFolders.length;
+          setLiveVocabStats(computed);
+        }
       })
       .catch(() => {});
 
@@ -224,8 +302,27 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
 
   const activeDraft = useMemo(() => {
     const list = Object.values(inProgressMap);
-    return list.length > 0 ? list[0] : null;
-  }, [inProgressMap]);
+    if (list.length > 0) {
+      return list.sort(
+        (a, b) => (b.savedAt || b.lastUpdatedAt || 0) - (a.savedAt || a.lastUpdatedAt || 0)
+      )[0];
+    }
+    if (student.activeDraftSummary && student.activeDraftSummary.testId) {
+      return {
+        testId: student.activeDraftSummary.testId,
+        testTitle: student.activeDraftSummary.testTitle,
+        mode: student.activeDraftSummary.mode,
+        elapsedSeconds: student.activeDraftSummary.elapsedSeconds || 0,
+        answers: Object.fromEntries(
+          Array.from({ length: student.activeDraftSummary.answeredCount || 0 }, (_, i) => [
+            i + 1,
+            'A',
+          ])
+        ),
+      } as InProgressAttempt;
+    }
+    return null;
+  }, [inProgressMap, student.activeDraftSummary]);
 
   const handleApplyRole = async (newRole: UserRole) => {
     if (!onRoleChange || isUpdatingRole) return;
@@ -854,8 +951,15 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                     </h4>
                     <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 flex items-center gap-3 flex-wrap">
                       <span>Đã làm: <strong>{Object.keys(activeDraft.answers || {}).length}</strong> câu trắc nghiệm</span>
-                      {activeDraft.writingDraft?.task1WordCount ? (
-                        <span>Writing: {activeDraft.writingDraft.task1WordCount} từ (Task 1)</span>
+                      {(activeDraft.writingDraft?.task1WordCount || activeDraft.writingDraft?.task2WordCount) ? (
+                        <span className="px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950/70 text-purple-800 dark:text-purple-300 font-bold">
+                          Nháp Writing: {(activeDraft.writingDraft?.task1WordCount || 0) + (activeDraft.writingDraft?.task2WordCount || 0)} từ
+                        </span>
+                      ) : null}
+                      {(activeDraft.speakingDraft?.part1Text || activeDraft.speakingDraft?.part2Text || activeDraft.speakingDraft?.part3Text) ? (
+                        <span className="px-2 py-0.5 rounded-md bg-sky-100 dark:bg-sky-950/70 text-sky-800 dark:text-sky-300 font-bold">
+                          Nháp Speaking đã lưu Cloud
+                        </span>
                       ) : null}
                       <span>Thời gian: {Math.round(activeDraft.elapsedSeconds / 60)} phút</span>
                     </p>
@@ -982,43 +1086,30 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
             <div className="space-y-5">
               {/* 4 Vocab KPI Summary Cards */}
               {(() => {
-                const vocab = student.vocabStats || {
-                  totalWords: 340,
-                  masteredCount: 198,
-                  learningCount: 112,
-                  totalDecks: 7,
-                  lastStudiedDeckName: '15 Chủ đề chuẩn B1 — Daily Life & Routines',
-                  lastStudiedAt: Date.now() - 1000 * 60 * 35,
-                  decks: [
-                    {
-                      id: 'b1_daily_life',
-                      name: 'Chủ đề 1: Daily Life & Routines',
-                      categoryLabel: '15 Chủ đề chuẩn B1',
-                      totalWords: 50,
-                      masteredWords: 42,
-                      learningWords: 8,
-                      updatedAt: Date.now() - 1000 * 60 * 35,
-                    },
-                    {
-                      id: 'b1_education',
-                      name: 'Chủ đề 2: Education & Careers',
-                      categoryLabel: '15 Chủ đề chuẩn B1',
-                      totalWords: 60,
-                      masteredWords: 38,
-                      learningWords: 18,
-                      updatedAt: Date.now() - 86400000,
-                    },
-                  ],
-                  updatedAt: Date.now(),
-                };
+                const vocab: UserVocabStats = liveVocabStats ||
+                  student.vocabStats || {
+                    totalWords: 850,
+                    masteredCount: 0,
+                    learningCount: 0,
+                    totalDecks: 15,
+                    lastStudiedDeckName: undefined,
+                    lastStudiedAt: undefined,
+                    decks: [],
+                    updatedAt: Date.now(),
+                  };
 
-                const masteryPct = vocab.totalWords > 0 ? Math.round((vocab.masteredCount / vocab.totalWords) * 100) : 0;
+                const masteryPct =
+                  vocab.totalWords > 0
+                    ? Math.round((vocab.masteredCount / vocab.totalWords) * 100)
+                    : 0;
 
                 return (
                   <>
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                       <div className="p-4 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800">
-                        <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">Đã thuộc (Mastered Lv4-5)</span>
+                        <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                          Đã thuộc (Mastered Lv4-5)
+                        </span>
                         <div className="text-2xl font-black text-emerald-700 dark:text-emerald-400 mt-1 tabular-nums">
                           {vocab.masteredCount} từ
                         </div>
@@ -1028,7 +1119,9 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                       </div>
 
                       <div className="p-4 rounded-2xl bg-amber-50/70 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
-                        <span className="text-xs font-bold text-amber-800 dark:text-amber-300">Đang ghi nhớ (Learning Lv1-3)</span>
+                        <span className="text-xs font-bold text-amber-800 dark:text-amber-300">
+                          Đang ghi nhớ (Learning Lv1-3)
+                        </span>
                         <div className="text-2xl font-black text-amber-700 dark:text-amber-400 mt-1 tabular-nums">
                           {vocab.learningCount} từ
                         </div>
@@ -1038,7 +1131,9 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                       </div>
 
                       <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800">
-                        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Tổng vốn từ vựng</span>
+                        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                          Tổng vốn từ vựng
+                        </span>
                         <div className="text-2xl font-black text-slate-900 dark:text-white mt-1 tabular-nums">
                           {vocab.totalWords} từ
                         </div>
@@ -1048,9 +1143,14 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                       </div>
 
                       <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800">
-                        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Bộ từ học gần nhất</span>
-                        <div className="text-xs font-black text-slate-900 dark:text-white mt-1 truncate" title={vocab.lastStudiedDeckName}>
-                          {vocab.lastStudiedDeckName || '15 Chủ đề chuẩn B1'}
+                        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                          Bộ từ học gần nhất
+                        </span>
+                        <div
+                          className="text-xs font-black text-slate-900 dark:text-white mt-1 truncate"
+                          title={vocab.lastStudiedDeckName}
+                        >
+                          {vocab.lastStudiedDeckName || 'Chưa ghi nhận phiên học'}
                         </div>
                         <span className="text-[11px] text-slate-400 block mt-0.5">
                           {formatRelativeActiveTime(vocab.lastStudiedAt)}
@@ -1061,8 +1161,12 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                     {/* Overall Progress Bar */}
                     <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800">
                       <div className="flex items-center justify-between text-xs font-black mb-1.5">
-                        <span className="text-slate-700 dark:text-slate-300">Tiến độ Làm chủ Từ vựng VSTEP:</span>
-                        <span className="text-[#2E7D32] dark:text-[#58CC02]">{masteryPct}% ({vocab.masteredCount}/{vocab.totalWords} từ)</span>
+                        <span className="text-slate-700 dark:text-slate-300">
+                          Tiến độ Làm chủ Từ vựng VSTEP:
+                        </span>
+                        <span className="text-[#2E7D32] dark:text-[#58CC02]">
+                          {masteryPct}% ({vocab.masteredCount}/{vocab.totalWords} từ)
+                        </span>
                       </div>
                       <div className="h-3 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden flex">
                         <div
@@ -1072,7 +1176,14 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                         />
                         <div
                           className="h-full bg-amber-400"
-                          style={{ width: `${Math.min(100 - masteryPct, vocab.totalWords > 0 ? (vocab.learningCount / vocab.totalWords) * 100 : 0)}%` }}
+                          style={{
+                            width: `${Math.min(
+                              100 - masteryPct,
+                              vocab.totalWords > 0
+                                ? (vocab.learningCount / vocab.totalWords) * 100
+                                : 0
+                            )}%`,
+                          }}
                           title={`Đang học: ${vocab.learningCount} từ`}
                         />
                       </div>
@@ -1085,44 +1196,228 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                         <span>Danh sách các bộ thẻ từ vựng đã học</span>
                       </h4>
 
-                      <div className="space-y-2.5">
-                        {(vocab.decks || []).map((deck: any) => {
-                          const pct = deck.totalWords > 0 ? Math.round((deck.masteredWords / deck.totalWords) * 100) : 0;
-                          return (
-                            <div
-                              key={deck.id}
-                              className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                            >
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <h5 className="text-xs font-black text-slate-900 dark:text-white truncate">
-                                    {deck.name}
-                                  </h5>
-                                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                                    {deck.categoryLabel}
+                      {(vocab.decks || []).length === 0 ? (
+                        <div className="p-8 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
+                          Học viên chưa ghi nhận phiên học từ vựng B1 nào trên hệ thống.
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5">
+                          {(vocab.decks || []).map((deck: any) => {
+                            const pct =
+                              deck.totalWords > 0
+                                ? Math.round((deck.masteredWords / deck.totalWords) * 100)
+                                : 0;
+                            return (
+                              <div
+                                key={deck.id}
+                                className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <h5 className="text-xs font-black text-slate-900 dark:text-white truncate">
+                                      {deck.name}
+                                    </h5>
+                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                      {deck.categoryLabel}
+                                    </span>
+                                  </div>
+                                  <span className="text-[11px] text-slate-400 mt-0.5 block tabular-nums">
+                                    Đã thuộc: <strong>{deck.masteredWords}</strong>/{deck.totalWords}{' '}
+                                    từ · Đang học: {deck.learningWords} từ
                                   </span>
                                 </div>
-                                <span className="text-[11px] text-slate-400 mt-0.5 block tabular-nums">
-                                  Đã thuộc: <strong>{deck.masteredWords}</strong>/{deck.totalWords} từ · Đang học: {deck.learningWords} từ
+
+                                <div className="w-full sm:w-44 shrink-0">
+                                  <div className="flex items-center justify-between text-[11px] font-black text-slate-600 dark:text-slate-300 mb-1">
+                                    <span>{pct}%</span>
+                                    <span>
+                                      {deck.masteredWords}/{deck.totalWords}
+                                    </span>
+                                  </div>
+                                  <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-[#58CC02] rounded-full"
+                                      style={{ width: `${pct}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Personal Vocabulary Folders & Custom Decks Created by Student */}
+                    <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-4">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <h4 className="text-xs font-black uppercase text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+                          <Folder className="h-4 w-4 text-amber-500" />
+                          <span>
+                            Thư mục &amp; Bộ từ vựng cá nhân do học viên tự tạo ({personalDecks.length} bộ từ · {personalFolders.length} thư mục)
+                          </span>
+                        </h4>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {typeof syncedAudioVolume === 'number' && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[11px] font-bold">
+                              <Volume2 className="h-3.5 w-3.5 text-[#58CC02]" />
+                              <span>Âm lượng từ vựng: {syncedAudioVolume}%</span>
+                            </span>
+                          )}
+                          {student.preferences?.themeMode && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[11px] font-bold">
+                              {student.preferences.themeMode === 'dark' ? (
+                                <Moon className="h-3.5 w-3.5 text-indigo-400" />
+                              ) : (
+                                <Sun className="h-3.5 w-3.5 text-amber-500" />
+                              )}
+                              <span>Giao diện: {student.preferences.themeMode === 'dark' ? 'Tối' : student.preferences.themeMode === 'light' ? 'Sáng' : 'Hệ thống'}</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Folders Pills */}
+                      {personalFolders.length > 0 && (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {personalFolders.map((folder) => {
+                            const countInFolder = personalDecks.filter(
+                              (d) => d.folderId === folder.id
+                            ).length;
+                            return (
+                              <div
+                                key={folder.id}
+                                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/70 text-xs"
+                              >
+                                <Folder className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                                <span className="font-black text-amber-900 dark:text-amber-200">
+                                  {folder.name}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded-md bg-amber-200/70 dark:bg-amber-900 text-amber-900 dark:text-amber-200 text-[10px] font-black">
+                                  {countInFolder} bộ
                                 </span>
                               </div>
+                            );
+                          })}
+                        </div>
+                      )}
 
-                              <div className="w-full sm:w-44 shrink-0">
-                                <div className="flex items-center justify-between text-[11px] font-black text-slate-600 dark:text-slate-300 mb-1">
-                                  <span>{pct}%</span>
-                                  <span>{deck.masteredWords}/{deck.totalWords}</span>
+                      {/* Custom Personal Decks List */}
+                      {personalDecks.length === 0 ? (
+                        <div className="p-6 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
+                          Học viên chưa tự tạo bộ từ vựng cá nhân nào trên Cloud.
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5">
+                          {personalDecks.map((pDeck) => {
+                            const folderObj = personalFolders.find((f) => f.id === pDeck.folderId);
+                            const isExpanded = expandedPersonalDeckId === pDeck.id;
+                            const wordsList: any[] = Array.isArray(pDeck.words)
+                              ? pDeck.words
+                              : Array.isArray(pDeck.items)
+                              ? pDeck.items
+                              : [];
+                            return (
+                              <div
+                                key={pDeck.id}
+                                className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs overflow-hidden"
+                              >
+                                <div
+                                  onClick={() =>
+                                    setExpandedPersonalDeckId(isExpanded ? null : pDeck.id)
+                                  }
+                                  className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <h5 className="text-xs font-black text-slate-900 dark:text-white">
+                                        {pDeck.name}
+                                      </h5>
+                                      {folderObj && (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300">
+                                          <Folder className="h-2.5 w-2.5" />
+                                          <span>{folderObj.name}</span>
+                                        </span>
+                                      )}
+                                      {pDeck.categoryTag && (
+                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300">
+                                          {pDeck.categoryTag}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {pDeck.description && (
+                                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-1">
+                                        {pDeck.description}
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+                                    <span className="px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-black text-slate-700 dark:text-slate-200 tabular-nums">
+                                      {wordsList.length} từ vựng
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                                      title="Xem danh sách từ trong bộ này"
+                                    >
+                                      {isExpanded ? (
+                                        <ChevronUp className="h-4 w-4" />
+                                      ) : (
+                                        <ChevronDown className="h-4 w-4" />
+                                      )}
+                                    </button>
+                                  </div>
                                 </div>
-                                <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                                  <div
-                                    className="h-full bg-[#58CC02] rounded-full"
-                                    style={{ width: `${pct}%` }}
-                                  />
-                                </div>
+
+                                {isExpanded && (
+                                  <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40 p-3.5 max-h-64 overflow-y-auto">
+                                    {wordsList.length === 0 ? (
+                                      <p className="text-xs text-slate-400 italic text-center py-2">
+                                        Bộ từ này chưa có từ vựng nào.
+                                      </p>
+                                    ) : (
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        {wordsList.map((w: any, idx: number) => (
+                                          <div
+                                            key={w.id || idx}
+                                            className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-xs"
+                                          >
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span className="font-black text-slate-900 dark:text-white">
+                                                {w.word}
+                                                {w.pos ? (
+                                                  <span className="ml-1.5 text-[10px] font-bold text-slate-400">
+                                                    ({w.pos})
+                                                  </span>
+                                                ) : null}
+                                              </span>
+                                              {w.ipa && (
+                                                <span className="text-[11px] font-mono text-slate-400">
+                                                  {w.ipa}
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="text-emerald-700 dark:text-emerald-400 font-semibold mt-0.5">
+                                              {w.meaningVi}
+                                            </div>
+                                            {w.exampleEn && (
+                                              <div className="text-[11px] text-slate-500 dark:text-slate-400 italic mt-1 line-clamp-2">
+                                                &ldquo;{w.exampleEn}&rdquo;
+                                              </div>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </>
                 );
@@ -1227,6 +1522,33 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                       </p>
                     </div>
                   )}
+
+                  {/* Saved AI Writing Examiner Evaluation */}
+                  {selectedAttemptDetail.aiWritingEvaluation && (
+                    <div className="rounded-2xl bg-purple-50/70 dark:bg-purple-950/30 p-4 border border-purple-200 dark:border-purple-800/70 text-xs space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-black text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
+                          <Sparkles className="h-4 w-4 text-purple-600" />
+                          <span>Kết quả Giám khảo AI Writing (Đã lưu Cloud)</span>
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-lg bg-purple-200/80 dark:bg-purple-900 text-purple-900 dark:text-purple-100 font-black text-[11px]">
+                          Task 1: {selectedAttemptDetail.aiWritingEvaluation.task1Score ?? '-'} · Task 2: {selectedAttemptDetail.aiWritingEvaluation.task2Score ?? '-'}
+                        </span>
+                      </div>
+                      {selectedAttemptDetail.aiWritingEvaluation.task1Criteria?.feedback && (
+                        <div className="text-[11px] text-slate-700 dark:text-slate-300 bg-white/80 dark:bg-slate-900/70 p-2.5 rounded-xl border border-purple-100 dark:border-purple-900">
+                          <strong className="text-purple-800 dark:text-purple-300">Nhận xét Task 1: </strong>
+                          {selectedAttemptDetail.aiWritingEvaluation.task1Criteria.feedback}
+                        </div>
+                      )}
+                      {selectedAttemptDetail.aiWritingEvaluation.task2Criteria?.feedback && (
+                        <div className="text-[11px] text-slate-700 dark:text-slate-300 bg-white/80 dark:bg-slate-900/70 p-2.5 rounded-xl border border-purple-100 dark:border-purple-900">
+                          <strong className="text-purple-800 dark:text-purple-300">Nhận xét Task 2: </strong>
+                          {selectedAttemptDetail.aiWritingEvaluation.task2Criteria.feedback}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1235,41 +1557,164 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                 <div className="space-y-3 pt-3 border-t border-slate-200 dark:border-slate-800">
                   <h4 className="text-xs font-black uppercase text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
                     <Mic className="h-4 w-4" />
-                    <span>Bài làm Speaking (Ghi âm &amp; Transcript):</span>
+                    <span>Bài làm Speaking (Ghi âm Cloud &amp; Transcript):</span>
                   </h4>
 
-                  {selectedAttemptDetail.speakingSubmission.part1Transcript && (
-                    <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 p-3.5 border border-slate-200 dark:border-slate-700 text-xs">
-                      <div className="font-black text-slate-900 dark:text-white mb-1">
-                        Part 1: Social Interaction
+                  {(selectedAttemptDetail.speakingSubmission.part1Transcript ||
+                    selectedAttemptDetail.speakingSubmission.part1Text ||
+                    resolvedSpeakingUrls.part1 ||
+                    selectedAttemptDetail.speakingSubmission.part1AudioDataUrl) && (
+                    <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 p-3.5 border border-slate-200 dark:border-slate-700 text-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-black text-slate-900 dark:text-white">
+                          Part 1: Social Interaction
+                        </span>
+                        {selectedAttemptDetail.speakingSubmission.part1DurationSec ? (
+                          <span className="text-[10px] font-bold text-slate-500">
+                            Thời lượng: {selectedAttemptDetail.speakingSubmission.part1DurationSec}s
+                          </span>
+                        ) : null}
                       </div>
-                      <p className="text-slate-700 dark:text-slate-300 italic text-[11px]">
-                        &quot;{selectedAttemptDetail.speakingSubmission.part1Transcript}&quot;
-                      </p>
+                      {(resolvedSpeakingUrls.part1 ||
+                        selectedAttemptDetail.speakingSubmission.part1AudioDataUrl) && (
+                        <audio
+                          controls
+                          src={
+                            resolvedSpeakingUrls.part1 ||
+                            selectedAttemptDetail.speakingSubmission.part1AudioDataUrl
+                          }
+                          className="w-full h-9"
+                        />
+                      )}
+                      {(selectedAttemptDetail.speakingSubmission.part1Transcript ||
+                        selectedAttemptDetail.speakingSubmission.part1Text) && (
+                        <p className="text-slate-700 dark:text-slate-300 italic text-[11px] whitespace-pre-line">
+                          &quot;
+                          {selectedAttemptDetail.speakingSubmission.part1Transcript ||
+                            selectedAttemptDetail.speakingSubmission.part1Text}
+                          &quot;
+                        </p>
+                      )}
                     </div>
                   )}
 
-                  {selectedAttemptDetail.speakingSubmission.part2Transcript && (
-                    <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 p-3.5 border border-slate-200 dark:border-slate-700 text-xs">
-                      <div className="font-black text-slate-900 dark:text-white mb-1">
-                        Part 2: Solution Discussion
+                  {(selectedAttemptDetail.speakingSubmission.part2Transcript ||
+                    selectedAttemptDetail.speakingSubmission.part2Text ||
+                    resolvedSpeakingUrls.part2 ||
+                    selectedAttemptDetail.speakingSubmission.part2AudioDataUrl) && (
+                    <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 p-3.5 border border-slate-200 dark:border-slate-700 text-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-black text-slate-900 dark:text-white">
+                          Part 2: Solution Discussion
+                        </span>
+                        {selectedAttemptDetail.speakingSubmission.part2DurationSec ? (
+                          <span className="text-[10px] font-bold text-slate-500">
+                            Thời lượng: {selectedAttemptDetail.speakingSubmission.part2DurationSec}s
+                          </span>
+                        ) : null}
                       </div>
-                      <p className="text-slate-700 dark:text-slate-300 italic text-[11px]">
-                        &quot;{selectedAttemptDetail.speakingSubmission.part2Transcript}&quot;
-                      </p>
+                      {(resolvedSpeakingUrls.part2 ||
+                        selectedAttemptDetail.speakingSubmission.part2AudioDataUrl) && (
+                        <audio
+                          controls
+                          src={
+                            resolvedSpeakingUrls.part2 ||
+                            selectedAttemptDetail.speakingSubmission.part2AudioDataUrl
+                          }
+                          className="w-full h-9"
+                        />
+                      )}
+                      {(selectedAttemptDetail.speakingSubmission.part2Transcript ||
+                        selectedAttemptDetail.speakingSubmission.part2Text) && (
+                        <p className="text-slate-700 dark:text-slate-300 italic text-[11px] whitespace-pre-line">
+                          &quot;
+                          {selectedAttemptDetail.speakingSubmission.part2Transcript ||
+                            selectedAttemptDetail.speakingSubmission.part2Text}
+                          &quot;
+                        </p>
+                      )}
                     </div>
                   )}
 
-                  {selectedAttemptDetail.speakingSubmission.part3Transcript && (
-                    <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 p-3.5 border border-slate-200 dark:border-slate-700 text-xs">
-                      <div className="font-black text-slate-900 dark:text-white mb-1">
-                        Part 3: Topic Development (Mind-map)
+                  {(selectedAttemptDetail.speakingSubmission.part3Transcript ||
+                    selectedAttemptDetail.speakingSubmission.part3Text ||
+                    resolvedSpeakingUrls.part3 ||
+                    selectedAttemptDetail.speakingSubmission.part3AudioDataUrl) && (
+                    <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 p-3.5 border border-slate-200 dark:border-slate-700 text-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-black text-slate-900 dark:text-white">
+                          Part 3: Topic Development (Mind-map)
+                        </span>
+                        {selectedAttemptDetail.speakingSubmission.part3DurationSec ? (
+                          <span className="text-[10px] font-bold text-slate-500">
+                            Thời lượng: {selectedAttemptDetail.speakingSubmission.part3DurationSec}s
+                          </span>
+                        ) : null}
                       </div>
-                      <p className="text-slate-700 dark:text-slate-300 italic text-[11px]">
-                        &quot;{selectedAttemptDetail.speakingSubmission.part3Transcript}&quot;
-                      </p>
+                      {(resolvedSpeakingUrls.part3 ||
+                        selectedAttemptDetail.speakingSubmission.part3AudioDataUrl) && (
+                        <audio
+                          controls
+                          src={
+                            resolvedSpeakingUrls.part3 ||
+                            selectedAttemptDetail.speakingSubmission.part3AudioDataUrl
+                          }
+                          className="w-full h-9"
+                        />
+                      )}
+                      {(selectedAttemptDetail.speakingSubmission.part3Transcript ||
+                        selectedAttemptDetail.speakingSubmission.part3Text) && (
+                        <p className="text-slate-700 dark:text-slate-300 italic text-[11px] whitespace-pre-line">
+                          &quot;
+                          {selectedAttemptDetail.speakingSubmission.part3Transcript ||
+                            selectedAttemptDetail.speakingSubmission.part3Text}
+                          &quot;
+                        </p>
+                      )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Saved AI Diagnostic Report */}
+              {selectedAttemptDetail.aiDiagnosticReport && (
+                <div className="space-y-2.5 pt-3 border-t border-slate-200 dark:border-slate-800">
+                  <h4 className="text-xs font-black uppercase text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                    <Sparkles className="h-4 w-4" />
+                    <span>Báo cáo Chẩn đoán &amp; Lộ trình AI (Đã lưu Cloud):</span>
+                  </h4>
+                  <div className="rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/30 p-3.5 border border-emerald-200 dark:border-emerald-800/70 text-xs space-y-2">
+                    {Array.isArray(selectedAttemptDetail.aiDiagnosticReport.strengths) &&
+                      selectedAttemptDetail.aiDiagnosticReport.strengths.length > 0 && (
+                        <div>
+                          <strong className="text-emerald-800 dark:text-emerald-300 block mb-0.5">
+                            Điểm mạnh:
+                          </strong>
+                          <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-slate-700 dark:text-slate-300">
+                            {selectedAttemptDetail.aiDiagnosticReport.strengths
+                              .slice(0, 3)
+                              .map((s: string, i: number) => (
+                                <li key={i}>{s}</li>
+                              ))}
+                          </ul>
+                        </div>
+                      )}
+                    {Array.isArray(selectedAttemptDetail.aiDiagnosticReport.weaknesses) &&
+                      selectedAttemptDetail.aiDiagnosticReport.weaknesses.length > 0 && (
+                        <div>
+                          <strong className="text-amber-800 dark:text-amber-300 block mb-0.5">
+                            Cần cải thiện:
+                          </strong>
+                          <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-slate-700 dark:text-slate-300">
+                            {selectedAttemptDetail.aiDiagnosticReport.weaknesses
+                              .slice(0, 3)
+                              .map((w: string, i: number) => (
+                                <li key={i}>{w}</li>
+                              ))}
+                          </ul>
+                        </div>
+                      )}
+                  </div>
                 </div>
               )}
             </div>

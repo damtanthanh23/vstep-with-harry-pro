@@ -113,6 +113,14 @@
       "schema": "UserProfile",
       "description": "Sub-collection storing user Anki SM-2 spaced repetition state"
     },
+    "/users/{userId}/vocab_decks/{deckId}": {
+      "schema": "UserProfile",
+      "description": "User personal vocabulary notebooks and custom decks"
+    },
+    "/vocab_b1_topics/{topicId}": {
+      "schema": "Test",
+      "description": "Official 15 topics and vocabulary decks for VSTEP B1 backed up to Firestore"
+    },
     "/feedbacks/{feedbackId}": {
       "schema": "FeedbackReport",
       "description": "Student bug reports and suggestions managed by Admin"

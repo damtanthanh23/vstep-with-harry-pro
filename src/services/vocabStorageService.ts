@@ -132,6 +132,7 @@ export interface UserVocabPartitionState {
   sessionHistory: VocabSavedSession[];
   pinnedRoadmapIds: string[];
   savedSystemDeckIds: string[];
+  clonedCommunityDeckIds?: string[];
   audioVolumePercent: number; // 0..100, default 70
   leaderboardOptIn: boolean; // default false (private)
   migratedLegacyKnown: boolean;
@@ -189,6 +190,9 @@ export function loadUserVocabState(userId?: string | null): UserVocabPartitionSt
         savedSystemDeckIds: Array.isArray(parsed.savedSystemDeckIds)
           ? parsed.savedSystemDeckIds
           : [],
+        clonedCommunityDeckIds: Array.isArray(parsed.clonedCommunityDeckIds)
+          ? parsed.clonedCommunityDeckIds
+          : [],
         audioVolumePercent:
           typeof parsed.audioVolumePercent === 'number'
             ? Math.max(0, Math.min(100, parsed.audioVolumePercent))
@@ -212,6 +216,7 @@ export function loadUserVocabState(userId?: string | null): UserVocabPartitionSt
     sessionHistory: [],
     pinnedRoadmapIds: ['roadmap_b1_master', 'roadmap_listening_parts'],
     savedSystemDeckIds: [],
+    clonedCommunityDeckIds: [],
     audioVolumePercent: 70,
     leaderboardOptIn: false,
     migratedLegacyKnown: false,

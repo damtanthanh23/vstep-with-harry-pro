@@ -18,7 +18,9 @@ service cloud.firestore {
       return isSignedIn() && (
         request.auth.token.email == 'damtanthanh23@gmail.com' ||
         request.auth.token.email == 'admin@gmail.com' ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'co_teacher'])
       );
     }
 
@@ -49,26 +51,47 @@ service cloud.firestore {
         && (!('uid' in request.resource.data) || request.resource.data.uid == userId)) || isAdmin();
       allow delete: if isOwner(userId) || isAdmin();
 
-      // Exam attempts history
+      // Exam attempts history (read allowed for authenticated learners for the shared leaderboard)
       match /attempts/{attemptId} {
-        allow read, write: if isOwner(userId) || isAdmin();
+        allow read: if isSignedIn();
+        allow write: if isOwner(userId) || isAdmin();
       }
 
       // In-progress exam & practice state (auto-save, pause timers, answers)
       match /inProgress/{testId} {
-        allow read, write: if isOwner(userId) || isAdmin();
+        allow read: if isSignedIn();
+        allow write: if isOwner(userId) || isAdmin();
       }
 
       // Vocabulary Spaced Repetition (Anki SM-2 & Quizlet progress)
       match /vocabSrs/{docId} {
-        allow read, write: if isOwner(userId) || isAdmin();
+        allow read: if isSignedIn();
+        allow write: if isOwner(userId) || isAdmin();
+      }
+
+      // User personal vocab decks
+      match /vocab_decks/{deckId} {
+        allow read: if isSignedIn();
+        allow write: if isOwner(userId) || isAdmin();
+      }
+
+      // User vocab partition state
+      match /vocab_state/{stateId} {
+        allow read: if isSignedIn();
+        allow write: if isOwner(userId) || isAdmin();
       }
     }
 
-    // Global settings (e.g., deleted_tests list and exam_tags managed by Admin/Teachers)
+    // Official & Global VSTEP B1 Vocabulary Topics & Decks
+    match /vocab_b1_topics/{topicId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // Global settings (e.g., deleted_tests list, exam_tags, and b1_vocab_database metadata)
     match /settings/{docId} {
       allow read: if true;
-      allow create, update, delete: if isAdmin() || docId == 'exam_tags' || docId == 'deleted_tests';
+      allow create, update, delete: if isAdmin() || docId == 'exam_tags' || docId == 'deleted_tests' || docId == 'b1_vocab_database';
     }
 
     // Persistent Audio Chunks for Custom Exam MP3s

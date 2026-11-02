@@ -1,5 +1,10 @@
+import { doc, getDoc } from 'firebase/firestore';
+import { db, safeSetDoc, canWriteToFirestore } from '../firebase';
+
 const IDB_NAME = 'langcert_audio_storage_v1';
 const IDB_STORE = 'audio_blobs';
+const CLOUD_CHUNK_CHAR_LIMIT = 550000; // ~550KB per Firestore document (well below 1MiB limit)
+const INLINE_SPEAKING_DATA_URL_MAX_CHARS = 220000; // ~220KB max inline per part so 3 parts fit comfortably in 1 Firestore doc
 
 interface StoredAudioRecord {
   key: string;
@@ -22,6 +27,31 @@ export function cleanAudioStorageKey(rawKey: string): string {
     .replace(/^idb-audio:\/\//, '')
     .split('?')[0]
     .replace(/[^a-zA-Z0-9_.-]/g, '_');
+}
+
+/**
+ * Sanitizes key strictly for Firestore `/test_audio_chunks/{chunkId}` rules (`^[a-zA-Z0-9_\-]+$`)
+ */
+export function toFirestoreChunkKey(rawKey: string): string {
+  const cleaned = cleanAudioStorageKey(rawKey)
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 95);
+  return cleaned || 'audio_default';
+}
+
+export function blobToBase64DataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Failed to convert Blob to base64 DataURL'));
+      }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
 
 function openAudioDatabase(): Promise<IDBDatabase> {
@@ -139,10 +169,144 @@ export function base64ToBlob(base64: string, mimeType = 'audio/mpeg'): Blob {
 }
 
 /**
- * Persists an uploaded audio File/Blob directly into IndexedDB (zero Firestore quota usage,
- * supports large MP3 files without hitting Firestore's 20k daily free write limit).
- * Returns a versioned `idb-audio://key?v=timestamp` URI so uploading a different file
- * always triggers immediate reload in React and AudioManager.
+ * Splits an audio Blob into ~550KB base64 chunks and stores them in Cloud Firestore
+ * `/test_audio_chunks/{chunkKey}_meta` and `/test_audio_chunks/{chunkKey}_c0..N`
+ * so any device (Students or Admin) can stream/reconstruct the audio seamlessly.
+ */
+export async function saveAudioBlobToCloudChunks(
+  rawKey: string,
+  blob: Blob,
+  fileName = 'audio.mp3'
+): Promise<boolean> {
+  if (!canWriteToFirestore()) return false;
+  try {
+    const chunkKey = toFirestoreChunkKey(rawKey);
+    const dataUrl = await blobToBase64DataUrl(blob);
+    const rawBase64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+    if (!rawBase64) return false;
+
+    const chunks: string[] = [];
+    for (let i = 0; i < rawBase64.length; i += CLOUD_CHUNK_CHAR_LIMIT) {
+      chunks.push(rawBase64.slice(i, i + CLOUD_CHUNK_CHAR_LIMIT));
+    }
+
+    // Cap at 35 chunks (~14MB MP3) to prevent excessive Firestore writes
+    if (chunks.length > 35) {
+      console.warn('Audio file exceeds 14MB cloud chunk limit; saved in local IndexedDB only.');
+      return false;
+    }
+
+    const now = Date.now();
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkDocRef = doc(db, 'test_audio_chunks', `${chunkKey}_c${i}`);
+      await safeSetDoc(chunkDocRef, {
+        key: chunkKey,
+        index: i,
+        data: chunks[i],
+        updatedAt: now,
+      });
+    }
+
+    const metaDocRef = doc(db, 'test_audio_chunks', `${chunkKey}_meta`);
+    await safeSetDoc(metaDocRef, {
+      key: chunkKey,
+      fileName,
+      mimeType: blob.type || 'audio/mpeg',
+      totalChunks: chunks.length,
+      updatedAt: now,
+    });
+
+    return true;
+  } catch (err) {
+    console.warn('Cloud audio chunk upload notice:', err);
+    return false;
+  }
+}
+
+/**
+ * Downloads and reassembles an audio Blob from Cloud Firestore `/test_audio_chunks/{chunkKey}_meta`
+ */
+export async function loadAudioBlobFromCloudChunks(
+  rawKey: string
+): Promise<{ blob: Blob; fileName: string } | null> {
+  try {
+    const chunkKey = toFirestoreChunkKey(rawKey);
+    const metaRef = doc(db, 'test_audio_chunks', `${chunkKey}_meta`);
+    const metaSnap = await getDoc(metaRef);
+    if (!metaSnap.exists()) return null;
+
+    const meta = metaSnap.data() as {
+      totalChunks?: number;
+      mimeType?: string;
+      fileName?: string;
+    };
+    const totalChunks = Number(meta?.totalChunks) || 0;
+    if (totalChunks <= 0 || totalChunks > 50) return null;
+
+    const chunkPromises: Promise<string>[] = [];
+    for (let i = 0; i < totalChunks; i++) {
+      const cRef = doc(db, 'test_audio_chunks', `${chunkKey}_c${i}`);
+      chunkPromises.push(
+        getDoc(cRef).then((snap) => (snap.exists() ? String(snap.data()?.data || '') : ''))
+      );
+    }
+
+    const parts = await Promise.all(chunkPromises);
+    if (parts.some((p) => !p)) return null;
+
+    const combinedBase64 = parts.join('');
+    const blob = base64ToBlob(combinedBase64, meta.mimeType || 'audio/mpeg');
+    return {
+      blob,
+      fileName: meta.fileName || `${chunkKey}.mp3`,
+    };
+  } catch (err) {
+    console.warn('Cloud audio chunk load notice:', err);
+    return null;
+  }
+}
+
+/**
+ * Persists a student's Speaking voice recording (compressed Opus/WebM) for cross-device & Admin playback.
+ * - If the base64 DataURL is <= 220KB, returns the inline `data:audio/webm;base64,...` directly so it saves inside `speakingSubmission`.
+ * - If larger, stores in IndexedDB + Cloud Firestore chunks (`test_audio_chunks`) and returns `idb-audio://spk_...`.
+ */
+export async function persistSpeakingAudioBlob(
+  blob: Blob,
+  partNumber: 1 | 2 | 3
+): Promise<{ playableUrl: string; persistentDataUrl: string }> {
+  const playableUrl = URL.createObjectURL(blob);
+  try {
+    const dataUrl = await blobToBase64DataUrl(blob);
+    if (dataUrl.length <= INLINE_SPEAKING_DATA_URL_MAX_CHARS) {
+      activeObjectUrlCache.set(dataUrl, playableUrl);
+      return {
+        playableUrl,
+        persistentDataUrl: dataUrl,
+      };
+    }
+
+    const spkKey = `spk_${Date.now()}_p${partNumber}`;
+    await saveAudioToIndexedDB(spkKey, blob, `speaking_part${partNumber}.webm`);
+    const idbUri = `idb-audio://${spkKey}`;
+    activeObjectUrlCache.set(idbUri, playableUrl);
+    activeObjectUrlCache.set(spkKey, playableUrl);
+    saveAudioBlobToCloudChunks(spkKey, blob, `speaking_part${partNumber}.webm`).catch(() => {});
+    return {
+      playableUrl,
+      persistentDataUrl: idbUri,
+    };
+  } catch {
+    return {
+      playableUrl,
+      persistentDataUrl: playableUrl,
+    };
+  }
+}
+
+/**
+ * Persists an uploaded audio File/Blob into IndexedDB AND syncs chunks to Cloud Firestore
+ * so students on any computer/phone can stream the custom exam Listening MP3.
  */
 export async function persistExamAudioFile(
   file: File,
@@ -153,6 +317,9 @@ export async function persistExamAudioFile(
   const safeKey = cleanAudioStorageKey(rawKey);
   const versionedIdbUri = await saveAudioToIndexedDB(safeKey, file, file.name);
   const playableUrl = activeObjectUrlCache.get(versionedIdbUri) || URL.createObjectURL(file);
+
+  // Sync audio chunks to Cloud Firestore in background for multi-device playback
+  saveAudioBlobToCloudChunks(safeKey, file, file.name).catch(() => {});
 
   return {
     persistentUrl: versionedIdbUri,
@@ -186,7 +353,7 @@ export function normalizeExternalAudioUrl(url: string): string {
 
 /**
  * Resolves any stored audio URL (`idb-audio://...`, `data:audio/...`, stale `blob:...`, or remote URL)
- * into a guaranteed playable browser URL.
+ * into a guaranteed playable browser URL, with automatic Cloud Firestore chunk recovery.
  */
 export async function resolvePlayableAudioUrl(
   rawUrl: string,
@@ -200,7 +367,7 @@ export async function resolvePlayableAudioUrl(
     return activeObjectUrlCache.get(trimmed)!;
   }
 
-  // 2. Handle idb-audio:// key (with or without ?v=timestamp)
+  // 2. Handle idb-audio:// key (with or without ?v=timestamp) -> local IndexedDB first, then Cloud Firestore chunks
   if (trimmed.startsWith('idb-audio://')) {
     const cleanKey = cleanAudioStorageKey(trimmed);
     if (activeObjectUrlCache.has(cleanKey)) {
@@ -209,9 +376,20 @@ export async function resolvePlayableAudioUrl(
       return cachedUrl;
     }
 
-    const blob = await loadAudioBlobFromIndexedDB(cleanKey);
-    if (blob) {
-      const objUrl = URL.createObjectURL(blob);
+    const localBlob = await loadAudioBlobFromIndexedDB(cleanKey);
+    if (localBlob) {
+      const objUrl = URL.createObjectURL(localBlob);
+      activeObjectUrlCache.set(trimmed, objUrl);
+      activeObjectUrlCache.set(cleanKey, objUrl);
+      activeObjectUrlCache.set(`idb-audio://${cleanKey}`, objUrl);
+      return objUrl;
+    }
+
+    // Not in local IndexedDB (e.g. Student/Admin opened on a different device) -> fetch from Cloud Firestore chunks
+    const cloudAudio = await loadAudioBlobFromCloudChunks(cleanKey);
+    if (cloudAudio?.blob) {
+      await saveAudioToIndexedDB(cleanKey, cloudAudio.blob, cloudAudio.fileName);
+      const objUrl = activeObjectUrlCache.get(cleanKey) || URL.createObjectURL(cloudAudio.blob);
       activeObjectUrlCache.set(trimmed, objUrl);
       activeObjectUrlCache.set(cleanKey, objUrl);
       activeObjectUrlCache.set(`idb-audio://${cleanKey}`, objUrl);
@@ -245,7 +423,7 @@ export async function resolvePlayableAudioUrl(
     }
   }
 
-  // 5. Try recovering by fallbackFileName in IndexedDB if rawUrl was a stale blob: or empty
+  // 5. Try recovering by fallbackFileName in IndexedDB or Cloud if rawUrl was a stale blob: or empty
   if (fallbackFileName) {
     const safeFileKey = `file_${fallbackFileName.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
     if (activeObjectUrlCache.has(safeFileKey)) {

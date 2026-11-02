@@ -9,6 +9,10 @@ import {
   Trophy,
   Users,
   GraduationCap,
+  Database,
+  CloudCheck,
+  RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
 import { TestMetadata } from '../../types/exam';
 import { ExtendedVocabItem, UserVocabDeck, UserVocabFolder } from '../../types/vocab';
@@ -26,11 +30,25 @@ import {
   loadUserVocabState,
   runLegacyVocabMigrationIfNeeded,
 } from '../../services/vocabStorageService';
+import {
+  backupAllB1VocabToFirestore,
+  getB1VocabCloudStatus,
+  savePersonalDecksToCloud,
+  deletePersonalDeckFromCloud,
+  savePersonalFoldersToCloud,
+  fetchPersonalFoldersFromCloud,
+  fetchPersonalDecksFromCloud,
+  fetchCommunityDecksFromCloud,
+  syncUserVocabStateToCloud,
+  fetchUserVocabStateFromCloud,
+  B1VocabCloudSummary,
+} from '../../services/vocabCloudService';
 import { auth } from '../../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { VocabRoadmapsTab } from './vocab/VocabRoadmapsTab';
 import { VocabMyDecksTab } from './vocab/VocabMyDecksTab';
 import { VocabStudyHubTab } from './vocab/VocabStudyHubTab';
+import { VocabCommunityTab } from './vocab/VocabCommunityTab';
 import { VocabDeckDetailView } from './vocab/VocabDeckDetailView';
 import { VocabGameRunner, RunnerMode } from './vocab/VocabGameRunner';
 import { VocabSrsModal } from './vocab/VocabSrsModal';
@@ -44,8 +62,8 @@ export interface VocabularyB1ViewProps {
   selectedTestFilterId?: string | null;
   onClearTestFilter?: () => void;
   tests?: TestMetadata[];
-  activeWorkspace?: 'study_hub' | 'roadmaps' | 'my_decks';
-  onWorkspaceChange?: (workspace: 'study_hub' | 'roadmaps' | 'my_decks') => void;
+  activeWorkspace?: 'study_hub' | 'roadmaps' | 'my_decks' | 'community';
+  onWorkspaceChange?: (workspace: 'study_hub' | 'roadmaps' | 'my_decks' | 'community') => void;
 }
 
 interface ActiveGameSessionConfig {
@@ -112,6 +130,7 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
 
   const [personalDecks, setPersonalDecks] = useState<UserVocabDeck[]>([]);
   const [folders, setFolders] = useState<UserVocabFolder[]>([]);
+  const [cloudCommunityDecks, setCloudCommunityDecks] = useState<UserVocabDeck[]>([]);
 
   useEffect(() => {
     try {
@@ -164,12 +183,169 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
     }
   }, [currentUserId, personalDecksStorageKey, personalFoldersStorageKey]);
 
+  // Cloud Firestore Backup Status & Actions
+  const [cloudStatus, setCloudStatus] = useState<B1VocabCloudSummary | null>(null);
+  const [isBackingUpCloud, setIsBackingUpCloud] = useState<boolean>(false);
+  const [cloudBackupSuccessMessage, setCloudBackupSuccessMessage] = useState<string | null>(null);
+
+  // Auto-load status & auto-backup to Firestore on mount if never backed up
+  useEffect(() => {
+    let isMounted = true;
+    getB1VocabCloudStatus().then((status) => {
+      if (!isMounted) return;
+      setCloudStatus(status);
+      if (!status) {
+        // Automatically perform first-time backup to Firestore
+        backupAllB1VocabToFirestore(currentUserId).then((res) => {
+          if (!isMounted) return;
+          if (res.success) {
+            getB1VocabCloudStatus().then((s) => isMounted && setCloudStatus(s));
+          }
+        });
+      }
+    });
+
+    fetchCommunityDecksFromCloud().then((commDecks) => {
+      if (isMounted) setCloudCommunityDecks(commDecks);
+    });
+
+    // Load cloud personal decks, personal folders & cloud vocab state if signed in
+    if (isUserAuthenticated && currentUserId !== 'guest') {
+      fetchPersonalDecksFromCloud(currentUserId).then((cloudDecks) => {
+        if (!isMounted) return;
+        if (cloudDecks.length > 0) {
+          setPersonalDecks((prev) => {
+            const mergedMap = new Map<string, UserVocabDeck>();
+            prev.forEach((d) => mergedMap.set(d.id, d));
+            cloudDecks.forEach((cd) => {
+              const existing = mergedMap.get(cd.id);
+              if (!existing || (cd.updatedAt || 0) >= (existing.updatedAt || 0)) {
+                mergedMap.set(cd.id, cd);
+              }
+            });
+            const merged = Array.from(mergedMap.values());
+            try {
+              localStorage.setItem(personalDecksStorageKey, JSON.stringify(merged));
+            } catch {
+              // Ignore
+            }
+            // Push any local-only decks up to cloud so everything is unified
+            const cloudIds = new Set(cloudDecks.map((c) => c.id));
+            const localOnlyDecks = merged.filter((d) => !cloudIds.has(d.id));
+            if (localOnlyDecks.length > 0) {
+              savePersonalDecksToCloud(currentUserId, localOnlyDecks).catch(() => {});
+            }
+            return merged;
+          });
+        } else {
+          // First time on cloud -> push local personal decks up to Firestore
+          try {
+            const rawLocal = localStorage.getItem(personalDecksStorageKey);
+            if (rawLocal) {
+              const parsedLocal: UserVocabDeck[] = JSON.parse(rawLocal);
+              if (Array.isArray(parsedLocal) && parsedLocal.length > 0) {
+                savePersonalDecksToCloud(currentUserId, parsedLocal).catch(() => {});
+              }
+            }
+          } catch {
+            // Ignore
+          }
+        }
+      });
+
+      fetchPersonalFoldersFromCloud(currentUserId).then((cloudFolders) => {
+        if (!isMounted) return;
+        if (cloudFolders && cloudFolders.length > 0) {
+          setFolders((prev) => {
+            const folderMap = new Map<string, UserVocabFolder>();
+            prev.forEach((f) => folderMap.set(f.id, f));
+            cloudFolders.forEach((cf) => folderMap.set(cf.id, cf));
+            const merged = Array.from(folderMap.values());
+            try {
+              localStorage.setItem(personalFoldersStorageKey, JSON.stringify(merged));
+            } catch {
+              // Ignore
+            }
+            if (merged.length > cloudFolders.length) {
+              savePersonalFoldersToCloud(currentUserId, merged).catch(() => {});
+            }
+            return merged;
+          });
+        } else {
+          try {
+            const rawFolders = localStorage.getItem(personalFoldersStorageKey);
+            if (rawFolders) {
+              const parsedFolders: UserVocabFolder[] = JSON.parse(rawFolders);
+              if (Array.isArray(parsedFolders) && parsedFolders.length > 0) {
+                savePersonalFoldersToCloud(currentUserId, parsedFolders).catch(() => {});
+              }
+            }
+          } catch {
+            // Ignore
+          }
+        }
+      });
+
+      fetchUserVocabStateFromCloud(currentUserId).then((mergedCloudState) => {
+        if (!isMounted || !mergedCloudState) return;
+        setVocabState(mergedCloudState);
+      });
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUserId, isUserAuthenticated, personalDecksStorageKey, personalFoldersStorageKey]);
+
+  const handleManualBackup = async () => {
+    setIsBackingUpCloud(true);
+    setCloudBackupSuccessMessage(null);
+    try {
+      const res = await backupAllB1VocabToFirestore(currentUserId, currentUserDisplayName || undefined);
+      if (res.success) {
+        if (isUserAuthenticated && currentUserId !== 'guest') {
+          await savePersonalDecksToCloud(currentUserId, personalDecks);
+          await savePersonalFoldersToCloud(currentUserId, folders);
+          await syncUserVocabStateToCloud(currentUserId, vocabState, allDecks);
+        }
+        const updatedStatus = await getB1VocabCloudStatus();
+        setCloudStatus(updatedStatus);
+        setCloudBackupSuccessMessage(
+          `Đã sao lưu thành công ${res.totalTopics} chủ đề chính thức & ${res.totalWords} từ vựng lên database Firestore!`
+        );
+        setTimeout(() => setCloudBackupSuccessMessage(null), 6000);
+      } else {
+        setCloudBackupSuccessMessage(`Lỗi sao lưu: ${res.error || 'Vui lòng thử lại'}`);
+      }
+    } finally {
+      setIsBackingUpCloud(false);
+    }
+  };
+
   const savePersonalDecks = (nextDecks: UserVocabDeck[]) => {
     setPersonalDecks(nextDecks);
     try {
       localStorage.setItem(personalDecksStorageKey, JSON.stringify(nextDecks));
     } catch (e) {
       console.warn('Failed to save personal decks:', e);
+    }
+    // Real-time Cloud Firestore sync (including publishing public decks to Community)
+    if (isUserAuthenticated && currentUserId !== 'guest') {
+      savePersonalDecksToCloud(currentUserId, nextDecks, currentUserDisplayName || undefined).then(
+        () => {
+          if (nextDecks.some((d) => d.visibility === 'public')) {
+            fetchCommunityDecksFromCloud().then(setCloudCommunityDecks).catch(() => {});
+          }
+        }
+      );
+    }
+  };
+
+  const handleVocabStateChange = (nextState: UserVocabPartitionState) => {
+    setVocabState(nextState);
+    // Real-time Cloud Firestore sync
+    if (isUserAuthenticated && currentUserId !== 'guest') {
+      syncUserVocabStateToCloud(currentUserId, nextState, allDecks);
     }
   };
 
@@ -179,6 +355,10 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
       localStorage.setItem(personalFoldersStorageKey, JSON.stringify(nextFolders));
     } catch (e) {
       console.warn('Failed to save folders:', e);
+    }
+    // Real-time Cloud Firestore sync for personal vocabulary folders
+    if (isUserAuthenticated && currentUserId !== 'guest') {
+      savePersonalFoldersToCloud(currentUserId, nextFolders);
     }
   };
 
@@ -249,13 +429,13 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
     }
   }, [allNormalizedItems, vocabState]);
 
-  // Navigation Workspace State ('roadmaps' | 'my_decks' | 'study_hub')
-  const [internalWorkspace, setInternalWorkspace] = useState<'roadmaps' | 'my_decks' | 'study_hub'>(
-    propWorkspace || 'roadmaps'
-  );
+  // Navigation Workspace State ('roadmaps' | 'my_decks' | 'study_hub' | 'community')
+  const [internalWorkspace, setInternalWorkspace] = useState<
+    'roadmaps' | 'my_decks' | 'study_hub' | 'community'
+  >(propWorkspace || 'roadmaps');
   const currentWorkspace = propWorkspace || internalWorkspace;
 
-  const handleSelectWorkspace = (ws: 'roadmaps' | 'my_decks' | 'study_hub') => {
+  const handleSelectWorkspace = (ws: 'roadmaps' | 'my_decks' | 'study_hub' | 'community') => {
     setInternalWorkspace(ws);
     if (onWorkspaceChange) onWorkspaceChange(ws);
     setSelectedDeckId(null);
@@ -292,6 +472,7 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
     title: string;
     description: string;
     folderId?: string;
+    visibility?: 'private' | 'public';
   }) => {
     const newDeck: UserVocabDeck = {
       id: `deck_custom_${Date.now()}`,
@@ -301,6 +482,9 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
       icon: '📚',
       folderId: data.folderId,
       isCustom: true,
+      visibility: data.visibility || 'private',
+      authorId: currentUserId,
+      authorName: currentUserDisplayName || 'Học viên VSTEP',
       createdAt: Date.now(),
       updatedAt: Date.now(),
       itemCount: 0,
@@ -313,7 +497,12 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
 
   const handleUpdatePersonalDeckMeta = (
     deckId: string,
-    data: { title: string; description: string; folderId?: string }
+    data: {
+      title: string;
+      description: string;
+      folderId?: string;
+      visibility?: 'private' | 'public';
+    }
   ) => {
     const next = personalDecks.map((d) =>
       d.id === deckId
@@ -323,6 +512,9 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
             title: data.title,
             description: data.description,
             folderId: data.folderId,
+            visibility: data.visibility || d.visibility || 'private',
+            authorId: d.authorId || currentUserId,
+            authorName: d.authorName || currentUserDisplayName || 'Học viên VSTEP',
             updatedAt: Date.now(),
           }
         : d
@@ -333,6 +525,9 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
   const handleDeletePersonalDeck = (deckId: string) => {
     const next = personalDecks.filter((d) => d.id !== deckId);
     savePersonalDecks(next);
+    if (isUserAuthenticated && currentUserId !== 'guest') {
+      deletePersonalDeckFromCloud(currentUserId, deckId).catch(() => {});
+    }
     if (selectedDeckId === deckId) setSelectedDeckId(null);
   };
 
@@ -497,7 +692,7 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
         sessionItems={activeGameConfig.sessionItems}
         distractorPool={activeGameConfig.distractorPool}
         vocabState={vocabState}
-        onVocabStateChange={setVocabState}
+        onVocabStateChange={handleVocabStateChange}
         onExitToDeck={() => setActiveGameSessionConfig(null)}
         onSwitchModeRequest={() => {
           const scopeDeckId =
@@ -529,6 +724,53 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Real-time Cloud Database Backup Banner */}
+      <div className="rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 p-3.5 sm:p-4 text-white shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0 backdrop-blur-xs">
+            <Database className="h-5 w-5 text-emerald-200" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-300 animate-pulse" />
+              <span className="font-black text-xs uppercase tracking-wider text-emerald-100">
+                Sao Lưu Thực Tế Trên Database Cloud Firestore
+              </span>
+            </div>
+            <div className="text-[11px] sm:text-xs text-emerald-50 mt-0.5">
+              Toàn bộ 15 Chủ đề chính thức VSTEP B1 & bộ từ vựng cá nhân ({cloudStatus?.totalWords || '850+'} từ) được sao lưu trên database:{' '}
+              <span className="font-mono font-bold text-white">
+                ai-studio-vsteptutor-6c9f7e6d-6d42-4864-9991-780c76d9f4dc
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 shrink-0">
+          {cloudStatus?.lastBackupAt && (
+            <span className="text-[11px] text-emerald-100 hidden sm:inline">
+              Sao lưu: {new Date(cloudStatus.lastBackupAt).toLocaleTimeString('vi-VN')} {new Date(cloudStatus.lastBackupAt).toLocaleDateString('vi-VN')}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleManualBackup}
+            disabled={isBackingUpCloud}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white text-emerald-800 hover:bg-emerald-50 text-xs font-black transition-colors cursor-pointer disabled:opacity-50 shadow-xs"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isBackingUpCloud ? 'animate-spin' : ''}`} />
+            <span>{isBackingUpCloud ? 'Đang sao lưu...' : 'Sao lưu lên Database ngay'}</span>
+          </button>
+        </div>
+      </div>
+
+      {cloudBackupSuccessMessage && (
+        <div className="rounded-xl bg-emerald-100 border border-emerald-300 p-3 text-xs font-bold text-emerald-900 flex items-center gap-2 animate-in fade-in">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+          <span>{cloudBackupSuccessMessage}</span>
+        </div>
+      )}
+
       {/* Top Vocabulary Navigation Header (Section 8) */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -571,21 +813,18 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
             Học từ của tôi
           </button>
 
-          {/* Disabled Upcoming Tabs per Section 8 */}
-          <span
-            className="hidden lg:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-400 text-xs font-semibold cursor-not-allowed"
-            title="Tính năng Cộng đồng đang được phát triển"
+          <button
+            type="button"
+            onClick={() => handleSelectWorkspace('community')}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition ${
+              currentWorkspace === 'community' && !selectedDeckId
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
           >
-            <Users className="w-3.5 h-3.5" />
-            Cộng đồng (Sắp mở)
-          </span>
-          <span
-            className="hidden xl:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-400 text-xs font-semibold cursor-not-allowed"
-            title="Tính năng Lớp học đang được phát triển"
-          >
-            <GraduationCap className="w-3.5 h-3.5" />
-            Lớp học (Sắp mở)
-          </span>
+            <Users className="w-4 h-4" />
+            Cộng đồng Cloud
+          </button>
         </div>
 
         {/* Right Quick Actions & Points Pill */}
@@ -637,7 +876,7 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
           deckSubtitle={activeDeck.description}
           items={activeDeckItems}
           vocabState={vocabState}
-          onVocabStateChange={setVocabState}
+          onVocabStateChange={handleVocabStateChange}
           isPersonalDeck={isPersonalActiveDeck}
           onBack={() => {
             setSelectedDeckId(null);
@@ -697,7 +936,7 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
           systemDecks={systemDecks}
           normalizedByDeckId={normalizedByDeckId}
           vocabState={vocabState}
-          onVocabStateChange={setVocabState}
+          onVocabStateChange={handleVocabStateChange}
           onSelectDeck={(deckId) => setSelectedDeckId(deckId)}
           onOpenSrsForRoadmap={(rm) =>
             setActiveSrsModal({
@@ -752,6 +991,52 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
                 title: d.title || d.name || 'Bộ từ',
               })),
               scopeItems: pItems,
+            });
+          }}
+        />
+      ) : currentWorkspace === 'community' ? (
+        <VocabCommunityTab
+          cloudCommunityDecks={cloudCommunityDecks}
+          clonedDeckIds={vocabState.clonedCommunityDeckIds || []}
+          onRefreshCloudDecks={() => {
+            fetchCommunityDecksFromCloud().then(setCloudCommunityDecks).catch(() => {});
+          }}
+          onCloneDeck={(commDeck) => {
+            const clonedId = `cloned_${commDeck.id}`;
+            if (!personalDecks.some((d) => d.id === clonedId || d.id === commDeck.id)) {
+              const clonedDeck: UserVocabDeck = {
+                ...commDeck,
+                id: clonedId,
+                name: commDeck.title || commDeck.name,
+                title: commDeck.title || commDeck.name,
+                isCustom: true,
+                visibility: 'private',
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+              };
+              savePersonalDecks([clonedDeck, ...personalDecks]);
+            }
+            const nextClonedIds = Array.from(
+              new Set([...(vocabState.clonedCommunityDeckIds || []), commDeck.id])
+            );
+            handleVocabStateChange({
+              ...vocabState,
+              clonedCommunityDeckIds: nextClonedIds,
+            });
+          }}
+          onStartStudyItems={(rawItems, title) => {
+            const tempDeckId = `comm_study_${Date.now()}`;
+            const normalized = rawItems.map((it, idx) => adaptVocabItem(it, tempDeckId, idx));
+            if (normalized.length === 0) return;
+            setActiveGameSessionConfig({
+              sessionId: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+              sessionKind: 'regular',
+              scopeType: 'deck',
+              scopeId: tempDeckId,
+              scopeTitle: title,
+              mode: 'flashcard',
+              sessionItems: normalized,
+              distractorPool: allNormalizedItems,
             });
           }}
         />
@@ -843,7 +1128,7 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
           availableDecks={activeSrsModal.availableDecks}
           scopeItems={activeSrsModal.scopeItems}
           vocabState={vocabState}
-          onVocabStateChange={setVocabState}
+          onVocabStateChange={handleVocabStateChange}
           onStartSrsSession={({ items, isEarlyPractice, scopeTitle }) => {
             const scopeInfo = activeSrsModal;
             setActiveSrsModal(null);

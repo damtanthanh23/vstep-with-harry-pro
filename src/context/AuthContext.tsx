@@ -12,10 +12,12 @@ import {
   doc,
   getDoc,
   setDoc,
+  onSnapshot,
 } from 'firebase/firestore';
 import { auth, googleProvider, db, safeSetDoc, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types/exam';
 import { saveUserNickname as saveStudyQuoteNickname } from '../data/vietnameseStudyQuotes';
+import { fetchUserVocabStateFromCloud } from '../services/vocabCloudService';
 
 const LOCAL_PROFILE_CACHE_KEY = 'langcert_user_profile_cache_v1';
 
@@ -88,13 +90,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
+    let unsubProfileDoc: (() => void) | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (unsubProfileDoc) {
+        unsubProfileDoc();
+        unsubProfileDoc = null;
+      }
+
       setCurrentUser(user);
       if (user) {
         const userEmail = (user.email || '').toLowerCase().trim();
         const userIsSuperAdmin = SUPER_ADMIN_EMAILS.includes(userEmail);
         setIsSuperAdmin(userIsSuperAdmin);
         const localCache = loadLocalProfileCache(user.uid);
+        const now = Date.now();
 
         try {
           const userDocRef = doc(db, 'users', user.uid);
@@ -102,19 +112,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           if (userSnap.exists()) {
             const data = userSnap.data() as UserProfile;
-            
+
             // If user is super admin, enforce admin role even if previous record differed
             const effectiveRole = userIsSuperAdmin ? 'admin' : (data.role || 'student');
             const updatedProfile: UserProfile = {
               ...localCache,
               ...data,
+              uid: user.uid,
               role: effectiveRole,
-              lastActiveAt: Date.now(),
+              lastLoginAt: now,
+              lastActiveAt: now,
             };
-            
-            // Sync role or lastActiveAt to Firestore
+
+            // Sync role, lastLoginAt, lastActiveAt, and any local profile fields to Firestore
             const syncPayload: Record<string, unknown> = {
-              lastActiveAt: Date.now(),
+              uid: user.uid,
+              lastLoginAt: now,
+              lastActiveAt: now,
             };
             if (userIsSuperAdmin && data.role !== 'admin') {
               syncPayload.role = 'admin';
@@ -127,6 +141,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
             if (!data.photoURL && user.photoURL) {
               syncPayload.photoURL = user.photoURL;
+            }
+            if (!data.phone && localCache.phone) {
+              syncPayload.phone = localCache.phone;
+            }
+            if (!data.birthDate && localCache.birthDate) {
+              syncPayload.birthDate = localCache.birthDate;
+            }
+            if (!data.targetScores && localCache.targetScores) {
+              syncPayload.targetScores = localCache.targetScores;
             }
 
             try {
@@ -151,11 +174,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ...localCache,
               uid: user.uid,
               email: user.email || '',
-              displayName: user.displayName || 'Học viên VSTEP',
+              displayName: user.displayName || localCache.displayName || 'Học viên VSTEP',
               ...(user.photoURL ? { photoURL: user.photoURL } : {}),
               role: effectiveRole,
-              createdAt: Date.now(),
-              lastActiveAt: Date.now(),
+              createdAt: now,
+              lastLoginAt: now,
+              lastActiveAt: now,
             };
             try {
               await setDoc(userDocRef, newProfile, { merge: true });
@@ -167,6 +191,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setIsAdmin(userIsSuperAdmin);
             setIsCoTeacher(false);
           }
+
+          // Background sync of vocabulary partition state so users/{uid}.vocabStats is always up-to-date
+          fetchUserVocabStateFromCloud(user.uid).catch(() => {});
+
+          // Real-time listener on users/{uid} so changes from any device or modal stay unified
+          unsubProfileDoc = onSnapshot(
+            userDocRef,
+            (liveSnap) => {
+              if (!liveSnap.exists()) return;
+              const liveData = liveSnap.data() as UserProfile;
+              const liveRole = userIsSuperAdmin ? 'admin' : (liveData.role || 'student');
+              const mergedLive: UserProfile = {
+                ...loadLocalProfileCache(user.uid),
+                ...liveData,
+                uid: user.uid,
+                role: liveRole,
+              };
+              saveLocalProfileCache(user.uid, mergedLive);
+              setUserProfile(mergedLive);
+              setIsAdmin(userIsSuperAdmin || liveRole === 'admin');
+              setIsCoTeacher(liveRole === 'co_teacher');
+            },
+            () => {}
+          );
         } catch (err) {
           handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
           // Fallback minimal local profile if firestore read has network/permission hitch
@@ -178,7 +226,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             displayName: localCache.displayName || user.displayName || 'Học viên VSTEP',
             photoURL: user.photoURL || undefined,
             role: effectiveRole,
-            createdAt: Date.now(),
+            createdAt: now,
+            lastLoginAt: now,
+            lastActiveAt: now,
           });
           setIsAdmin(userIsSuperAdmin);
           setIsCoTeacher(false);
@@ -204,7 +254,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (unsubProfileDoc) {
+        unsubProfileDoc();
+      }
+    };
   }, []);
 
   // 90-second visibility-aware online heartbeat

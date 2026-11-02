@@ -103,6 +103,7 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
   // Independent Word Table Search & Filter (Section 3.4)
   const [tableSearch, setTableSearch] = useState<string>('');
   const [tableStatusFilter, setTableStatusFilter] = useState<'all' | 'known' | 'unknown'>('all');
+  const [playingWordId, setPlayingWordId] = useState<string | null>(null);
 
   // Manual Word Add/Edit Modal State
   const [editingWordModal, setEditingWordModal] = useState<{
@@ -664,16 +665,27 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                         <td className="py-3 px-3 text-center">
                           <button
                             type="button"
-                            onClick={() =>
+                            onClick={() => {
+                              setPlayingWordId(item.id);
                               playDictionaryAudio(item.word, {
                                 customAudioUrl: item.audioUrl,
-                                volumePercent: vocabState.audioVolumePercent,
-                              })
-                            }
-                            className="p-2 rounded-xl text-indigo-600 hover:bg-indigo-100/70 transition"
-                            title="Nghe phát âm"
+                                volumePercent: vocabState.audioVolumePercent || 85,
+                                onEnd: () => setPlayingWordId(null),
+                                onError: () => setPlayingWordId(null),
+                              });
+                            }}
+                            className={`p-2 rounded-xl transition cursor-pointer ${
+                              playingWordId === item.id
+                                ? 'bg-amber-100 text-amber-700 ring-2 ring-amber-400 scale-110 shadow-xs'
+                                : 'text-indigo-600 hover:bg-indigo-100/70 hover:scale-105'
+                            }`}
+                            title={playingWordId === item.id ? 'Đang phát âm...' : 'Bấm để nghe phát âm tiếng Anh chuẩn'}
                           >
-                            <Volume2 className="w-4 h-4" />
+                            <Volume2
+                              className={`w-4 h-4 ${
+                                playingWordId === item.id ? 'animate-bounce text-amber-600' : ''
+                              }`}
+                            />
                           </button>
                         </td>
                         <td className="py-3 px-3">

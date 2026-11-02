@@ -105,6 +105,7 @@ export interface TestMetadata {
   isCustom?: boolean;
   status?: 'draft' | 'published';
   categoryTag?: string;
+  level?: string;
   createdAt?: number;
   updatedAt?: number;
   creatorId?: string;
@@ -127,6 +128,7 @@ export function isDraftTest(test?: TestMetadata | null): boolean {
 
 export interface InProgressAttempt {
   testId: string;
+  testTitle?: string;
   mode: 'exam' | 'practice';
   selectedParts?: string[]; // e.g., ['L1', 'L2', 'L3', 'R1', 'R2', 'R3', 'R4', 'W1', 'W2', 'S1', 'S2', 'S3']
   answers: Record<number, string>;
@@ -175,6 +177,16 @@ export interface UserProfile {
   age?: number;
   targetScores?: UserTargetScores;
   vocabStats?: import('./studentManagement').UserVocabStats;
+  activeDraftSummary?: import('./studentManagement').UserActiveDraftSummary | null;
+  preferences?: import('./studentManagement').UserPreferences;
+  totalExamAttempts?: number;
+  bestVstepBandScore?: number;
+  bestRawScore?: number;
+  lastAttemptAt?: number;
+  lastTestTitle?: string;
+  currentStreak?: number;
+  longestStreak?: number;
+  pointsBalance?: number;
   photoURL?: string;
   role: 'admin' | 'co_teacher' | 'student';
   assignedBy?: string;
@@ -203,6 +215,8 @@ export interface UserExamAttempt {
   answers?: Record<number, string>;
   writingSubmission?: WritingSubmission;
   speakingSubmission?: SpeakingSubmission;
+  aiWritingEvaluation?: any;
+  aiDiagnosticReport?: any;
   selectedParts?: string[];
 }
 

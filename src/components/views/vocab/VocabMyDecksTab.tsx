@@ -25,10 +25,20 @@ export interface VocabMyDecksTabProps {
   normalizedByDeckId: Record<string, NormalizedVocabItem[]>;
   vocabState: UserVocabPartitionState;
   onSelectDeck: (deckId: string) => void;
-  onCreateDeck: (data: { title: string; description: string; folderId?: string }) => void;
+  onCreateDeck: (data: {
+    title: string;
+    description: string;
+    folderId?: string;
+    visibility?: 'private' | 'public';
+  }) => void;
   onUpdateDeckMeta: (
     deckId: string,
-    data: { title: string; description: string; folderId?: string }
+    data: {
+      title: string;
+      description: string;
+      folderId?: string;
+      visibility?: 'private' | 'public';
+    }
   ) => void;
   onDeleteDeck: (deckId: string) => void;
   onCreateFolder: (name: string) => void;
@@ -68,6 +78,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
     title: string;
     description: string;
     folderId: string;
+    visibility: 'private' | 'public';
   } | null>(null);
 
   // Create / Rename Folder Modal
@@ -174,6 +185,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                   selectedFolderFilter !== 'ALL' && selectedFolderFilter !== 'UNCATEGORIZED'
                     ? selectedFolderFilter
                     : '',
+                visibility: 'private',
               })
             }
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-bold shadow-xs transition"
@@ -301,6 +313,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                   title: '',
                   description: '',
                   folderId: '',
+                  visibility: 'private',
                 })
               }
               className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-bold"
@@ -329,10 +342,17 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
               >
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-bold">
-                      <Folder className="w-3 h-3 text-amber-500" />
-                      {folderName || 'Chưa phân loại'}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-bold">
+                        <Folder className="w-3 h-3 text-amber-500" />
+                        {folderName || 'Chưa phân loại'}
+                      </span>
+                      {deck.visibility === 'public' && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
+                          🌐 Cộng đồng
+                        </span>
+                      )}
+                    </div>
 
                     <div className="flex items-center gap-1">
                       <button
@@ -344,10 +364,11 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                             title: deck.title || deck.name || '',
                             description: deck.description || '',
                             folderId: deck.folderId || '',
+                            visibility: deck.visibility === 'public' ? 'public' : 'private',
                           })
                         }
                         className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-                        title="Sửa tên / Chuyển thư mục"
+                        title="Sửa tên / Chuyển thư mục / Chia sẻ Cộng đồng"
                       >
                         <Edit3 className="w-4 h-4" />
                       </button>
@@ -538,6 +559,29 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                   ))}
                 </select>
               </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Quyền hiển thị & Chia sẻ Cloud:
+                </label>
+                <select
+                  value={deckModal.visibility}
+                  onChange={(e) =>
+                    setDeckModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            visibility: e.target.value === 'public' ? 'public' : 'private',
+                          }
+                        : null
+                    )
+                  }
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm bg-white font-semibold"
+                >
+                  <option value="private">🔒 Cá nhân (Chỉ mình tôi & Giáo viên quản lý)</option>
+                  <option value="public">🌐 Công khai lên Thư viện Cộng đồng Cloud</option>
+                </select>
+              </div>
             </div>
 
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
@@ -558,12 +602,14 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                       title: deckModal.title.trim(),
                       description: deckModal.description.trim(),
                       folderId: deckModal.folderId || undefined,
+                      visibility: deckModal.visibility,
                     });
                   } else if (deckModal.deckId) {
                     onUpdateDeckMeta(deckModal.deckId, {
                       title: deckModal.title.trim(),
                       description: deckModal.description.trim(),
                       folderId: deckModal.folderId || undefined,
+                      visibility: deckModal.visibility,
                     });
                   }
                   setDeckModal(null);

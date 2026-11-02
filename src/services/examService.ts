@@ -502,13 +502,116 @@ export async function recordUserAttempt(userId: string, attempt: UserExamAttempt
     const docRef = doc(db, 'users', userId, 'attempts', attempt.attemptId);
     const sanitizedAttempt = sanitizeForFirestore(attempt);
     await safeSetDoc(docRef, sanitizedAttempt);
+
+    // Also sync summary stats to top-level user doc for instant real-time leaderboard & admin cards
+    if (userId && userId !== 'guest') {
+      try {
+        const userDocRef = doc(db, 'users', userId);
+        const userSnap = await getDoc(userDocRef);
+        const userData = userSnap.exists() ? userSnap.data() : {};
+        const prevBestBand = Number(userData?.bestVstepBandScore) || 0;
+        const prevBestRaw = Number(userData?.bestRawScore) || 0;
+        const currentAttemptsCount = Number(userData?.totalExamAttempts) || 0;
+        const attemptBand =
+          typeof attempt.vstepBandScore === 'number' && attempt.vstepBandScore > 0
+            ? attempt.vstepBandScore
+            : Number((attempt.percentage / 10).toFixed(1));
+        const attemptRaw = Number(attempt.score) || 0;
+
+        await safeSetDoc(
+          userDocRef,
+          {
+            bestVstepBandScore: Math.max(prevBestBand, attemptBand),
+            bestRawScore: Math.max(prevBestRaw, attemptRaw),
+            totalExamAttempts: currentAttemptsCount + 1,
+            lastAttemptAt: attempt.completedAt || Date.now(),
+            lastTestTitle: attempt.testTitle || 'Bài thi VSTEP',
+            activeDraftSummary: null,
+            lastActiveAt: Date.now(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        console.warn('Notice updating user summary stats for leaderboard:', err);
+      }
+    }
   } catch (error) {
     console.warn('Saved attempt locally; Firestore sync notice:', error);
   }
 }
 
 /**
- * Fetch all exam attempts for a user
+ * Updates an existing exam attempt on Cloud Firestore and local backup with AI Writing Examiner evaluation
+ * or AI Diagnostic Report once grading completes in ResultsView.
+ */
+export async function updateAttemptAiEvaluationInFirestore(
+  userId: string,
+  attemptId: string,
+  patch: {
+    writingScore?: number;
+    speakingScore?: number;
+    vstepBandScore?: number;
+    aiWritingEvaluation?: any;
+    aiDiagnosticReport?: any;
+  }
+): Promise<void> {
+  if (!attemptId) return;
+  const safeUid = userId || 'guest';
+
+  try {
+    const key = `langcert_attempts_${safeUid}`;
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const existing: UserExamAttempt[] = JSON.parse(raw);
+      if (Array.isArray(existing)) {
+        const updated = existing.map((att) =>
+          att.attemptId === attemptId
+            ? {
+                ...att,
+                ...(patch.writingScore !== undefined ? { writingScore: patch.writingScore } : {}),
+                ...(patch.speakingScore !== undefined ? { speakingScore: patch.speakingScore } : {}),
+                ...(patch.vstepBandScore !== undefined ? { vstepBandScore: patch.vstepBandScore } : {}),
+                ...(patch.aiWritingEvaluation !== undefined
+                  ? { aiWritingEvaluation: patch.aiWritingEvaluation }
+                  : {}),
+                ...(patch.aiDiagnosticReport !== undefined
+                  ? { aiDiagnosticReport: patch.aiDiagnosticReport }
+                  : {}),
+              }
+            : att
+        );
+        localStorage.setItem(key, JSON.stringify(updated));
+      }
+    }
+  } catch {
+    // Ignore local storage errors
+  }
+
+  if (!canWriteToFirestore() || !safeUid || safeUid === 'guest') return;
+
+  try {
+    const docRef = doc(db, 'users', safeUid, 'attempts', attemptId);
+    await safeSetDoc(docRef, sanitizeForFirestore(patch), { merge: true });
+
+    if (typeof patch.vstepBandScore === 'number' && patch.vstepBandScore > 0) {
+      const userDocRef = doc(db, 'users', safeUid);
+      const userSnap = await getDoc(userDocRef);
+      const prevBestBand = Number(userSnap.data()?.bestVstepBandScore) || 0;
+      if (patch.vstepBandScore > prevBestBand) {
+        await safeSetDoc(
+          userDocRef,
+          { bestVstepBandScore: patch.vstepBandScore, lastActiveAt: Date.now() },
+          { merge: true }
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('Notice syncing AI evaluation to Firestore attempt:', err);
+  }
+}
+
+/**
+ * Fetch all exam attempts for a user and backfill summary stats onto users/{userId}
  */
 export async function fetchUserAttempts(userId: string): Promise<UserExamAttempt[]> {
   let localList: UserExamAttempt[] = [];
@@ -527,7 +630,12 @@ export async function fetchUserAttempts(userId: string): Promise<UserExamAttempt
     const q = query(collRef, orderBy('completedAt', 'desc'));
     const snap = await getDocs(q);
     const remoteList: UserExamAttempt[] = [];
-    snap.forEach((d) => remoteList.push(d.data() as UserExamAttempt));
+    const remoteIds = new Set<string>();
+    snap.forEach((d) => {
+      const att = d.data() as UserExamAttempt;
+      remoteList.push(att);
+      if (att?.attemptId) remoteIds.add(att.attemptId);
+    });
 
     const map = new Map<string, UserExamAttempt>();
     localList.forEach((a) => map.set(a.attemptId, a));
@@ -538,6 +646,9 @@ export async function fetchUserAttempts(userId: string): Promise<UserExamAttempt
         ...a,
         answers: a.answers || existingLocal?.answers,
         writingSubmission: a.writingSubmission || existingLocal?.writingSubmission,
+        speakingSubmission: a.speakingSubmission || existingLocal?.speakingSubmission,
+        aiWritingEvaluation: a.aiWritingEvaluation || existingLocal?.aiWritingEvaluation,
+        aiDiagnosticReport: a.aiDiagnosticReport || existingLocal?.aiDiagnosticReport,
       });
     });
 
@@ -547,6 +658,48 @@ export async function fetchUserAttempts(userId: string): Promise<UserExamAttempt
     } catch {
       // Ignore
     }
+
+    // Backfill any local-only attempts to Firestore & sync accurate summary fields on users/{userId}
+    if (userId && userId !== 'guest' && canWriteToFirestore() && merged.length > 0) {
+      try {
+        for (const locAtt of localList) {
+          if (locAtt?.attemptId && !remoteIds.has(locAtt.attemptId)) {
+            await safeSetDoc(
+              doc(db, 'users', userId, 'attempts', locAtt.attemptId),
+              sanitizeForFirestore(locAtt)
+            );
+          }
+        }
+
+        let bestBand = 0;
+        let bestRaw = 0;
+        merged.forEach((att) => {
+          const rawScore = Number(att.score) || 0;
+          const totalQs = Number(att.totalQuestions) || 75;
+          const band =
+            typeof att.vstepBandScore === 'number' && att.vstepBandScore > 0
+              ? att.vstepBandScore
+              : Math.round(((rawScore / Math.max(1, totalQs)) * 10) * 2) / 2;
+          if (band > bestBand) bestBand = band;
+          if (rawScore > bestRaw) bestRaw = rawScore;
+        });
+
+        await safeSetDoc(
+          doc(db, 'users', userId),
+          {
+            bestVstepBandScore: bestBand,
+            bestRawScore: bestRaw,
+            totalExamAttempts: merged.length,
+            lastAttemptAt: merged[0]?.completedAt || Date.now(),
+            lastTestTitle: merged[0]?.testTitle || 'Bài thi VSTEP',
+          },
+          { merge: true }
+        );
+      } catch {
+        // Ignore background backfill error
+      }
+    }
+
     return merged;
   } catch (error) {
     console.warn('Could not fetch attempts from Firestore, using local backup:', error);
@@ -555,16 +708,53 @@ export async function fetchUserAttempts(userId: string): Promise<UserExamAttempt
 }
 
 /**
- * Save in-progress attempt to Firestore
+ * Save in-progress attempt to Firestore and update activeDraftSummary on users/{userId}
  */
 export async function saveInProgressAttemptToFirestore(
   userId: string,
   attempt: InProgressAttempt
 ): Promise<void> {
-  if (!canWriteToFirestore()) return;
+  if (!canWriteToFirestore() || !userId || userId === 'guest') return;
   try {
     const docRef = doc(db, 'users', userId, 'inProgress', attempt.testId);
-    await safeSetDoc(docRef, sanitizeForFirestore(attempt));
+    const enrichedAttempt = {
+      ...attempt,
+      writingDraft: attempt.writingSubmission,
+      speakingDraft: attempt.speakingSubmission,
+      lastUpdatedAt: attempt.savedAt || Date.now(),
+    };
+    await safeSetDoc(docRef, sanitizeForFirestore(enrichedAttempt));
+
+    const answeredCount = Object.values(attempt.answers || {}).filter(
+      (v) => v && String(v).trim().length > 0
+    ).length;
+
+    const writingWordCount =
+      (attempt.writingSubmission?.task1WordCount || 0) +
+      (attempt.writingSubmission?.task2WordCount || 0);
+    const speakingWordCount =
+      (attempt.speakingSubmission?.part1WordCount || 0) +
+      (attempt.speakingSubmission?.part2WordCount || 0) +
+      (attempt.speakingSubmission?.part3WordCount || 0);
+
+    await safeSetDoc(
+      doc(db, 'users', userId),
+      sanitizeForFirestore({
+        activeDraftSummary: {
+          testId: attempt.testId,
+          testTitle: attempt.testTitle || '',
+          mode: attempt.mode,
+          answeredCount,
+          totalQuestions: 75,
+          writingWordCount: writingWordCount > 0 ? writingWordCount : undefined,
+          speakingWordCount: speakingWordCount > 0 ? speakingWordCount : undefined,
+          elapsedSeconds: attempt.elapsedSeconds || 0,
+          updatedAt: Date.now(),
+        },
+        lastActiveAt: Date.now(),
+      }),
+      { merge: true }
+    );
   } catch {
     // Ignore
   }
@@ -600,10 +790,18 @@ export async function clearInProgressAttemptFromFirestore(
   userId: string,
   testId: string
 ): Promise<void> {
-  if (!canWriteToFirestore()) return;
+  if (!canWriteToFirestore() || !userId || userId === 'guest') return;
   try {
     const docRef = doc(db, 'users', userId, 'inProgress', testId);
     await safeDeleteDoc(docRef);
+    await safeSetDoc(
+      doc(db, 'users', userId),
+      {
+        activeDraftSummary: null,
+        lastActiveAt: Date.now(),
+      },
+      { merge: true }
+    );
   } catch {
     // Ignore
   }

@@ -69,6 +69,7 @@ import {
   deleteAnyTestFromSystem,
   saveTestToFirestore,
   recordUserAttempt,
+  updateAttemptAiEvaluationInFirestore,
   fetchUserAttempts,
   saveInProgressAttemptToFirestore,
   fetchUserInProgressMap,
@@ -83,6 +84,12 @@ import {
   recordStudyActivity,
   syncStreakWithCloudAndAttempts,
 } from './services/streakService';
+import {
+  ExamOrderConfig,
+  getLocalExamOrderConfig,
+  subscribeToExamOrderConfig,
+  sortTestsList,
+} from './services/examOrderService';
 
 // Define question groups matching the VSTEP 4-skill exam sections with Part-relative numbering
 interface QuestionGroup {
@@ -306,6 +313,9 @@ export default function App() {
   const [customTests, setCustomTests] = useState<TestMetadata[]>([]);
   const [customQuestionsMap, setCustomQuestionsMap] = useState<Record<string, Question[]>>({});
   const [deletedTestIds, setDeletedTestIds] = useState<string[]>([]);
+  const [examOrderConfig, setExamOrderConfig] = useState<ExamOrderConfig>(() =>
+    getLocalExamOrderConfig()
+  );
 
   // In-Progress & Completed Maps
   const [inProgressMap, setInProgressMap] = useState<Record<string, InProgressAttempt>>({});
@@ -326,6 +336,7 @@ export default function App() {
     () => sessionStorage.getItem('langcert_admin_unlocked') === 'true'
   );
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [historyFilterTestId, setHistoryFilterTestId] = useState<string | null>(null);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isAiPdfModalOpen, setIsAiPdfModalOpen] = useState(false);
@@ -367,6 +378,11 @@ export default function App() {
     EMPTY_SPEAKING_SUBMISSION
   );
   const [activeSpeakingPartIndex, setActiveSpeakingPartIndex] = useState<0 | 1 | 2>(0);
+
+  // Active Attempt ID & Persisted AI Evaluations for ResultsView
+  const [activeAttemptId, setActiveAttemptId] = useState<string | null>(null);
+  const [activeWritingAiEval, setActiveWritingAiEval] = useState<any>(undefined);
+  const [activeAiDiagnostic, setActiveAiDiagnostic] = useState<any>(null);
 
   // Exam Active State
   const [currentGroupIndex, setCurrentGroupIndex] = useState<number>(0);
@@ -524,15 +540,45 @@ export default function App() {
       }
     });
 
+    const unsubOrder = subscribeToExamOrderConfig((cfg) => {
+      setExamOrderConfig(cfg);
+    });
+
     return () => {
       unsubCustom();
       unsubDeleted();
+      unsubOrder();
     };
   }, []);
 
+  const inProgressStorageKey = `langcert_in_progress_map_${currentUser?.uid || 'guest'}`;
+
   // Load user's completed attempts & in-progress attempts from Firestore when logged in
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      try {
+        const guestRaw = localStorage.getItem('langcert_in_progress_map_guest');
+        setInProgressMap(guestRaw ? JSON.parse(guestRaw) : {});
+      } catch {
+        setInProgressMap({});
+      }
+      return;
+    }
+
+    const userMapKey = `langcert_in_progress_map_${currentUser.uid}`;
+    let localUserMap: Record<string, InProgressAttempt> = {};
+    try {
+      const rawUserMap = localStorage.getItem(userMapKey) || localStorage.getItem('langcert_in_progress_map');
+      if (rawUserMap) {
+        const parsed = JSON.parse(rawUserMap);
+        if (parsed && typeof parsed === 'object') {
+          localUserMap = parsed;
+          setInProgressMap(parsed);
+        }
+      }
+    } catch {
+      // Ignore
+    }
 
     fetchUserAttempts(currentUser.uid)
       .then((attempts) => {
@@ -551,12 +597,27 @@ export default function App() {
 
     fetchUserInProgressMap(currentUser.uid)
       .then((remoteMap) => {
-        setInProgressMap((prev) => {
-          const merged = { ...prev, ...remoteMap };
+        setInProgressMap(() => {
+          const merged: Record<string, InProgressAttempt> = { ...localUserMap };
+          Object.entries(remoteMap).forEach(([tId, rAttempt]) => {
+            const lAttempt = merged[tId];
+            if (!lAttempt || (rAttempt.savedAt || 0) >= (lAttempt.savedAt || 0)) {
+              merged[tId] = rAttempt;
+            }
+          });
           try {
+            localStorage.setItem(userMapKey, JSON.stringify(merged));
             localStorage.setItem('langcert_in_progress_map', JSON.stringify(merged));
           } catch {
             // Ignore
+          }
+          // Backfill any local in-progress draft to Firestore so Admin sees real-time progress
+          const entries = Object.values(merged);
+          if (entries.length > 0) {
+            const latestDraft = entries.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))[0];
+            if (latestDraft && latestDraft.testId) {
+              saveInProgressAttemptToFirestore(currentUser.uid, latestDraft).catch(() => {});
+            }
           }
           return merged;
         });
@@ -591,8 +652,12 @@ export default function App() {
   // Build current InProgressAttempt snapshot helper without depending on 1-second timer state
   const buildInProgressSnapshot = useCallback((): InProgressAttempt => {
     const metrics = liveSessionMetricsRef.current;
+    const matchedTest =
+      customTests.find((t) => t.id === selectedTestId) ||
+      TESTS_LIST.find((t) => t.id === selectedTestId);
     return {
       testId: selectedTestId,
+      testTitle: matchedTest?.title || 'Đề thi VSTEP',
       mode: examMode,
       selectedParts: selectedPartsForSession,
       answers,
@@ -608,6 +673,7 @@ export default function App() {
     };
   }, [
     selectedTestId,
+    customTests,
     examMode,
     selectedPartsForSession,
     answers,
@@ -643,15 +709,24 @@ export default function App() {
       return;
     }
 
-    // Immediately persist lightweight writing & speaking drafts to localStorage so zero characters are ever lost
+    // Immediately persist lightweight writing & speaking drafts to localStorage partitioned by user
+    const uidPrefix = currentUser?.uid || 'guest';
     try {
       if (hasWritingAny) {
+        localStorage.setItem(
+          `langcert_writing_draft_${uidPrefix}_${selectedTestId}`,
+          JSON.stringify(writingSubmission)
+        );
         localStorage.setItem(
           `langcert_writing_draft_${selectedTestId}`,
           JSON.stringify(writingSubmission)
         );
       }
       if (hasSpeakingAny) {
+        localStorage.setItem(
+          `langcert_speaking_draft_${uidPrefix}_${selectedTestId}`,
+          JSON.stringify(speakingSubmission)
+        );
         localStorage.setItem(
           `langcert_speaking_draft_${selectedTestId}`,
           JSON.stringify(speakingSubmission)
@@ -664,10 +739,12 @@ export default function App() {
     const debounceTimer = setTimeout(() => {
       const snap = buildInProgressSnapshot();
       try {
+        localStorage.setItem(`langcert_inprogress_${uidPrefix}_${selectedTestId}`, JSON.stringify(snap));
         localStorage.setItem(`langcert_inprogress_${selectedTestId}`, JSON.stringify(snap));
-        const rawMap = localStorage.getItem('langcert_in_progress_map');
+        const rawMap = localStorage.getItem(inProgressStorageKey);
         const parsedMap = rawMap ? JSON.parse(rawMap) : {};
         parsedMap[selectedTestId] = snap;
+        localStorage.setItem(inProgressStorageKey, JSON.stringify(parsedMap));
         localStorage.setItem('langcert_in_progress_map', JSON.stringify(parsedMap));
       } catch {
         // Ignore storage errors
@@ -714,9 +791,78 @@ export default function App() {
     buildInProgressSnapshot,
     currentUser,
     isOnline,
+    inProgressStorageKey,
   ]);
 
-  // Combined tests list excluding deletedTestIds
+  // Immediate flush helper: bypasses 60s throttle when student switches sections, hides tab, or exits exam
+  const flushInProgressToCloudImmediately = useCallback(() => {
+    if (currentScreen !== 'exam') return;
+    const hasAnsweredAny = Object.values(answers).some((v) => v && v.trim().length > 0);
+    const hasFlaggedAny = Object.values(flagged).some(Boolean);
+    const hasWritingAny =
+      writingSubmission.task1Text.trim().length > 0 ||
+      writingSubmission.task2Text.trim().length > 0;
+    const hasSpeakingAny =
+      speakingSubmission.part1Text.trim().length > 0 ||
+      speakingSubmission.part2Text.trim().length > 0 ||
+      speakingSubmission.part3Text.trim().length > 0 ||
+      Boolean(speakingSubmission.part1AudioDataUrl) ||
+      Boolean(speakingSubmission.part2AudioDataUrl) ||
+      Boolean(speakingSubmission.part3AudioDataUrl);
+
+    if (!hasAnsweredAny && !hasFlaggedAny && !hasWritingAny && !hasSpeakingAny) return;
+
+    if (pendingCloudSyncTimerRef.current) {
+      clearTimeout(pendingCloudSyncTimerRef.current);
+      pendingCloudSyncTimerRef.current = null;
+    }
+
+    const snap = buildInProgressSnapshot();
+    const uidPrefix = currentUser?.uid || 'guest';
+    try {
+      localStorage.setItem(`langcert_inprogress_${uidPrefix}_${selectedTestId}`, JSON.stringify(snap));
+      const rawMap = localStorage.getItem(inProgressStorageKey);
+      const parsedMap = rawMap ? JSON.parse(rawMap) : {};
+      parsedMap[selectedTestId] = snap;
+      localStorage.setItem(inProgressStorageKey, JSON.stringify(parsedMap));
+      localStorage.setItem('langcert_in_progress_map', JSON.stringify(parsedMap));
+    } catch {
+      // Ignore
+    }
+
+    if (currentUser) {
+      lastCloudSyncAtRef.current = Date.now();
+      saveInProgressAttemptToFirestore(currentUser.uid, snap).catch(() => {});
+    }
+  }, [
+    currentScreen,
+    answers,
+    flagged,
+    writingSubmission,
+    speakingSubmission,
+    buildInProgressSnapshot,
+    currentUser,
+    selectedTestId,
+    inProgressStorageKey,
+  ]);
+
+  // Flush to Cloud Firestore immediately when tab is hidden or page is closed during an active exam
+  useEffect(() => {
+    if (currentScreen !== 'exam') return;
+    const handleVisibilityOrHide = () => {
+      if (document.visibilityState === 'hidden') {
+        flushInProgressToCloudImmediately();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityOrHide);
+    window.addEventListener('pagehide', flushInProgressToCloudImmediately);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityOrHide);
+      window.removeEventListener('pagehide', flushInProgressToCloudImmediately);
+    };
+  }, [currentScreen, flushInProgressToCloudImmediately]);
+
+  // Combined tests list excluding deletedTestIds, sorted by Admin Cloud order & natural title order
   const allTests = useMemo(() => {
     const deletedSet = new Set(deletedTestIds);
     const customMap = new Map(customTests.map((t) => [t.id, t]));
@@ -729,8 +875,9 @@ export default function App() {
       return defTest;
     });
     const remainingCustom = Array.from(customMap.values());
-    return [...remainingCustom, ...mergedDefaults].filter((t) => !deletedSet.has(t.id));
-  }, [customTests, deletedTestIds]);
+    const rawList = [...remainingCustom, ...mergedDefaults].filter((t) => !deletedSet.has(t.id));
+    return sortTestsList(rawList, examOrderConfig, 'custom');
+  }, [customTests, deletedTestIds, examOrderConfig]);
 
   // Role-filtered tests: Only Teachers and Admins can see Draft exams (status === 'draft' or categoryTag === 'Đề Nháp')
   const visibleTests = useMemo(() => {
@@ -1080,15 +1227,20 @@ export default function App() {
     );
     setAnswers(saved.answers || {});
     setFlagged(saved.flagged || {});
+    const uidPrefix = currentUser?.uid || 'guest';
     // Restore writing submission from saved attempt or dedicated local draft backup
-    let restoredWriting: WritingSubmission = saved.writingSubmission || {
-      task1Text: '',
-      task1WordCount: 0,
-      task2Text: '',
-      task2WordCount: 0,
-    };
+    let restoredWriting: WritingSubmission =
+      saved.writingSubmission ||
+      (saved as any).writingDraft || {
+        task1Text: '',
+        task1WordCount: 0,
+        task2Text: '',
+        task2WordCount: 0,
+      };
     try {
-      const rawDraft = localStorage.getItem(`langcert_writing_draft_${testId}`);
+      const rawDraft =
+        localStorage.getItem(`langcert_writing_draft_${uidPrefix}_${testId}`) ||
+        localStorage.getItem(`langcert_writing_draft_${testId}`);
       if (rawDraft) {
         const parsedDraft: WritingSubmission = JSON.parse(rawDraft);
         if (
@@ -1103,9 +1255,11 @@ export default function App() {
     }
 
     let restoredSpeaking: SpeakingSubmission =
-      saved.speakingSubmission || EMPTY_SPEAKING_SUBMISSION;
+      saved.speakingSubmission || (saved as any).speakingDraft || EMPTY_SPEAKING_SUBMISSION;
     try {
-      const rawSpeakingDraft = localStorage.getItem(`langcert_speaking_draft_${testId}`);
+      const rawSpeakingDraft =
+        localStorage.getItem(`langcert_speaking_draft_${uidPrefix}_${testId}`) ||
+        localStorage.getItem(`langcert_speaking_draft_${testId}`);
       if (rawSpeakingDraft) {
         const parsedSpeakingDraft: SpeakingSubmission = JSON.parse(rawSpeakingDraft);
         if (
@@ -1153,13 +1307,18 @@ export default function App() {
       return;
     }
 
+    const uidPrefix = currentUser?.uid || 'guest';
     setInProgressMap((prev) => {
       const next = { ...prev };
       delete next[testId];
       try {
+        localStorage.setItem(inProgressStorageKey, JSON.stringify(next));
         localStorage.setItem('langcert_in_progress_map', JSON.stringify(next));
+        localStorage.removeItem(`langcert_inprogress_${uidPrefix}_${testId}`);
         localStorage.removeItem(`langcert_inprogress_${testId}`);
+        localStorage.removeItem(`langcert_writing_draft_${uidPrefix}_${testId}`);
         localStorage.removeItem(`langcert_writing_draft_${testId}`);
+        localStorage.removeItem(`langcert_speaking_draft_${uidPrefix}_${testId}`);
         localStorage.removeItem(`langcert_speaking_draft_${testId}`);
       } catch {
         // Ignore
@@ -1177,6 +1336,9 @@ export default function App() {
   // Review a completed historical attempt in ResultsView
   const handleReviewHistoricalAttempt = (attempt: UserExamAttempt) => {
     setSelectedTestId(attempt.testId);
+    setActiveAttemptId(attempt.attemptId);
+    setActiveWritingAiEval(attempt.aiWritingEvaluation);
+    setActiveAiDiagnostic(attempt.aiDiagnosticReport || null);
     setAnswers(attempt.answers || {});
     setWritingSubmission(
       attempt.writingSubmission || {
@@ -1202,6 +1364,9 @@ export default function App() {
     clearSessionLocalAudioOverrides();
     const testId = pendingStartTestId;
     setSelectedTestId(testId);
+    setActiveAttemptId(null);
+    setActiveWritingAiEval(undefined);
+    setActiveAiDiagnostic(null);
 
     let partsToRun: string[] = [];
     let durationSec = 172 * 60;
@@ -1256,13 +1421,18 @@ export default function App() {
     setIsTimeUpModalOpen(false);
 
     // Clear previous in-progress for this test
+    const uidPrefix = currentUser?.uid || 'guest';
     setInProgressMap((prev) => {
       const next = { ...prev };
       delete next[testId];
       try {
+        localStorage.setItem(inProgressStorageKey, JSON.stringify(next));
         localStorage.setItem('langcert_in_progress_map', JSON.stringify(next));
+        localStorage.removeItem(`langcert_inprogress_${uidPrefix}_${testId}`);
         localStorage.removeItem(`langcert_inprogress_${testId}`);
+        localStorage.removeItem(`langcert_writing_draft_${uidPrefix}_${testId}`);
         localStorage.removeItem(`langcert_writing_draft_${testId}`);
+        localStorage.removeItem(`langcert_speaking_draft_${uidPrefix}_${testId}`);
         localStorage.removeItem(`langcert_speaking_draft_${testId}`);
       } catch {
         // Ignore
@@ -1312,18 +1482,26 @@ export default function App() {
         Boolean(speakingSubmission.part3AudioDataUrl);
 
       if (hasAnsweredAny || hasFlaggedAny || hasWritingAny || hasSpeakingAny) {
+        if (pendingCloudSyncTimerRef.current) {
+          clearTimeout(pendingCloudSyncTimerRef.current);
+          pendingCloudSyncTimerRef.current = null;
+        }
         const snap = buildInProgressSnapshot();
+        const uidPrefix = currentUser?.uid || 'guest';
         setInProgressMap((prev) => {
           const updated = { ...prev, [selectedTestId]: snap };
           try {
+            localStorage.setItem(inProgressStorageKey, JSON.stringify(updated));
             localStorage.setItem('langcert_in_progress_map', JSON.stringify(updated));
+            localStorage.setItem(`langcert_inprogress_${uidPrefix}_${selectedTestId}`, JSON.stringify(snap));
             localStorage.setItem(`langcert_inprogress_${selectedTestId}`, JSON.stringify(snap));
           } catch {
             // Ignore
           }
           return updated;
         });
-        if (currentUser && isOnline) {
+        if (currentUser) {
+          lastCloudSyncAtRef.current = Date.now();
           saveInProgressAttemptToFirestore(currentUser.uid, snap).catch(() => {});
         }
       }
@@ -1336,11 +1514,18 @@ export default function App() {
   const handleSaveAndExitPractice = () => {
     examAudioManager.pause();
     clearSessionLocalAudioOverrides();
+    if (pendingCloudSyncTimerRef.current) {
+      clearTimeout(pendingCloudSyncTimerRef.current);
+      pendingCloudSyncTimerRef.current = null;
+    }
     const snap = buildInProgressSnapshot();
+    const uidPrefix = currentUser?.uid || 'guest';
     setInProgressMap((prev) => {
       const updated = { ...prev, [selectedTestId]: snap };
       try {
+        localStorage.setItem(inProgressStorageKey, JSON.stringify(updated));
         localStorage.setItem('langcert_in_progress_map', JSON.stringify(updated));
+        localStorage.setItem(`langcert_inprogress_${uidPrefix}_${selectedTestId}`, JSON.stringify(snap));
         localStorage.setItem(`langcert_inprogress_${selectedTestId}`, JSON.stringify(snap));
       } catch {
         // Ignore
@@ -1348,6 +1533,7 @@ export default function App() {
       return updated;
     });
     if (currentUser) {
+      lastCloudSyncAtRef.current = Date.now();
       saveInProgressAttemptToFirestore(currentUser.uid, snap).catch(() => {});
     }
     const answeredCountNow = Object.values(answers).filter((v) => v && v.trim().length > 0).length;
@@ -1406,6 +1592,7 @@ export default function App() {
   };
 
   const handleNextGroup = () => {
+    flushInProgressToCloudImmediately();
     if (currentGroupIndex < activeQuestionGroups.length - 1) {
       const nextIdx = currentGroupIndex + 1;
       setCurrentGroupIndex(nextIdx);
@@ -1418,6 +1605,7 @@ export default function App() {
   };
 
   const handlePrevGroup = () => {
+    flushInProgressToCloudImmediately();
     if (currentGroupIndex > 0) {
       const prevIdx = currentGroupIndex - 1;
       setCurrentGroupIndex(prevIdx);
@@ -1481,8 +1669,13 @@ export default function App() {
 
     const speakingBand10 = speakingScores ? speakingScores.overallBand10 : undefined;
 
+    const newAttemptId = `attempt-${Date.now()}`;
+    setActiveAttemptId(newAttemptId);
+    setActiveWritingAiEval(undefined);
+    setActiveAiDiagnostic(null);
+
     const attempt: UserExamAttempt = {
-      attemptId: `attempt-${Date.now()}`,
+      attemptId: newAttemptId,
       testId: selectedTestId,
       testTitle: activeTestMetadata.title,
       mode: examMode,
@@ -1509,17 +1702,27 @@ export default function App() {
     });
     recordStudyActivity(`Hoàn thành đề: ${activeTestMetadata.title}`, currentUser?.uid);
 
+    if (pendingCloudSyncTimerRef.current) {
+      clearTimeout(pendingCloudSyncTimerRef.current);
+      pendingCloudSyncTimerRef.current = null;
+    }
+
     if (currentUser) {
       clearInProgressAttemptFromFirestore(currentUser.uid, selectedTestId).catch(() => {});
     }
 
+    const uidPrefix = currentUser?.uid || 'guest';
     setInProgressMap((prev) => {
       const next = { ...prev };
       delete next[selectedTestId];
       try {
+        localStorage.setItem(inProgressStorageKey, JSON.stringify(next));
         localStorage.setItem('langcert_in_progress_map', JSON.stringify(next));
+        localStorage.removeItem(`langcert_inprogress_${uidPrefix}_${selectedTestId}`);
         localStorage.removeItem(`langcert_inprogress_${selectedTestId}`);
+        localStorage.removeItem(`langcert_writing_draft_${uidPrefix}_${selectedTestId}`);
         localStorage.removeItem(`langcert_writing_draft_${selectedTestId}`);
+        localStorage.removeItem(`langcert_speaking_draft_${uidPrefix}_${selectedTestId}`);
         localStorage.removeItem(`langcert_speaking_draft_${selectedTestId}`);
       } catch {
         // Ignore
@@ -1827,7 +2030,10 @@ export default function App() {
           }}
           onEditTest={handleOpenEditExam}
           onPublishDraftTest={handleQuickPublishDraftTest}
-          onOpenHistory={() => setIsHistoryModalOpen(true)}
+          onOpenHistory={(testId?: string) => {
+            setHistoryFilterTestId(testId || null);
+            setIsHistoryModalOpen(true);
+          }}
           onOpenProfile={() => setIsProfileModalOpen(true)}
           onBackToLanding={() => setCurrentScreen('landing')}
           onOpenFeedback={() =>
@@ -2240,13 +2446,17 @@ export default function App() {
         {/* User Exam History Modal */}
         <ExamHistoryModal
           isOpen={isHistoryModalOpen}
-          onClose={() => setIsHistoryModalOpen(false)}
+          onClose={() => {
+            setIsHistoryModalOpen(false);
+            setHistoryFilterTestId(null);
+          }}
           tests={visibleTests}
           inProgressMap={inProgressMap}
           onResumeTest={handleResumeInProgressTest}
           onRestartTest={handleRestartTestFromScratch}
           onRetakeTest={handleRequestStartTest}
           onReviewAttempt={handleReviewHistoricalAttempt}
+          initialTestFilter={historyFilterTestId}
         />
 
         {/* Personal Profile Modal (Thông tin cá nhân) */}
@@ -2290,9 +2500,46 @@ export default function App() {
           writingSubmission={hasWritingInSession ? writingSubmission : undefined}
           writingTasks={activeTestMetadata.writingTasks || SAMPLE_B1_WRITING_TASKS}
           writingScores={writingScores}
+          initialWritingEvaluation={activeWritingAiEval}
+          onWritingGraded={(scores, fullEvaluation) => {
+            if (fullEvaluation) {
+              setActiveWritingAiEval(fullEvaluation);
+            }
+            if (activeAttemptId) {
+              const recalc = calculateExamResults(
+                activeExamQuestions,
+                answers,
+                elapsedSeconds,
+                scores,
+                speakingScores
+              );
+              updateAttemptAiEvaluationInFirestore(
+                currentUser?.uid || 'guest',
+                activeAttemptId,
+                {
+                  writingScore: scores.task1Score + scores.task2Score,
+                  vstepBandScore: Number((recalc.overallPercentage / 10).toFixed(1)),
+                  aiWritingEvaluation: fullEvaluation,
+                }
+              ).catch(() => {});
+            }
+          }}
           speakingSubmission={hasSpeakingInSession ? speakingSubmission : undefined}
           speakingTasks={activeTestMetadata.speakingTasks || SAMPLE_VSTEP_SPEAKING_TASKS}
           speakingScores={speakingScores}
+          initialAiDiagnostic={activeAiDiagnostic}
+          onAiDiagnosticGenerated={(report) => {
+            setActiveAiDiagnostic(report);
+            if (activeAttemptId) {
+              updateAttemptAiEvaluationInFirestore(
+                currentUser?.uid || 'guest',
+                activeAttemptId,
+                {
+                  aiDiagnosticReport: report,
+                }
+              ).catch(() => {});
+            }
+          }}
           onRetake={handleRetakeTest}
           onBackToTests={handleBackToTests}
           onOpenFeedback={() =>

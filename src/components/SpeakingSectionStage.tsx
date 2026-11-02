@@ -18,6 +18,10 @@ import {
   SpeakingSubmission,
   SAMPLE_VSTEP_SPEAKING_TASKS,
 } from '../types/speaking';
+import {
+  persistSpeakingAudioBlob,
+  resolvePlayableAudioUrl,
+} from '../utils/audioStorageService';
 
 interface SpeakingSectionStageProps {
   tasks?: SpeakingTask[];
@@ -106,6 +110,32 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
       ? submission.part2AudioUrl
       : submission.part3AudioUrl;
 
+  const currentAudioDataUrl =
+    activePartIndex === 0
+      ? submission.part1AudioDataUrl
+      : activePartIndex === 1
+      ? submission.part2AudioDataUrl
+      : submission.part3AudioDataUrl;
+
+  const [resolvedAudioSrc, setResolvedAudioSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const rawSource = currentAudioUrl || currentAudioDataUrl || '';
+    if (!rawSource) {
+      setResolvedAudioSrc(null);
+      return;
+    }
+    resolvePlayableAudioUrl(rawSource).then((playable) => {
+      if (!cancelled) {
+        setResolvedAudioSrc(playable || rawSource);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activePartIndex, currentAudioUrl, currentAudioDataUrl]);
+
   const currentDurationSec =
     activePartIndex === 0
       ? submission.part1DurationSec
@@ -124,6 +154,7 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
     partial: Partial<{
       text: string;
       audioUrl: string | undefined;
+      audioDataUrl: string | undefined;
       durationSec: number;
     }>
   ) => {
@@ -132,6 +163,8 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
     const nextWords = countWords(nextText);
     const nextAudio =
       'audioUrl' in partial ? partial.audioUrl : currentAudioUrl;
+    const nextAudioDataUrl =
+      'audioDataUrl' in partial ? partial.audioDataUrl : currentAudioDataUrl;
     const nextDur =
       partial.durationSec !== undefined
         ? partial.durationSec
@@ -143,6 +176,7 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
         part1Text: nextText,
         part1WordCount: nextWords,
         part1AudioUrl: nextAudio,
+        part1AudioDataUrl: nextAudioDataUrl,
         part1DurationSec: nextDur,
       });
     } else if (activePartIndex === 1) {
@@ -151,6 +185,7 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
         part2Text: nextText,
         part2WordCount: nextWords,
         part2AudioUrl: nextAudio,
+        part2AudioDataUrl: nextAudioDataUrl,
         part2DurationSec: nextDur,
       });
     } else {
@@ -159,6 +194,7 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
         part3Text: nextText,
         part3WordCount: nextWords,
         part3AudioUrl: nextAudio,
+        part3AudioDataUrl: nextAudioDataUrl,
         part3DurationSec: nextDur,
       });
     }
@@ -203,7 +239,19 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream);
+      let recorderOptions: MediaRecorderOptions | undefined = undefined;
+      if (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          recorderOptions = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 24000 };
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+          recorderOptions = { mimeType: 'audio/webm', audioBitsPerSecond: 24000 };
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          recorderOptions = { mimeType: 'audio/mp4', audioBitsPerSecond: 24000 };
+        }
+      }
+      const mediaRecorder = recorderOptions
+        ? new MediaRecorder(stream, recorderOptions)
+        : new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
 
       let elapsed = 0;
@@ -220,17 +268,22 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
         }
       };
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((track) => track.stop());
         if (recordIntervalRef.current) {
           clearInterval(recordIntervalRef.current);
           recordIntervalRef.current = null;
         }
         if (audioChunksRef.current.length > 0) {
-          const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-          const url = URL.createObjectURL(blob);
+          const mimeType = mediaRecorder.mimeType || 'audio/webm';
+          const blob = new Blob(audioChunksRef.current, { type: mimeType });
+          const { playableUrl, persistentDataUrl } = await persistSpeakingAudioBlob(
+            blob,
+            task.partNumber
+          );
           updateCurrentPartSubmission({
-            audioUrl: url,
+            audioUrl: playableUrl,
+            audioDataUrl: persistentDataUrl,
             durationSec: Math.max(1, elapsed),
           });
         }
@@ -360,10 +413,10 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
                   : submission.part3WordCount;
               const hasAudio =
                 pIdx === 0
-                  ? Boolean(submission.part1AudioUrl)
+                  ? Boolean(submission.part1AudioUrl || submission.part1AudioDataUrl)
                   : pIdx === 1
-                  ? Boolean(submission.part2AudioUrl)
-                  : Boolean(submission.part3AudioUrl);
+                  ? Boolean(submission.part2AudioUrl || submission.part2AudioDataUrl)
+                  : Boolean(submission.part3AudioUrl || submission.part3AudioDataUrl);
               const done = words > 0 || hasAudio;
 
               return (
@@ -741,7 +794,7 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
             )}
 
             {/* Recorded Audio Playback Bar */}
-            {currentAudioUrl && (
+            {(resolvedAudioSrc || currentAudioUrl || currentAudioDataUrl) && (
               <div className="rounded-2xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/40 p-3.5 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-xs font-black text-emerald-900 dark:text-emerald-200">
                   <Volume2 className="h-4 w-4 text-emerald-600 shrink-0" />
@@ -749,11 +802,16 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
                     Bản ghi âm Part {task.partNumber}{' '}
                     {currentDurationSec ? `(${currentDurationSec}s)` : ''}
                   </span>
+                  {currentAudioDataUrl && (
+                    <span className="rounded-md bg-emerald-200/80 dark:bg-emerald-800 px-2 py-0.5 text-[10px] font-bold text-emerald-900 dark:text-emerald-100">
+                      Đã đồng bộ Cloud
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 flex-1 min-w-[200px]">
                   <audio
                     controls
-                    src={currentAudioUrl}
+                    src={resolvedAudioSrc || currentAudioUrl || currentAudioDataUrl}
                     className="h-9 w-full max-w-xs"
                   />
                   {!isReviewMode && (
@@ -762,6 +820,7 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
                       onClick={() =>
                         updateCurrentPartSubmission({
                           audioUrl: undefined,
+                          audioDataUrl: undefined,
                           durationSec: 0,
                         })
                       }

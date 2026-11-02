@@ -2,7 +2,8 @@ import { doc, getDoc } from 'firebase/firestore';
 import { auth, db, safeSetDoc } from '../firebase';
 import { UserExamAttempt } from '../types/exam';
 
-const STREAK_STORAGE_KEY = 'langcert_study_streak_v1';
+const STREAK_STORAGE_PREFIX = 'langcert_study_streak_v2_';
+const LEGACY_STREAK_STORAGE_KEY = 'langcert_study_streak_v1';
 const LEGACY_VOCAB_STREAK_KEY = 'langcert_vocab_streak_v2';
 export const STREAK_UPDATED_EVENT = 'langcert-streak-updated';
 
@@ -36,6 +37,11 @@ export interface ComputedStreakStatus {
   activeDates: string[];
 }
 
+function getStreakKeyForUser(explicitUid?: string | null): string {
+  const uid = explicitUid || auth.currentUser?.uid || 'guest';
+  return `${STREAK_STORAGE_PREFIX}${uid}`;
+}
+
 /**
  * Formats a Date object as local YYYY-MM-DD
  */
@@ -64,11 +70,24 @@ function addDaysToKey(dateKey: string, deltaDays: number): string {
 }
 
 /**
- * Loads raw streak storage from localStorage
+ * Loads raw streak storage from localStorage partitioned by uid
  */
-export function loadRawStreakStorage(): StudyStreakStorage {
+export function loadRawStreakStorage(explicitUid?: string | null): StudyStreakStorage {
+  const key = getStreakKeyForUser(explicitUid);
   try {
-    const raw = localStorage.getItem(STREAK_STORAGE_KEY);
+    let raw = localStorage.getItem(key);
+    if (!raw) {
+      // One-time migration from legacy shared key if present
+      const legacyRaw = localStorage.getItem(LEGACY_STREAK_STORAGE_KEY);
+      if (legacyRaw) {
+        raw = legacyRaw;
+        try {
+          localStorage.setItem(key, legacyRaw);
+        } catch {
+          // Ignore
+        }
+      }
+    }
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.activeDates)) {
@@ -103,7 +122,10 @@ export function loadRawStreakStorage(): StudyStreakStorage {
 /**
  * Saves raw streak storage to localStorage and dispatches update event
  */
-function saveRawStreakStorage(storage: StudyStreakStorage): ComputedStreakStatus {
+function saveRawStreakStorage(
+  storage: StudyStreakStorage,
+  explicitUid?: string | null
+): ComputedStreakStatus {
   const cleanDates = Array.from(
     new Set(storage.activeDates.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))
   ).sort();
@@ -114,9 +136,10 @@ function saveRawStreakStorage(storage: StudyStreakStorage): ComputedStreakStatus
   };
 
   const computed = computeStreakFromStorage(normalized);
+  const key = getStreakKeyForUser(explicitUid);
 
   try {
-    localStorage.setItem(STREAK_STORAGE_KEY, JSON.stringify(normalized));
+    localStorage.setItem(key, JSON.stringify(normalized));
     localStorage.setItem(LEGACY_VOCAB_STREAK_KEY, String(computed.currentStreak));
   } catch (e) {
     console.warn('Could not save streak storage:', e);
@@ -209,8 +232,8 @@ export function computeStreakFromStorage(storage: StudyStreakStorage): ComputedS
 /**
  * Returns the current computed streak status synchronously
  */
-export function getStreakStatus(): ComputedStreakStatus {
-  const raw = loadRawStreakStorage();
+export function getStreakStatus(explicitUid?: string | null): ComputedStreakStatus {
+  const raw = loadRawStreakStorage(explicitUid);
   return computeStreakFromStorage(raw);
 }
 
@@ -221,7 +244,8 @@ export function recordStudyActivity(
   activityLabel: string = 'Hoàn thành bài luyện tập',
   explicitUid?: string | null
 ): ComputedStreakStatus {
-  const storage = loadRawStreakStorage();
+  const uid = explicitUid || auth.currentUser?.uid;
+  const storage = loadRawStreakStorage(uid);
   const todayKey = toLocalDateKey(new Date());
 
   if (!storage.activeDates.includes(todayKey)) {
@@ -231,16 +255,18 @@ export function recordStudyActivity(
   storage.lastActivityAt = Date.now();
   storage.lastActivityLabel = activityLabel;
 
-  const computed = saveRawStreakStorage(storage);
+  const computed = saveRawStreakStorage(storage, uid);
 
   // Sync to Firestore if signed in and quota available
-  const uid = explicitUid || auth.currentUser?.uid;
-  if (uid) {
+  if (uid && uid !== 'guest') {
     const userRef = doc(db, 'users', uid);
     safeSetDoc(
       userRef,
       {
         uid,
+        currentStreak: computed.currentStreak,
+        longestStreak: computed.longestStreak,
+        lastActiveAt: Date.now(),
         studyStreak: {
           activeDates: storage.activeDates.slice(-365),
           dailyActivityCount: storage.dailyActivityCount,
@@ -264,11 +290,14 @@ export async function syncStreakWithCloudAndAttempts(
   uid: string,
   attempts: UserExamAttempt[] = []
 ): Promise<ComputedStreakStatus> {
-  const local = loadRawStreakStorage();
+  const local = loadRawStreakStorage(uid);
   const mergedDates = new Set<string>(local.activeDates);
   const mergedCounts: Record<string, number> = { ...local.dailyActivityCount };
   let lastActivityAt = local.lastActivityAt || 0;
   let lastActivityLabel = local.lastActivityLabel;
+  let remoteActiveDatesCount = 0;
+  let remoteCurrentStreak = -1;
+  let topLevelCurrentStreak = -1;
 
   // 1. Extract dates from historical exam attempts
   attempts.forEach((attempt) => {
@@ -288,8 +317,12 @@ export async function syncStreakWithCloudAndAttempts(
     const userSnap = await getDoc(doc(db, 'users', uid));
     if (userSnap.exists()) {
       const data = userSnap.data();
+      topLevelCurrentStreak = typeof data?.currentStreak === 'number' ? data.currentStreak : -1;
       const remoteStreak = data?.studyStreak;
       if (remoteStreak && Array.isArray(remoteStreak.activeDates)) {
+        remoteActiveDatesCount = remoteStreak.activeDates.length;
+        remoteCurrentStreak =
+          typeof remoteStreak.currentStreak === 'number' ? remoteStreak.currentStreak : -1;
         remoteStreak.activeDates.forEach((d: unknown) => {
           if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
             mergedDates.add(d);
@@ -310,6 +343,12 @@ export async function syncStreakWithCloudAndAttempts(
         lastActivityAt = remoteStreak.lastActivityAt;
         lastActivityLabel = remoteStreak.lastActivityLabel || lastActivityLabel;
       }
+      // Also incorporate vocabulary study date if recorded on vocabStats.lastStudiedAt
+      if (typeof data?.vocabStats?.lastStudiedAt === 'number' && data.vocabStats.lastStudiedAt > 0) {
+        const vocabDateKey = toLocalDateKey(new Date(data.vocabStats.lastStudiedAt));
+        mergedDates.add(vocabDateKey);
+        mergedCounts[vocabDateKey] = Math.max(mergedCounts[vocabDateKey] || 0, 1);
+      }
     }
   } catch (err) {
     console.warn('Could not fetch remote studyStreak:', err);
@@ -322,14 +361,22 @@ export async function syncStreakWithCloudAndAttempts(
     lastActivityLabel,
   };
 
-  const computed = saveRawStreakStorage(updatedStorage);
+  const computed = saveRawStreakStorage(updatedStorage, uid);
 
-  // Save merged state back to Firestore only if remote dates differed from local
-  if (updatedStorage.activeDates.length > local.activeDates.length) {
+  // Save merged state back to Firestore whenever merged dates or currentStreak differ from remote
+  if (
+    uid &&
+    uid !== 'guest' &&
+    (updatedStorage.activeDates.length !== remoteActiveDatesCount ||
+      computed.currentStreak !== remoteCurrentStreak ||
+      computed.currentStreak !== topLevelCurrentStreak)
+  ) {
     await safeSetDoc(
       doc(db, 'users', uid),
       {
         uid,
+        currentStreak: computed.currentStreak,
+        longestStreak: computed.longestStreak,
         studyStreak: {
           activeDates: updatedStorage.activeDates.slice(-365),
           dailyActivityCount: updatedStorage.dailyActivityCount,

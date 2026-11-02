@@ -21,6 +21,10 @@ import {
   AlertTriangle,
   Tag,
   Mic,
+  LayoutGrid,
+  List,
+  ArrowUpDown,
+  GripVertical,
 } from 'lucide-react';
 import { TestMetadata, ExamSection, InProgressAttempt, isDraftTest } from '../types/exam';
 import { Sidebar, NavTabType } from './navigation/Sidebar';
@@ -44,6 +48,20 @@ import {
   getEffectiveTestCategory,
   subscribeToCustomExamTags,
 } from '../services/categoryTagService';
+import { CompactExamCard } from './CompactExamCard';
+import {
+  ExamSortMode,
+  ExamViewMode,
+  ExamOrderConfig,
+  getSavedExamViewMode,
+  saveExamViewMode,
+  getLocalExamOrderConfig,
+  saveExamOrderToCloud,
+  togglePinTestOnCloud,
+  subscribeToExamOrderConfig,
+  sortTestsList,
+  compareTestsNaturally,
+} from '../services/examOrderService';
 
 export type SkillPackageType = 'LRWS' | 'LRW' | 'LR' | 'W' | 'S';
 
@@ -61,7 +79,7 @@ interface TestSelectionViewProps {
   onOpenCreateExam: () => void;
   onOpenAiPdfModal: () => void;
   onEditTest: (testId: string) => void;
-  onOpenHistory: () => void;
+  onOpenHistory: (testId?: string) => void;
   onOpenProfile?: () => void;
   onBackToLanding?: () => void;
   onOpenFeedback?: () => void;
@@ -107,14 +125,23 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
   const [deleteCountdown, setDeleteCountdown] = useState<number>(3);
   const [searchTestQuery, setSearchTestQuery] = useState<string>('');
   const [filterTag, setFilterTag] = useState<string>('all');
+  const [viewMode, setViewMode] = useState<ExamViewMode>(() => getSavedExamViewMode());
+  const [sortMode, setSortMode] = useState<ExamSortMode>('custom');
+  const [examOrderConfig, setExamOrderConfig] = useState<ExamOrderConfig>(() =>
+    getLocalExamOrderConfig()
+  );
+  const [isReorderMode, setIsReorderMode] = useState<boolean>(false);
+  const [draggedTestId, setDraggedTestId] = useState<string | null>(null);
+  const [dragOverTestId, setDragOverTestId] = useState<string | null>(null);
+  const [orderSyncNotice, setOrderSyncNotice] = useState<string>('');
   const [customTags, setCustomTags] = useState<string[]>(() => getAllExamCategories());
   const [selectedVocabTestFilterId, setSelectedVocabTestFilterId] = useState<string | undefined>(undefined);
-  const [vocabWorkspace, setVocabWorkspace] = useState<'my_decks' | 'study_hub' | 'roadmaps'>('roadmaps');
+  const [vocabWorkspace, setVocabWorkspace] = useState<'community' | 'my_decks' | 'study_hub' | 'roadmaps'>('roadmaps');
   const [navHistoryStack, setNavHistoryStack] = useState<
     Array<{
       tab: NavTabType;
       vocabTestFilterId?: string;
-      vocabWorkspace: 'my_decks' | 'study_hub' | 'roadmaps';
+      vocabWorkspace: 'community' | 'my_decks' | 'study_hub' | 'roadmaps';
     }>
   >([]);
   const [streakDays, setStreakDays] = useState<number>(() => getStreakStatus().currentStreak);
@@ -123,7 +150,14 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
     const unsub = subscribeToCustomExamTags(() => {
       setCustomTags(getAllExamCategories());
     });
-    return () => unsub();
+    const unsubOrder = subscribeToExamOrderConfig((cfg) => {
+      setExamOrderConfig(cfg);
+      setViewMode(getSavedExamViewMode());
+    });
+    return () => {
+      unsub();
+      unsubOrder();
+    };
   }, []);
 
   useEffect(() => {
@@ -356,19 +390,109 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
     ])
   ).filter((cat) => (cat === 'Đề Nháp' ? canManageExams : true));
 
-  // Filter tests in the 'tests' tab
-  const filteredTests = tests.filter((t) => {
-    const q = searchTestQuery.toLowerCase();
-    const matchesSearch =
-      t.title.toLowerCase().includes(q) ||
-      (t.subtitle && t.subtitle.toLowerCase().includes(q)) ||
-      (t.description && t.description.toLowerCase().includes(q));
+  // Filter & Sort tests in the 'tests' tab
+  const filteredTests = sortTestsList(
+    tests.filter((t) => {
+      const q = searchTestQuery.toLowerCase();
+      const matchesSearch =
+        t.title.toLowerCase().includes(q) ||
+        (t.subtitle && t.subtitle.toLowerCase().includes(q)) ||
+        (t.description && t.description.toLowerCase().includes(q));
 
-    if (!matchesSearch) return false;
-    if (filterTag === 'all') return true;
-    if (filterTag === 'Đề Nháp') return isDraftTest(t);
-    return getEffectiveTestCategory(t) === filterTag;
-  });
+      if (!matchesSearch) return false;
+      if (filterTag === 'all') return true;
+      if (filterTag === 'Đề Nháp') return isDraftTest(t);
+      return getEffectiveTestCategory(t) === filterTag;
+    }),
+    examOrderConfig,
+    sortMode,
+    inProgressMap,
+    completedScoresMap
+  );
+
+  const handleSelectViewMode = (mode: ExamViewMode) => {
+    setViewMode(mode);
+    saveExamViewMode(mode);
+  };
+
+  const showSyncToast = (msg: string) => {
+    setOrderSyncNotice(msg);
+    setTimeout(() => {
+      setOrderSyncNotice((prev) => (prev === msg ? '' : prev));
+    }, 3000);
+  };
+
+  const handleMoveTestRelative = async (testId: string, direction: -1 | 1) => {
+    const fullSorted = sortTestsList(tests, examOrderConfig, 'custom');
+    const visibleIds = filteredTests.map((t) => t.id);
+    const currentPosInVisible = visibleIds.indexOf(testId);
+    const targetPosInVisible = currentPosInVisible + direction;
+    if (
+      currentPosInVisible === -1 ||
+      targetPosInVisible < 0 ||
+      targetPosInVisible >= visibleIds.length
+    ) {
+      return;
+    }
+    const swapTargetId = visibleIds[targetPosInVisible];
+    const fullIds = fullSorted.map((t) => t.id);
+    const idxA = fullIds.indexOf(testId);
+    const idxB = fullIds.indexOf(swapTargetId);
+    if (idxA === -1 || idxB === -1) return;
+
+    const nextIds = [...fullIds];
+    const temp = nextIds[idxA];
+    nextIds[idxA] = nextIds[idxB];
+    nextIds[idxB] = temp;
+
+    const updated = await saveExamOrderToCloud(nextIds, examOrderConfig.pinnedTestIds);
+    setExamOrderConfig(updated);
+    setSortMode('custom');
+    showSyncToast('Đã lưu vị trí đề lên Cloud!');
+  };
+
+  const handleDropTestOnTarget = async (sourceId: string, targetId: string) => {
+    if (!sourceId || !targetId || sourceId === targetId) return;
+    const fullSorted = sortTestsList(tests, examOrderConfig, 'custom');
+    const fullIds = fullSorted.map((t) => t.id);
+    const fromIdx = fullIds.indexOf(sourceId);
+    const toIdx = fullIds.indexOf(targetId);
+    if (fromIdx === -1 || toIdx === -1) return;
+
+    const nextIds = [...fullIds];
+    const [moved] = nextIds.splice(fromIdx, 1);
+    nextIds.splice(toIdx, 0, moved);
+
+    const updated = await saveExamOrderToCloud(nextIds, examOrderConfig.pinnedTestIds);
+    setExamOrderConfig(updated);
+    setSortMode('custom');
+    showSyncToast('Đã cập nhật thứ tự kéo thả lên Cloud!');
+  };
+
+  const handleTogglePinTest = async (testId: string) => {
+    const fullSorted = sortTestsList(tests, examOrderConfig, 'custom');
+    const updated = await togglePinTestOnCloud(
+      testId,
+      fullSorted.map((t) => t.id)
+    );
+    setExamOrderConfig(updated);
+    setSortMode('custom');
+    const isNowPinned = updated.pinnedTestIds.includes(testId);
+    showSyncToast(
+      isNowPinned ? 'Đã ghim bộ đề lên đầu trang (Cloud)!' : 'Đã bỏ ghim bộ đề!'
+    );
+  };
+
+  const handleAutoSortNaturalOrderToCloud = async () => {
+    const naturallySorted = [...tests].sort(compareTestsNaturally);
+    const updated = await saveExamOrderToCloud(
+      naturallySorted.map((t) => t.id),
+      examOrderConfig.pinnedTestIds
+    );
+    setExamOrderConfig(updated);
+    setSortMode('custom');
+    showSyncToast('Đã chuẩn hóa thứ tự Test 1 → N và đồng bộ Cloud!');
+  };
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex font-sans transition-colors">
@@ -635,318 +759,221 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                 </div>
               </div>
 
-              {/* Search & Dynamic Category Tag Filter Bar */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                <div className="relative flex-1 max-w-md">
+              {orderSyncNotice && (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-xs font-extrabold animate-in fade-in duration-150">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  <span>{orderSyncNotice}</span>
+                </div>
+              )}
+
+              {/* Search + Sort + Admin Reorder + View Mode Switcher Bar (Matching image_353a9b31.png & image_5713125d.png) */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                {/* Left: Search Input */}
+                <div className="relative flex-1 max-w-xl">
                   <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                   <input
                     type="text"
                     value={searchTestQuery}
                     onChange={(e) => setSearchTestQuery(e.target.value)}
                     placeholder="Tìm kiếm bộ đề theo tên..."
-                    className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#58CC02]"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 text-xs sm:text-sm font-medium text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#6D28D9]/30 focus:border-[#6D28D9]"
                   />
                 </div>
 
-                <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
-                  <button
-                    type="button"
-                    onClick={() => setFilterTag('all')}
-                    className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-                      filterTag === 'all'
-                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-2xs'
-                        : 'text-slate-600 dark:text-slate-400'
-                    }`}
-                  >
-                    Tất cả đề ({tests.length})
-                  </button>
-                  {availableCategories.map((cat) => {
-                    const count = tests.filter((t) =>
-                      cat === 'Đề Nháp' ? isDraftTest(t) : getEffectiveTestCategory(t) === cat
-                    ).length;
-                    const isDraftTab = cat === 'Đề Nháp';
-                    return (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => setFilterTag(cat)}
-                        className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
-                          filterTag === cat
-                            ? isDraftTab
-                              ? 'bg-amber-500 text-white shadow-2xs'
-                              : 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-2xs'
-                            : isDraftTab
-                            ? 'text-amber-700 dark:text-amber-400 hover:bg-amber-100/60 dark:hover:bg-amber-950/40'
-                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                      >
-                        <span>{cat}</span>
-                        <span className="text-[10px] opacity-75">({count})</span>
-                      </button>
-                    );
-                  })}
+                {/* Right: Quick Sort Select + Admin Reorder Button + Grid/List Toggle */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Quick Sort Dropdown */}
+                  <div className="relative inline-flex items-center">
+                    <ArrowUpDown className="h-3.5 w-3.5 text-slate-400 absolute left-3 pointer-events-none" />
+                    <select
+                      value={sortMode}
+                      onChange={(e) => setSortMode(e.target.value as ExamSortMode)}
+                      className="pl-8 pr-7 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 text-xs font-extrabold text-slate-700 dark:text-slate-200 focus:outline-hidden focus:border-[#6D28D9] cursor-pointer"
+                      title="Chọn cách sắp xếp bộ đề"
+                    >
+                      <option value="custom">Thứ tự chuẩn GV (Cloud)</option>
+                      <option value="title_asc">Tên đề: Test 1 → N</option>
+                      <option value="title_desc">Tên đề: Test N → 1</option>
+                      <option value="newest">Mới cập nhật nhất</option>
+                      <option value="uncompleted_first">Ưu tiên đề Đang làm / Chưa làm</option>
+                    </select>
+                  </div>
+
+                  {/* Admin Custom Reorder Mode Toggle */}
+                  {canManageExams && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsReorderMode((prev) => !prev);
+                        setSortMode('custom');
+                      }}
+                      className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-extrabold border transition-all cursor-pointer ${
+                        isReorderMode
+                          ? 'bg-[#6D28D9] text-white border-[#6D28D9] shadow-xs'
+                          : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200/90 dark:border-slate-800 hover:border-[#6D28D9]'
+                      }`}
+                      title="Bật chế độ kéo thả hoặc bấm nút đổi vị trí đề và đồng bộ Cloud cho toàn bộ học viên"
+                    >
+                      <GripVertical className="h-3.5 w-3.5" />
+                      <span>{isReorderMode ? 'Xong sắp xếp' : 'Sắp xếp vị trí'}</span>
+                    </button>
+                  )}
+
+                  {/* Lưới | Danh sách View Mode Switcher */}
+                  <div className="inline-flex items-center p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => handleSelectViewMode('grid')}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                        viewMode === 'grid'
+                          ? 'bg-white dark:bg-slate-900 text-[#6D28D9] dark:text-purple-300 shadow-2xs border border-purple-200/80 dark:border-purple-800'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <LayoutGrid className="h-3.5 w-3.5" />
+                      <span>Lưới</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectViewMode('list')}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                        viewMode === 'list'
+                          ? 'bg-white dark:bg-slate-900 text-[#6D28D9] dark:text-purple-300 shadow-2xs border border-purple-200/80 dark:border-purple-800'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <List className="h-3.5 w-3.5" />
+                      <span>Danh sách</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* Tests Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {filteredTests.map((test) => {
-                  const inProgress = inProgressMap[test.id];
-                  const bestScore = completedScoresMap[test.id];
-                  const answeredInProgressCount = inProgress
-                    ? Object.values(inProgress.answers || {}).filter((v) => v && v.trim().length > 0).length
-                    : 0;
-                  const isDraft = isDraftTest(test);
-                  const effectiveCat = getEffectiveTestCategory(test);
+              {/* Admin Active Reorder Helper Bar */}
+              {canManageExams && isReorderMode && (
+                <div className="rounded-2xl bg-purple-50/90 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="text-xs text-purple-950 dark:text-purple-200 font-semibold">
+                    <strong className="font-black">Chế độ Sắp xếp đề (Đồng bộ Cloud):</strong> Kéo thả trực tiếp thẻ đề, bấm nút mũi tên <span className="font-black">← / →</span> để đổi vị trí hoặc bấm <span className="font-black">📌 Ghim</span> để cố định đề lên đầu trang cho mọi học viên.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAutoSortNaturalOrderToCloud}
+                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 hover:bg-purple-100/60 text-[#6D28D9] dark:text-purple-300 border border-purple-300 dark:border-purple-700 text-xs font-black shadow-2xs transition-all cursor-pointer shrink-0"
+                    title="Tự động xếp theo tên Test 1 -> Test 2 -> Test 3... và lưu lên Cloud"
+                  >
+                    <ArrowUpDown className="h-3.5 w-3.5" />
+                    <span>Chuẩn hóa Test 1 → N (Lưu Cloud)</span>
+                  </button>
+                </div>
+              )}
 
+              {/* Dynamic Category Tag Filter Bar */}
+              <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200/70 dark:border-slate-800 rounded-2xl">
+                <button
+                  type="button"
+                  onClick={() => setFilterTag('all')}
+                  className={`px-3.5 py-1.5 text-xs font-black rounded-xl transition-all cursor-pointer ${
+                    filterTag === 'all'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs border border-slate-200/80 dark:border-slate-700'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  Tất cả đề ({tests.length})
+                </button>
+                {availableCategories.map((cat) => {
+                  const count = tests.filter((t) =>
+                    cat === 'Đề Nháp' ? isDraftTest(t) : getEffectiveTestCategory(t) === cat
+                  ).length;
+                  const isDraftTab = cat === 'Đề Nháp';
                   return (
-                    <div
-                      key={test.id}
-                      className={`rounded-[28px] p-6 border-2 transition-all flex flex-col justify-between ${
-                        isDraft
-                          ? 'bg-amber-50/45 dark:bg-amber-950/20 border-dashed border-amber-400 dark:border-amber-500/80 shadow-[0_6px_24px_rgba(245,158,11,0.10)] hover:border-amber-500'
-                          : 'bg-white dark:bg-slate-900 border-indigo-100/90 dark:border-slate-800 hover:border-purple-400 dark:hover:border-purple-500 shadow-[0_6px_24px_rgba(99,102,241,0.06)] hover:shadow-[0_10px_30px_rgba(139,92,246,0.13)]'
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setFilterTag(cat)}
+                      className={`px-3.5 py-1.5 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+                        filterTag === cat
+                          ? isDraftTab
+                            ? 'bg-amber-500 text-white shadow-2xs'
+                            : 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs border border-slate-200/80 dark:border-slate-700'
+                          : isDraftTab
+                          ? 'text-amber-700 dark:text-amber-400 hover:bg-amber-100/60 dark:hover:bg-amber-950/40'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                       }`}
                     >
-                      <div>
-                        {/* Row 1: Bold Title + Circular Action Buttons */}
-                        <div className="flex items-start justify-between gap-3 mb-3">
-                          <div className="flex-1 min-w-0">
-                            {isDraft && (
-                              <div className="mb-2 rounded-xl bg-amber-100 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-700 p-2 flex flex-wrap items-center justify-between gap-2">
-                                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-amber-900 dark:text-amber-300">
-                                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                                  <span>ĐỀ NHÁP (Học viên chưa thấy)</span>
-                                </span>
-                                {canManageExams && onPublishDraftTest && (
-                                  <button
-                                    type="button"
-                                    onClick={() => onPublishDraftTest(test.id)}
-                                    className="inline-flex items-center gap-1 rounded-lg bg-[#58CC02] hover:bg-[#46A302] px-2.5 py-1 text-[10px] font-black text-white shadow-2xs cursor-pointer"
-                                  >
-                                    <CheckCircle2 className="h-3 w-3" />
-                                    <span>Xuất bản ngay</span>
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                            <h3
-                              className="font-black text-xl sm:text-2xl text-slate-900 dark:text-white tracking-tight leading-snug break-words"
-                              title={test.title}
-                            >
-                              {test.title}
-                            </h3>
-                          </div>
-
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {canManageExams && (
-                              <button
-                                type="button"
-                                onClick={() => onEditTest(test.id)}
-                                className="h-9 w-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-400 hover:text-indigo-600 hover:border-indigo-300 flex items-center justify-center transition-colors cursor-pointer"
-                                title="Chỉnh sửa bộ đề này"
-                              >
-                                <Edit3 className="h-4 w-4" />
-                              </button>
-                            )}
-                            {canManageExams && (
-                              <button
-                                type="button"
-                                onClick={() => setDeleteTarget({ id: test.id, title: test.title })}
-                                className="h-9 w-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-400 hover:text-red-600 hover:border-red-300 flex items-center justify-center transition-colors cursor-pointer"
-                                title="Xóa bộ đề này khỏi hệ thống (Đếm ngược 3s)"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={onOpenHistory}
-                              className="h-9 w-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-400 hover:text-purple-600 hover:border-purple-300 flex items-center justify-center transition-colors cursor-pointer"
-                              title="Xem lịch sử làm bài"
-                            >
-                              <Clock className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Row 2: Category Tag Badge & Score Badge */}
-                        <div className="flex flex-wrap items-center gap-2 mb-4">
-                          <span
-                            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-extrabold border ${
-                              isDraft
-                                ? 'bg-amber-100/90 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700'
-                                : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200/60 dark:border-emerald-800/50'
-                            }`}
-                          >
-                            {isDraft ? (
-                              <Tag className="h-3.5 w-3.5 text-amber-600" />
-                            ) : (
-                              <BarChart2 className="h-3.5 w-3.5 text-emerald-600" />
-                            )}
-                            <span>{effectiveCat}</span>
-                          </span>
-
-                          <button
-                            type="button"
-                            onClick={onOpenHistory}
-                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-50/90 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-xs font-extrabold border border-amber-200/80 dark:border-amber-800/50 hover:bg-amber-100 transition-colors cursor-pointer"
-                          >
-                            <Award className="h-3.5 w-3.5 text-amber-600" />
-                            <span>
-                              {bestScore !== undefined ? `Điểm cao nhất: ${bestScore}/75` : 'Thang 10 VSTEP'}
-                            </span>
-                          </button>
-                        </div>
-
-                        {/* Audio File Info if present */}
-                        {(test.audioFileName || test.audioMode === 'per_part') && (
-                          <div className="mb-3 px-2.5 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-[11px] font-bold flex items-center gap-1.5 truncate">
-                            <Music className="h-3 w-3 shrink-0" />
-                            <span className="truncate">
-                              {test.audioMode === 'per_part'
-                                ? 'Chế độ file Audio riêng cho từng Part'
-                                : test.audioFileName}
-                            </span>
-                          </div>
-                        )}
-
-                        {/* Row 3: Question Count & Duration */}
-                        <div className="flex items-center gap-4 text-sm text-slate-600 dark:text-slate-300 mb-3">
-                          <div className="flex items-center gap-1.5">
-                            <FileText className="h-4 w-4 text-slate-400" />
-                            <span>
-                              <strong className="font-black text-slate-900 dark:text-white">
-                                {test.totalQuestions || 75}
-                              </strong>{' '}
-                              câu + 2W + 3S
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <Clock className="h-4 w-4 text-slate-400" />
-                            <span>
-                              <strong className="font-black text-slate-900 dark:text-white">
-                                {test.durationMinutes || 172}
-                              </strong>{' '}
-                              phút
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Row 4: Skill Breakdown Pills (4 Skills L-R-W-S) */}
-                        <div className="flex flex-wrap items-center gap-1.5 mb-5">
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 text-[11px] font-bold border border-sky-200/60 dark:border-sky-800/50">
-                            <Headphones className="h-3 w-3 text-sky-600" />
-                            <span>35 Listening</span>
-                          </span>
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[11px] font-bold border border-amber-200/60 dark:border-amber-800/50">
-                            <BookOpen className="h-3 w-3 text-amber-600" />
-                            <span>40 Reading</span>
-                          </span>
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold border border-emerald-200/60 dark:border-emerald-800/50">
-                            <PenTool className="h-3 w-3 text-emerald-600" />
-                            <span>2 Writing</span>
-                          </span>
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 text-[11px] font-bold border border-rose-200/60 dark:border-rose-800/50">
-                            <Mic className="h-3 w-3 text-rose-600" />
-                            <span>3 Speaking</span>
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Bottom Section: Dashed Divider + Status + Action Buttons */}
-                      <div>
-                        <div className="border-t border-dashed border-slate-200 dark:border-slate-700 pt-3.5 mb-3.5 flex items-center justify-between">
-                          {inProgress ? (
-                            <div className="flex items-center gap-2 text-xs font-extrabold text-amber-600 dark:text-amber-400">
-                              <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                              <span>Đang làm bài ({answeredInProgressCount}/{test.totalQuestions || 75} câu)</span>
-                            </div>
-                          ) : bestScore !== undefined ? (
-                            <div className="flex items-center gap-2 text-xs font-extrabold text-emerald-600 dark:text-emerald-400">
-                              <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                              <span>Đã hoàn thành ({bestScore}/{test.totalQuestions || 75} câu đúng)</span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2 text-xs font-extrabold text-slate-500 dark:text-slate-400">
-                              <span className="h-2 w-2 rounded-full bg-slate-300 dark:bg-slate-600" />
-                              <span>Chưa luyện tập</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {inProgress && onResumeTest ? (
-                          <div className="grid grid-cols-2 gap-2.5">
-                            <button
-                              type="button"
-                              onClick={() => onResumeTest(test.id)}
-                              className="flex items-center justify-center gap-1.5 py-3 px-3 rounded-2xl border-2 border-amber-400 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs sm:text-sm font-black shadow-[0_4px_0_#d97706] active:shadow-none active:translate-y-1 transition-all cursor-pointer whitespace-nowrap"
-                            >
-                              <Play className="h-3.5 w-3.5 fill-amber-600 text-amber-600 shrink-0" />
-                              <span>Làm tiếp</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (onRestartTest) {
-                                  onRestartTest(test.id);
-                                } else {
-                                  onSelectMode('exam');
-                                  onStartTest(test.id);
-                                }
-                              }}
-                              className="flex items-center justify-center gap-1.5 py-3 px-3 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs sm:text-sm font-black shadow-[0_4px_0_#4c1d95] active:shadow-none active:translate-y-1 transition-all cursor-pointer whitespace-nowrap"
-                              title="Xóa tiến trình đang làm dở và bắt đầu lại từ đầu"
-                            >
-                              <Play className="h-3.5 w-3.5 fill-white shrink-0" />
-                              <span>Làm lại từ đầu</span>
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-2 gap-3">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onSelectMode('exam');
-                                onStartTest(test.id);
-                              }}
-                              className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs sm:text-sm font-black shadow-[0_4px_0_#4c1d95] active:shadow-none active:translate-y-1 transition-all cursor-pointer whitespace-nowrap"
-                            >
-                              <Play className="h-3.5 w-3.5 fill-white shrink-0" />
-                              <span>Thi thử</span>
-                              <ArrowRight className="h-3.5 w-3.5 shrink-0" />
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onSelectMode('practice');
-                                onStartTest(test.id);
-                              }}
-                              className="flex items-center justify-center gap-1.5 py-3 px-4 rounded-2xl border-2 border-purple-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-purple-400 hover:bg-purple-50/50 text-purple-700 dark:text-purple-300 text-xs sm:text-sm font-black shadow-[0_4px_0_#e9d5ff] dark:shadow-none active:translate-y-1 transition-all cursor-pointer whitespace-nowrap"
-                            >
-                              <BookOpen className="h-3.5 w-3.5 shrink-0" />
-                              <span>Luyện tập</span>
-                            </button>
-                          </div>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            handleTabSelect('vocab', test.id);
-                          }}
-                          className="mt-3.5 w-full flex items-center justify-center gap-1.5 py-1 text-xs font-extrabold text-purple-700 dark:text-purple-400 hover:text-purple-900 transition-colors cursor-pointer"
-                        >
-                          <Layers className="h-3.5 w-3.5" />
-                          <span>Từ vựng của đề này</span>
-                          <ArrowRight className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
+                      <span>{cat}</span>
+                      <span className="text-[11px] opacity-75">({count})</span>
+                    </button>
                   );
                 })}
+              </div>
+
+              {/* Tests Container: 2-Column Grid ('grid') or Horizontal Rows ('list') */}
+              <div
+                className={
+                  viewMode === 'grid'
+                    ? 'grid grid-cols-1 md:grid-cols-2 gap-4'
+                    : 'flex flex-col gap-3'
+                }
+              >
+                {filteredTests.map((test, index) => (
+                  <CompactExamCard
+                    key={test.id}
+                    test={test}
+                    viewMode={viewMode}
+                    canManageExams={canManageExams}
+                    inProgress={inProgressMap[test.id]}
+                    bestScore={completedScoresMap[test.id]}
+                    orderIndex={index}
+                    isPinned={examOrderConfig.pinnedTestIds.includes(test.id)}
+                    isReorderMode={isReorderMode}
+                    canMovePrev={index > 0}
+                    canMoveNext={index < filteredTests.length - 1}
+                    isDragging={draggedTestId === test.id}
+                    isDragOver={dragOverTestId === test.id && draggedTestId !== test.id}
+                    onMovePrev={() => handleMoveTestRelative(test.id, -1)}
+                    onMoveNext={() => handleMoveTestRelative(test.id, 1)}
+                    onTogglePin={() => handleTogglePinTest(test.id)}
+                    onDragStart={(e) => {
+                      setDraggedTestId(test.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', test.id);
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (dragOverTestId !== test.id) {
+                        setDragOverTestId(test.id);
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const sourceId = draggedTestId || e.dataTransfer.getData('text/plain');
+                      setDraggedTestId(null);
+                      setDragOverTestId(null);
+                      if (sourceId && sourceId !== test.id) {
+                        handleDropTestOnTarget(sourceId, test.id);
+                      }
+                    }}
+                    onDragEnd={() => {
+                      setDraggedTestId(null);
+                      setDragOverTestId(null);
+                    }}
+                    onStartExam={(id) => {
+                      onSelectMode('exam');
+                      onStartTest(id);
+                    }}
+                    onStartPractice={(id) => {
+                      onSelectMode('practice');
+                      onStartTest(id);
+                    }}
+                    onResumeTest={onResumeTest}
+                    onRestartTest={onRestartTest}
+                    onEditTest={onEditTest}
+                    onRequestDeleteTest={(id, title) => setDeleteTarget({ id, title })}
+                    onPublishDraftTest={onPublishDraftTest}
+                    onOpenHistory={onOpenHistory ? (id) => onOpenHistory(id) : undefined}
+                    onOpenVocabForTest={(id) => handleTabSelect('vocab', id)}
+                  />
+                ))}
               </div>
             </div>
           )}

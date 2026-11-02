@@ -30,6 +30,9 @@ import {
   Layers,
   Activity,
   Flame,
+  PlayCircle,
+  Target,
+  BarChart2,
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { UserProfile, UserRole } from '../../../types/studentManagement';
@@ -37,6 +40,8 @@ import {
   subscribeToStudentDirectory,
   isUserOnline,
   formatRelativeActiveTime,
+  formatExactLoginTimestamp,
+  resolveTestTitle,
   updateStudentRole,
   DEMO_STUDENTS,
   SUPER_ADMIN_EMAILS,
@@ -173,19 +178,17 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
       // 2. Activity Filter
       if (activityFilter === 'online' && !isUserOnline(s, currentUser?.uid)) return false;
       if (activityFilter === 'vocab') {
-        const hasVocab = s.vocabStats && (s.vocabStats.totalWords > 0 || s.vocabStats.learningCount > 0);
+        const hasVocab =
+          s.vocabStats && (s.vocabStats.masteredCount > 0 || s.vocabStats.learningCount > 0);
         if (!hasVocab) return false;
       }
       if (activityFilter === 'submitted') {
-        // Has taken tests (in demo students or indicated)
-        const isDemo = s.uid.startsWith('demo_');
-        const hasAttempts = isDemo || (s.lastActiveAt && s.lastActiveAt > (s.createdAt || 0) + 1000 * 60 * 10);
+        const hasAttempts = (s.totalExamAttempts || 0) > 0;
         if (!hasAttempts) return false;
       }
       if (activityFilter === 'in_progress') {
-        // Active in last 30 minutes
-        const isRecent = isUserOnline(s, currentUser?.uid) || (s.lastActiveAt && Date.now() - s.lastActiveAt < 30 * 60 * 1000);
-        if (!isRecent) return false;
+        const hasDraft = Boolean(s.activeDraftSummary && s.activeDraftSummary.testId);
+        if (!hasDraft) return false;
       }
 
       // 3. Search Filter
@@ -226,32 +229,28 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
     const isSuper = email && SUPER_ADMIN_EMAILS.includes(email.toLowerCase());
     if (isSuper) {
       return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
-          <ShieldCheck className="h-3 w-3" />
-          <span>Super Admin</span>
+        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+          <span>SUPER ADMIN</span>
         </span>
       );
     }
     if (role === 'admin') {
       return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-purple-100 text-purple-800 dark:bg-purple-950/70 dark:text-purple-300 border border-purple-300 dark:border-purple-800">
-          <GraduationCap className="h-3 w-3" />
-          <span>Giáo viên</span>
+        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-purple-100 text-purple-800 dark:bg-purple-950/70 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+          <span>GIÁO VIÊN</span>
         </span>
       );
     }
     if (role === 'co_teacher') {
       return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
-          <Award className="h-3 w-3" />
-          <span>Trợ giảng</span>
+        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+          <span>TRỢ GIẢNG</span>
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
-        <UserCheck className="h-3 w-3" />
-        <span>Học viên</span>
+      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700">
+        <span>HỌC VIÊN</span>
       </span>
     );
   };
@@ -595,47 +594,55 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
           {filteredStudents.map((st) => {
-            const zodiac = st.birthDate ? getZodiacFromBirthDate(st.birthDate) : null;
             const goals = st.targetScores;
+            const hasGoals = Boolean(goals && typeof goals.overall === 'number');
             const isMe = currentUser?.uid === st.uid;
             const isDemo = st.uid.startsWith('demo_');
             const online = isUserOnline(st, currentUser?.uid);
             const isSuper = Boolean(st.email && SUPER_ADMIN_EMAILS.includes(st.email.toLowerCase()));
+            const lastLoginTime = st.lastLoginAt || st.lastActiveAt || st.createdAt;
+            const activeDraft = st.activeDraftSummary;
+            const attemptsCount = st.totalExamAttempts || 0;
+            const bestBand = st.bestVstepBandScore || 0;
+            const vocab = st.vocabStats;
+            const hasVocabActivity = Boolean(
+              vocab && (vocab.masteredCount > 0 || vocab.learningCount > 0)
+            );
 
             return (
               <div
                 key={st.uid}
-                className={`rounded-3xl bg-white dark:bg-slate-900 border p-5 shadow-xs transition-all flex flex-col justify-between ${
+                className={`rounded-[28px] bg-white dark:bg-slate-900 border p-5 shadow-xs transition-all flex flex-col justify-between ${
                   online
-                    ? 'border-emerald-300 dark:border-emerald-700/80 shadow-[0_6px_20px_rgba(16,185,129,0.08)]'
+                    ? 'border-emerald-300 dark:border-emerald-700/80 shadow-[0_8px_24px_rgba(16,185,129,0.08)]'
                     : isDemo
-                    ? 'border-amber-200/80 dark:border-amber-900/40 bg-amber-50/20 dark:bg-amber-950/10'
-                    : 'border-slate-200/90 dark:border-slate-800 hover:border-[#58CC02] dark:hover:border-[#58CC02]'
+                    ? 'border-amber-200/80 dark:border-amber-900/40 bg-amber-50/10 dark:bg-amber-950/10'
+                    : 'border-indigo-100/90 dark:border-slate-800 hover:border-[#58CC02] dark:hover:border-[#58CC02]'
                 }`}
               >
-                <div>
-                  {/* Top: Avatar with Online pulsing dot + Name + Role */}
-                  <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="space-y-3">
+                  {/* 1. Top Header: Avatar + Name/Email + Role Badge */}
+                  <div className="flex items-start justify-between gap-2.5">
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="relative shrink-0">
                         {st.photoURL ? (
                           <img
                             src={st.photoURL}
                             alt={st.displayName || 'Avatar'}
-                            className="h-12 w-12 rounded-2xl object-cover shadow-xs border border-slate-200 dark:border-slate-700"
+                            className="h-13 w-13 rounded-2xl object-cover shadow-xs border border-slate-200 dark:border-slate-700"
                           />
                         ) : (
-                          <div className="h-12 w-12 rounded-2xl bg-gradient-to-tr from-[#58CC02] to-emerald-400 text-white font-black text-lg flex items-center justify-center shadow-xs">
+                          <div className="h-13 w-13 rounded-2xl bg-[#005A8D] text-white font-bold text-xl flex items-center justify-center shadow-xs">
                             {(st.displayName || st.email || 'H').charAt(0).toUpperCase()}
                           </div>
                         )}
 
-                        {/* Online Pulsing Dot */}
+                        {/* Status Dot at bottom-right matching screenshot */}
                         {online ? (
                           <span
-                            className="absolute -top-1 -right-1 flex h-4 w-4"
+                            className="absolute -bottom-1 -right-1 flex h-4 w-4"
                             title="Học viên đang Online"
                           >
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
@@ -643,7 +650,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                           </span>
                         ) : (
                           <span
-                            className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full bg-slate-400 border-2 border-white dark:border-slate-900"
+                            className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-slate-300 dark:bg-slate-600 border-2 border-white dark:border-slate-900"
                             title="Offline"
                           />
                         )}
@@ -654,42 +661,24 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                           <h3 className="text-base font-black text-slate-900 dark:text-white truncate">
                             {st.displayName || 'Học viên VSTEP'}
                           </h3>
-                          {st.nickname && (
-                            <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 truncate">
-                              ({st.nickname})
-                            </span>
-                          )}
-                        </div>
-
-                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate flex items-center gap-1 mt-0.5">
-                          <Mail className="h-3 w-3 shrink-0 text-slate-400" />
-                          <span className="truncate">{st.email || 'Chưa có email'}</span>
-                        </p>
-
-                        <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                          {online ? (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-black tracking-tight bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
-                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                              Đang Online
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-400">
-                              {formatRelativeActiveTime(st.lastActiveAt)}
-                            </span>
-                          )}
-
-                          {isDemo && (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-dashed border-amber-300 dark:border-amber-700">
-                              Demo
-                            </span>
-                          )}
-
                           {isMe && (
                             <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400">
                               (Bạn)
                             </span>
                           )}
+                          {isDemo && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300">
+                              Demo
+                            </span>
+                          )}
                         </div>
+
+                        <p
+                          className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5"
+                          title={st.email || ''}
+                        >
+                          {st.email || 'Chưa có email'}
+                        </p>
                       </div>
                     </div>
 
@@ -698,109 +687,179 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                     </div>
                   </div>
 
-                  {/* Personal Contact Details */}
-                  <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-3 text-xs space-y-1.5 border border-slate-100 dark:border-slate-800 mb-3.5">
-                    <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
-                      <span className="flex items-center gap-1.5 text-slate-400">
-                        <Phone className="h-3 w-3" />
-                        <span>SĐT:</span>
-                      </span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">
-                        {st.phone || 'Chưa cập nhật'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
-                      <span className="flex items-center gap-1.5 text-slate-400">
-                        <Calendar className="h-3 w-3" />
-                        <span>Ngày sinh:</span>
-                      </span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">
-                        {st.birthDate ? `${st.birthDate} (${zodiac?.branchName || ''})` : 'Chưa cập nhật'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* VSTEP 4-Skill Target Scores */}
-                  <div className="mb-4">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-extrabold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                        <Award className="h-3.5 w-3.5 text-[#58CC02]" />
-                        <span>Mục tiêu VSTEP:</span>
-                      </span>
-                      {goals && typeof goals.overall === 'number' ? (
-                        <span className="text-xs font-black text-[#2E7D32] dark:text-[#58CC02] tabular-nums">
-                          Overall: {goals.overall.toFixed(1)}/10 · {getVstepBandLevel(goals.overall)}
+                  {/* 2. Online Status & Last Login Box */}
+                  <div className="rounded-2xl bg-slate-50/90 dark:bg-slate-800/60 p-3 border border-slate-100 dark:border-slate-800 space-y-2">
+                    <div>
+                      {online ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
+                          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span>Đang Online</span>
                         </span>
                       ) : (
-                        <span className="text-[11px] font-bold text-slate-400 italic">
-                          Chưa thiết lập mục tiêu
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-extrabold bg-slate-200/75 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                          <span className="h-2 w-2 rounded-full bg-slate-400" />
+                          <span>Offline</span>
                         </span>
                       )}
                     </div>
 
-                    {goals && typeof goals.overall === 'number' ? (
-                      <div className="grid grid-cols-4 gap-1 text-center tabular-nums">
-                        <div className="rounded-xl bg-slate-100 dark:bg-slate-800 p-1.5">
-                          <span className="block text-[10px] font-bold text-slate-500">Nghe</span>
-                          <span className="font-black text-xs text-slate-900 dark:text-white">
-                            {goals.listening.toFixed(1)}
-                          </span>
-                        </div>
-                        <div className="rounded-xl bg-slate-100 dark:bg-slate-800 p-1.5">
-                          <span className="block text-[10px] font-bold text-slate-500">Đọc</span>
-                          <span className="font-black text-xs text-slate-900 dark:text-white">
-                            {goals.reading.toFixed(1)}
-                          </span>
-                        </div>
-                        <div className="rounded-xl bg-slate-100 dark:bg-slate-800 p-1.5">
-                          <span className="block text-[10px] font-bold text-slate-500">Viết</span>
-                          <span className="font-black text-xs text-slate-900 dark:text-white">
-                            {goals.writing.toFixed(1)}
-                          </span>
-                        </div>
-                        <div className="rounded-xl bg-slate-100 dark:bg-slate-800 p-1.5">
-                          <span className="block text-[10px] font-bold text-slate-500">Nói</span>
-                          <span className="font-black text-xs text-slate-900 dark:text-white">
-                            {(goals.speaking ?? 6.5).toFixed(1)}
-                          </span>
-                        </div>
+                    <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+                      <Clock className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                      <span>Đăng nhập cuối:</span>
+                      <strong className="font-black text-slate-800 dark:text-slate-100 tabular-nums">
+                        {formatExactLoginTimestamp(lastLoginTime)}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* 3. Phone & BirthDate Pill Row */}
+                  <div className="rounded-2xl bg-slate-50/90 dark:bg-slate-800/60 px-3.5 py-2.5 border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-bold truncate">
+                      <Phone className="h-3.5 w-3.5 text-sky-500 shrink-0" />
+                      <span className="truncate">{st.phone || 'Chưa cập nhật'}</span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-bold shrink-0 tabular-nums">
+                      <Calendar className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                      <span>{st.birthDate || 'Chưa cập nhật'}</span>
+                    </div>
+                  </div>
+
+                  {/* 4. 3-Row Activity Status Box (Đang làm / Đã nộp / Từ vựng B1) */}
+                  <div className="rounded-2xl bg-slate-50/90 dark:bg-slate-800/60 p-3.5 border border-slate-100 dark:border-slate-800 space-y-2 text-xs">
+                    {/* Row 1: Đang làm */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 font-bold text-slate-600 dark:text-slate-300 shrink-0">
+                        <PlayCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                        <span>Đang làm:</span>
+                      </span>
+                      {activeDraft && activeDraft.testId ? (
+                        <span
+                          className="font-extrabold text-amber-600 dark:text-amber-400 truncate text-right"
+                          title={resolveTestTitle(activeDraft.testId, activeDraft.testTitle)}
+                        >
+                          {resolveTestTitle(activeDraft.testId, activeDraft.testTitle)} (
+                          {activeDraft.answeredCount}/75 câu)
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 dark:text-slate-500 font-medium text-right">
+                          Không có đề làm dở
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Row 2: Đã nộp */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 font-bold text-slate-600 dark:text-slate-300 shrink-0">
+                        <FileText className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                        <span>Đã nộp:</span>
+                      </span>
+                      {attemptsCount > 0 ? (
+                        <span className="font-extrabold text-indigo-600 dark:text-indigo-400 truncate text-right tabular-nums">
+                          {attemptsCount} đề · Cao nhất: {bestBand.toFixed(1)}/10
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 dark:text-slate-500 font-medium text-right">
+                          Chưa nộp đề nào
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Row 3: Từ vựng B1 */}
+                    <div className="pt-2 border-t border-slate-200/70 dark:border-slate-700/70 flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 font-bold text-slate-600 dark:text-slate-300 shrink-0">
+                        <BookOpen className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                        <span>Từ vựng B1:</span>
+                      </span>
+                      {hasVocabActivity && vocab ? (
+                        <span className="font-extrabold text-emerald-600 dark:text-emerald-400 truncate text-right tabular-nums">
+                          Thuộc {vocab.masteredCount} · Đang học {vocab.learningCount} từ
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 dark:text-slate-500 font-medium text-right">
+                          Chưa ghi nhận học từ vựng
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 5. VSTEP 4-Skill Target Scores Box */}
+                  <div className="rounded-2xl bg-slate-50/90 dark:bg-slate-800/60 p-3.5 border border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center justify-between gap-2 mb-2.5">
+                      <span className="text-xs font-black uppercase tracking-tight text-indigo-950 dark:text-slate-200 flex items-center gap-1.5">
+                        <Target className="h-4 w-4 text-[#58CC02] shrink-0" />
+                        <span>MỤC TIÊU ĐIỂM SỐ</span>
+                      </span>
+                      {hasGoals && goals ? (
+                        <span className="text-xs font-black text-[#2E7D32] dark:text-[#58CC02] tabular-nums">
+                          Overall {goals.overall.toFixed(1)} ({getVstepBandLevel(goals.overall)})
+                        </span>
+                      ) : (
+                        <span className="text-xs font-bold text-slate-400 dark:text-slate-500">
+                          Chưa đặt mục tiêu
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-4 gap-2 text-center tabular-nums">
+                      <div className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-slate-100 dark:border-slate-800 shadow-2xs">
+                        <span className="block text-[10px] font-bold text-slate-400 mb-0.5">Nghe</span>
+                        <span className="font-black text-xs text-sky-600 dark:text-sky-400">
+                          {hasGoals && goals ? goals.listening.toFixed(1) : '--'}
+                        </span>
                       </div>
-                    ) : (
-                      <div className="text-[11px] text-slate-400 bg-slate-50 dark:bg-slate-800/40 rounded-xl p-2 text-center border border-dashed border-slate-200 dark:border-slate-800">
-                        Mặc định chuẩn B2: 6.5/10 (Listening, Reading, Writing, Speaking)
+                      <div className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-slate-100 dark:border-slate-800 shadow-2xs">
+                        <span className="block text-[10px] font-bold text-slate-400 mb-0.5">Đọc</span>
+                        <span className="font-black text-xs text-amber-600 dark:text-amber-400">
+                          {hasGoals && goals ? goals.reading.toFixed(1) : '--'}
+                        </span>
                       </div>
-                    )}
+                      <div className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-slate-100 dark:border-slate-800 shadow-2xs">
+                        <span className="block text-[10px] font-bold text-slate-400 mb-0.5">Viết</span>
+                        <span className="font-black text-xs text-emerald-600 dark:text-emerald-400">
+                          {hasGoals && goals ? goals.writing.toFixed(1) : '--'}
+                        </span>
+                      </div>
+                      <div className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-slate-100 dark:border-slate-800 shadow-2xs">
+                        <span className="block text-[10px] font-bold text-slate-400 mb-0.5">Nói</span>
+                        <span className="font-black text-xs text-purple-600 dark:text-purple-400">
+                          {hasGoals && goals ? (goals.speaking ?? 6.5).toFixed(1) : '--'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                {/* Bottom Card Actions */}
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+                {/* 6. Bottom Card Actions */}
+                <div className="pt-3.5 mt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
                   {/* Role selector dropdown for Super Admin & Admins */}
-                  {(isSuperAdmin || (isAdmin && !isSuper)) ? (
+                  {isSuperAdmin || (isAdmin && !isSuper) ? (
                     <select
                       value={st.role || 'student'}
-                      onChange={(e) =>
-                        handleRoleChange(st.uid, e.target.value as UserRole)
-                      }
-                      className="text-[11px] font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 px-2.5 py-1.5 focus:border-[#58CC02] focus:outline-none cursor-pointer"
+                      onChange={(e) => handleRoleChange(st.uid, e.target.value as UserRole)}
+                      className="text-xs font-extrabold rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 px-3 py-2 focus:border-[#58CC02] focus:outline-none cursor-pointer"
                     >
-                      <option value="student">Học viên</option>
-                      <option value="co_teacher">Trợ giảng</option>
-                      <option value="admin">Giáo viên / Admin</option>
+                      <option value="student">Vai trò: Học viên</option>
+                      <option value="co_teacher">Vai trò: Trợ giảng</option>
+                      <option value="admin">Vai trò: Giáo viên</option>
                     </select>
                   ) : (
-                    <span className="text-[11px] font-bold text-slate-400">
-                      Vai trò: {st.role === 'admin' ? 'Giáo viên' : st.role === 'co_teacher' ? 'Trợ giảng' : 'Học viên'}
+                    <span className="text-xs font-bold text-slate-500 px-2">
+                      Vai trò:{' '}
+                      {st.role === 'admin'
+                        ? 'Giáo viên'
+                        : st.role === 'co_teacher'
+                        ? 'Trợ giảng'
+                        : 'Học viên'}
                     </span>
                   )}
 
                   <button
                     type="button"
                     onClick={() => setSelectedStudent(st)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-[#58CC02] hover:bg-[#46A302] text-white text-xs font-black shadow-xs transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-[#46B800] hover:bg-[#3da100] text-white text-xs font-black shadow-xs transition-colors cursor-pointer"
                   >
-                    <Eye className="h-3.5 w-3.5" />
+                    <BarChart2 className="h-3.5 w-3.5" />
                     <span>Chi tiết &amp; Bài làm</span>
                   </button>
                 </div>
@@ -813,7 +872,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
       {/* STUDENT 360° DETAIL MODAL */}
       {selectedStudent && (
         <StudentDetail360Modal
-          student={selectedStudent}
+          student={allStudents.find((s) => s.uid === selectedStudent.uid) || selectedStudent}
           isOpen={Boolean(selectedStudent)}
           onClose={() => setSelectedStudent(null)}
           onOpenTest={onOpenTest}
