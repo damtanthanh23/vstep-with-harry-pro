@@ -110,16 +110,16 @@ export const AdminFeedbackModal: React.FC<AdminFeedbackModalProps> = ({
               <button
                 type="button"
                 onClick={() => markAllFeedbacksAsRead(reports)}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 px-3.5 py-2 text-xs font-extrabold text-slate-700 transition-colors cursor-pointer"
+                className="btn-duo-white inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-black cursor-pointer"
               >
-                <CheckCheck className="h-4 w-4 text-[#3C8C02]" />
+                <CheckCheck className="h-4 w-4 text-[#58CC02]" />
                 <span>Đánh dấu tất cả đã đọc ({counts.unread})</span>
               </button>
             )}
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors cursor-pointer"
+              className="btn-duo-white rounded-xl p-2 text-slate-400 hover:text-slate-700 cursor-pointer"
             >
               <X className="h-5 w-5" />
             </button>
@@ -143,14 +143,14 @@ export const AdminFeedbackModal: React.FC<AdminFeedbackModalProps> = ({
                 onClick={() => setStatusFilter(tab.id)}
                 className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-black transition-all cursor-pointer ${
                   active
-                    ? 'bg-[#58CC02] text-white shadow-xs border-b-2 border-[#3C8C02]'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    ? 'btn-duo-green'
+                    : 'btn-duo-white text-slate-600'
                 }`}
               >
                 <span>{tab.label}</span>
                 <span
                   className={`rounded-md px-1.5 py-0.5 text-[11px] tabular-nums ${
-                    active ? 'bg-black/20 text-white' : 'bg-white text-slate-700'
+                    active ? 'bg-black/20 text-white' : 'bg-slate-100 text-slate-700'
                   }`}
                 >
                   {tab.count}

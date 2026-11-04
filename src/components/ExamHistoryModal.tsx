@@ -799,10 +799,10 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                                 onClose();
                                 onReviewAttempt(attempt);
                               }}
-                              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 text-slate-700 dark:text-slate-200 hover:text-[#46A302] dark:hover:text-[#58CC02] font-extrabold text-xs border border-slate-200 dark:border-slate-700 transition-all whitespace-nowrap"
+                              className="btn-duo-white inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-black text-xs cursor-pointer whitespace-nowrap"
                             >
-                              <Eye className="w-3.5 h-3.5" />
-                              Xem kết quả & Đáp án
+                              <Eye className="w-3.5 h-3.5 text-[#1CB0F6]" />
+                              Xem kết quả &amp; Đáp án
                             </button>
                           )}
 
@@ -812,7 +812,7 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                                 onClose();
                                 onRetakeTest(attempt.testId);
                               }}
-                              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#58CC02] hover:bg-[#46A302] text-white font-black text-xs shadow-[0_3px_0_#46A302] active:translate-y-0.5 transition-all whitespace-nowrap"
+                              className="btn-duo-green inline-flex items-center gap-1.5 px-4 py-2 rounded-xl font-black text-xs cursor-pointer whitespace-nowrap"
                             >
                               <RotateCcw className="w-3.5 h-3.5" />
                               Làm lại đề này
@@ -829,13 +829,13 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0">
+        <div className="px-6 py-4 bg-white dark:bg-slate-900 border-t-2 border-[#E5E5E5] dark:border-slate-800 flex items-center justify-between shrink-0">
           <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
             Tổng số lần hoàn thành: <strong className="text-slate-900 dark:text-white">{attempts.length}</strong> lượt
           </span>
           <button
             onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-black transition-colors"
+            className="btn-duo-white px-5 py-2.5 rounded-xl text-xs font-black cursor-pointer"
           >
             Đóng
           </button>

@@ -19,6 +19,26 @@ export interface UserVocabDeckSummary {
   updatedAt?: number;
 }
 
+export interface UserVocabLevelBreakdown {
+  lv0: number;
+  lv1: number;
+  lv2: number;
+  lv3: number;
+  lv4: number;
+  lv5: number;
+}
+
+export interface UserVocabRecentSession {
+  sessionId: string;
+  mode: string;
+  deckTitle?: string;
+  scoreEarned: number;
+  accuracy: number;
+  totalWords: number;
+  correctWords: number;
+  completedAt: number;
+}
+
 export interface UserVocabStats {
   totalWords: number;
   masteredCount: number;
@@ -28,8 +48,28 @@ export interface UserVocabStats {
   personalFoldersCount?: number;
   lastStudiedDeckName?: string;
   lastStudiedAt?: number;
+  totalCoins?: number;
+  dueWordsCount?: number;
+  levelBreakdown?: UserVocabLevelBreakdown;
+  recentSessions?: UserVocabRecentSession[];
   decks: UserVocabDeckSummary[];
   updatedAt: number;
+}
+
+export interface UserLeaderboardStats {
+  bestPercentage: number;
+  bestScale100Score: number;
+  bestScale10Score?: number;
+  bestVstepBandScore?: number;
+  bestRawScore: number;
+  bestTotalQuestions: number;
+  bestGrade: string;
+  bestTestTitle?: string;
+  totalAttempts: number;
+  totalCorrectAnswers: number;
+  xp: number;
+  streakDays: number;
+  lastCompletedAt?: number;
 }
 
 export interface UserActiveDraftSummary {
@@ -40,7 +80,9 @@ export interface UserActiveDraftSummary {
   totalQuestions: number;
   writingWordCount?: number;
   speakingWordCount?: number;
+  activeQuestionId?: number;
   elapsedSeconds: number;
+  timeRemainingSeconds?: number;
   updatedAt: number;
 }
 
@@ -61,7 +103,10 @@ export interface UserProfile {
   photoURL?: string;
   role: UserRole; // Default 'student', auto 'admin' if SUPER_ADMIN_EMAILS
   targetScores?: UserTargetScores;
+  leaderboardStats?: UserLeaderboardStats;
   vocabStats?: UserVocabStats;
+  recentAttempts?: UserExamAttempt[];
+  inProgressSummary?: InProgressAttempt[];
   activeDraftSummary?: UserActiveDraftSummary | null;
   preferences?: UserPreferences;
   totalExamAttempts?: number;
@@ -76,6 +121,13 @@ export interface UserProfile {
   createdAt: number;
   lastLoginAt?: number;
   lastActiveAt?: number;
+}
+
+export interface PracticeAuditEntry {
+  qId: number;
+  selectedAnswer: string;
+  isCorrect: boolean;
+  practicedAt: number;
 }
 
 export interface UserExamAttempt {
@@ -97,6 +149,8 @@ export interface UserExamAttempt {
   completedAt: number;
   selectedParts?: string[];
   answers?: Record<number, string>;
+  practiceAuditLogs?: PracticeAuditEntry[];
+  practicedQuestionsCount?: number;
   writingSubmission?: {
     task1Text: string;
     task2Text: string;
@@ -138,6 +192,8 @@ export interface InProgressAttempt {
   totalPausedSeconds?: number;
   answers: Record<number, string>;
   flagged?: Record<number, boolean>;
+  practiceAuditLogs?: PracticeAuditEntry[];
+  practiceLockedAnswers?: Record<number, boolean>;
   flaggedQuestions?: number[];
   selectedParts?: string[];
   currentPart?: string;
@@ -157,5 +213,34 @@ export interface InProgressAttempt {
   };
   speakingDraft?: any;
   speakingSubmission?: any;
+}
+
+export interface GuestSubmission {
+  id?: string;
+  submissionId: string;
+  studentName: string;
+  studentEmail?: string;
+  studentPhone?: string;
+  testId: string;
+  testTitle: string;
+  mode?: 'exam' | 'practice';
+  score: number;
+  totalQuestions: number;
+  percentage: number;
+  vstepBandScore: number;
+  listeningScore?: number;
+  readingScore?: number;
+  writingScore?: number;
+  speakingScore?: number;
+  timeSpentSeconds?: number;
+  completedAt: number;
+  submittedAt?: number;
+  attempt?: UserExamAttempt;
+  answers?: Record<number, string>;
+  writingSubmission?: any;
+  speakingSubmission?: any;
+  aiWritingEvaluation?: any;
+  aiDiagnosticReport?: any;
+  syncedToUid?: string;
 }
 

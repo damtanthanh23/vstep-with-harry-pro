@@ -90,6 +90,25 @@
         "updatedAt": { "type": "number", "description": "Timestamp in ms" }
       },
       "required": ["id", "userName", "category", "message", "status", "createdAt", "updatedAt"]
+    },
+    "GuestSubmission": {
+      "title": "GuestSubmission",
+      "description": "Exam submission from learners taking tests before or without Google login",
+      "type": "object",
+      "properties": {
+        "submissionId": { "type": "string", "description": "Unique submission ID" },
+        "studentName": { "type": "string", "description": "Student display name entered during submission" },
+        "studentEmail": { "type": "string", "description": "Optional email address" },
+        "studentPhone": { "type": "string", "description": "Optional phone number" },
+        "testId": { "type": "string", "description": "ID of the test taken" },
+        "testTitle": { "type": "string", "description": "Title of the test" },
+        "score": { "type": "number", "description": "Score achieved" },
+        "totalQuestions": { "type": "number", "description": "Total question count" },
+        "percentage": { "type": "number", "description": "Percentage score" },
+        "vstepBandScore": { "type": "number", "description": "Calculated VSTEP band score" },
+        "completedAt": { "type": "number", "description": "Timestamp in milliseconds" }
+      },
+      "required": ["submissionId", "studentName", "testId", "testTitle", "score", "totalQuestions", "percentage", "vstepBandScore", "completedAt"]
     }
   },
   "firestore": {
@@ -124,6 +143,18 @@
     "/feedbacks/{feedbackId}": {
       "schema": "FeedbackReport",
       "description": "Student bug reports and suggestions managed by Admin"
+    },
+    "/guest_submissions/{submissionId}": {
+      "schema": "GuestSubmission",
+      "description": "Exam submissions by students without Google accounts, accessible to Admin"
+    },
+    "/user_target_scores/{userId}": {
+      "schema": "UserProfile",
+      "description": "Synchronized VSTEP target scores per student"
+    },
+    "/user_vocab_stats/{userId}": {
+      "schema": "UserProfile",
+      "description": "Synchronized vocabulary and Anki SRS statistics per student"
     }
   }
 }

@@ -230,26 +230,26 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
   return (
     <div className="space-y-6">
       {/* 1. Deck Header & Overall Progress */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+      <div className="bg-white border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-3xl p-5 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <button
               type="button"
               onClick={onBack}
-              className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-800 mb-1"
+              className="btn-duo-white inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black mb-1 cursor-pointer"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-4 h-4 text-[#58CC02]" />
               Quay lại danh sách bộ từ
             </button>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900">{deckTitle}</h1>
-            {deckSubtitle && <p className="text-xs sm:text-sm text-slate-500">{deckSubtitle}</p>}
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900">{deckTitle}</h1>
+            {deckSubtitle && <p className="text-xs sm:text-sm font-bold text-slate-500">{deckSubtitle}</p>}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
               onClick={onOpenSrsForDeck}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold transition"
+              className="btn-duo-blue inline-flex items-center gap-1.5 px-4 py-2.5 rounded-2xl text-xs font-black cursor-pointer"
             >
               <Layers className="w-4 h-4" />
               Học ngắt quãng (SRS)
@@ -269,7 +269,7 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                     exampleVi: '',
                   })
                 }
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition"
+                className="btn-duo-green inline-flex items-center gap-1.5 px-4 py-2.5 rounded-2xl text-xs font-black cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
                 Thêm từ mới
@@ -280,9 +280,9 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
               <button
                 type="button"
                 onClick={onOpenQuickImport}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition"
+                className="btn-duo-white inline-flex items-center gap-1.5 px-4 py-2.5 rounded-2xl text-xs font-black cursor-pointer"
               >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <FileSpreadsheet className="w-4 h-4 text-[#58CC02]" />
                 Nhập/Xuất CSV & JSON
               </button>
             )}
@@ -291,7 +291,7 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
               <button
                 type="button"
                 onClick={onOpenAiModal}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold transition"
+                className="btn-duo-purple inline-flex items-center gap-1.5 px-4 py-2.5 rounded-2xl text-xs font-black cursor-pointer"
               >
                 <Sparkles className="w-4 h-4" />
                 Tạo từ bằng AI
@@ -304,18 +304,20 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
         <div className="pt-2 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm">
             <div className="flex items-center gap-4">
-              <span className="text-slate-600">
-                Tổng số từ: <strong className="text-slate-900">{totalCount}</strong>
+              <span className="font-bold text-slate-600">
+                Tổng số từ: <strong className="font-black text-slate-900">{totalCount}</strong>
               </span>
-              <span className="text-emerald-700 font-semibold">
+              <span className="text-[#46A302] font-black">
                 Đã thuộc: <strong>{knownCount}</strong>/{totalCount} từ
               </span>
             </div>
-            <span className="font-extrabold text-indigo-600">{knownPercent}% hoàn thành</span>
+            <span className="font-black text-[#46A302] bg-[#D7FFB8] px-3 py-0.5 rounded-xl border-2 border-[#58CC02] border-b-3 border-b-[#46A302] text-xs">
+              {knownPercent}% hoàn thành
+            </span>
           </div>
-          <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
+          <div className="w-full h-4 bg-slate-100 rounded-full overflow-hidden border-2 border-[#E5E5E5] p-0.5">
             <div
-              className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-300"
+              className="h-full bg-[#58CC02] rounded-full transition-all duration-300"
               style={{ width: `${knownPercent}%` }}
             />
           </div>
@@ -323,17 +325,17 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
       </div>
 
       {/* 2. Session Customization Block (Tùy chỉnh lượt học) */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+      <div className="bg-white border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-3xl p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h2 className="text-sm sm:text-base font-extrabold text-slate-900">
+            <h2 className="text-sm sm:text-base font-black text-slate-900">
               Tùy chỉnh phạm vi lượt học
             </h2>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs font-bold text-slate-500">
               Áp dụng chung cho cả 6 chế độ luyện tập bên dưới
             </p>
           </div>
-          <span className="px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-extrabold">
+          <span className="px-3.5 py-1 rounded-xl bg-[#DDF4FF] text-[#1899D6] border-2 border-[#1CB0F6] border-b-3 border-b-[#1899D6] text-xs font-black">
             {selectedSessionCount}/{totalCount} từ được chọn
           </span>
         </div>
@@ -341,8 +343,10 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Status Filter */}
           <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-slate-600">1. Trạng thái từ:</label>
-            <div className="grid grid-cols-3 gap-1.5 bg-slate-100 p-1 rounded-xl">
+            <label className="block text-xs font-black uppercase tracking-wider text-slate-600">
+              1. Trạng thái từ:
+            </label>
+            <div className="grid grid-cols-3 gap-1.5 bg-slate-100 p-1.5 rounded-2xl border-2 border-[#E5E5E5]">
               {(
                 [
                   { id: 'all', label: 'Toàn bộ' },
@@ -354,9 +358,9 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                   key={st.id}
                   type="button"
                   onClick={() => setSessionStatusFilter(st.id)}
-                  className={`py-1.5 px-2 rounded-lg text-xs font-bold transition ${
+                  className={`py-2 px-2 rounded-xl text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-0.5 ${
                     sessionStatusFilter === st.id
-                      ? 'bg-white text-indigo-700 shadow-2xs'
+                      ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-3 border-b-[#46A302]'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
@@ -368,8 +372,10 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
 
           {/* Max Count */}
           <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-slate-600">2. Số từ tối đa:</label>
-            <div className="grid grid-cols-5 gap-1 bg-slate-100 p-1 rounded-xl">
+            <label className="block text-xs font-black uppercase tracking-wider text-slate-600">
+              2. Số từ tối đa:
+            </label>
+            <div className="grid grid-cols-5 gap-1 bg-slate-100 p-1.5 rounded-2xl border-2 border-[#E5E5E5]">
               {(
                 [
                   { val: 10, label: '10' },
@@ -383,9 +389,9 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                   key={cnt.val}
                   type="button"
                   onClick={() => setSessionMaxCount(cnt.val)}
-                  className={`py-1.5 px-1 rounded-lg text-xs font-bold transition ${
+                  className={`py-2 px-1 rounded-xl text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-0.5 ${
                     sessionMaxCount === cnt.val
-                      ? 'bg-white text-indigo-700 shadow-2xs'
+                      ? 'bg-[#1CB0F6] text-white border-2 border-[#1CB0F6] border-b-3 border-b-[#1899D6]'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
@@ -397,14 +403,16 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
 
           {/* Order Mode */}
           <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-slate-600">3. Thứ tự câu hỏi:</label>
-            <div className="grid grid-cols-2 gap-1.5 bg-slate-100 p-1 rounded-xl">
+            <label className="block text-xs font-black uppercase tracking-wider text-slate-600">
+              3. Thứ tự câu hỏi:
+            </label>
+            <div className="grid grid-cols-2 gap-1.5 bg-slate-100 p-1.5 rounded-2xl border-2 border-[#E5E5E5]">
               <button
                 type="button"
                 onClick={() => setSessionOrder('source')}
-                className={`py-1.5 px-2 rounded-lg text-xs font-bold transition ${
+                className={`py-2 px-2 rounded-xl text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-0.5 ${
                   sessionOrder === 'source'
-                    ? 'bg-white text-indigo-700 shadow-2xs'
+                    ? 'bg-[#FF9600] text-white border-2 border-[#FF9600] border-b-3 border-b-[#E58700]'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -413,9 +421,9 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
               <button
                 type="button"
                 onClick={() => setSessionOrder('random')}
-                className={`py-1.5 px-2 rounded-lg text-xs font-bold transition ${
+                className={`py-2 px-2 rounded-xl text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-0.5 ${
                   sessionOrder === 'random'
-                    ? 'bg-white text-indigo-700 shadow-2xs'
+                    ? 'bg-[#FF9600] text-white border-2 border-[#FF9600] border-b-3 border-b-[#E58700]'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -426,8 +434,8 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
         </div>
 
         {selectedSessionCount === 0 && (
-          <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+          <div className="p-3.5 rounded-2xl bg-[#FFF5D6] border-2 border-[#FFC800] border-b-4 border-b-[#E5B400] text-xs font-bold text-amber-900 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-[#FF9600] shrink-0" />
             <span>
               Không có từ vựng nào khớp với trạng thái &ldquo;
               {sessionStatusFilter === 'known' ? 'Đã thuộc' : 'Chưa thuộc'}&rdquo;. Hãy chuyển sang
@@ -437,103 +445,103 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
         )}
       </div>
 
-      {/* 3. 6 Mandatory Study Mode Cards */}
+      {/* 3. 6 Mandatory Study Mode Cards (Duolingo 3D Tactile Tiles) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {/* Card 1: Flashcard (Violet) */}
+        {/* Card 1: Flashcard (Beetle Purple) */}
         <button
           type="button"
           disabled={!eligibility.canStartAny}
           onClick={() => setActiveSubModeModal('flashcard')}
-          className="group text-left p-5 rounded-2xl border-2 border-violet-200 bg-gradient-to-br from-violet-50/80 to-white hover:border-violet-400 hover:shadow-md disabled:opacity-45 transition flex flex-col justify-between gap-3"
+          className="group text-left p-5 rounded-3xl border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8] bg-gradient-to-br from-[#F3E5FF]/60 to-white hover:bg-[#F3E5FF]/80 active:border-b-2 active:translate-y-0.5 disabled:opacity-45 transition-all flex flex-col justify-between gap-3 cursor-pointer"
         >
           <div className="flex items-start justify-between gap-2">
-            <div className="w-11 h-11 rounded-xl bg-violet-600 text-white flex items-center justify-center shadow-xs">
+            <div className="w-12 h-12 rounded-2xl bg-[#CE82FF] border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8] text-white flex items-center justify-center">
               <Layers className="w-5 h-5" />
             </div>
-            <span className="px-2.5 py-1 rounded-full bg-violet-100 text-violet-800 text-xs font-extrabold">
+            <span className="px-3 py-1 rounded-xl bg-[#F3E5FF] border-2 border-[#CE82FF] border-b-3 border-b-[#A560E8] text-[#A560E8] text-xs font-black">
               +{REWARD_CONFIG.flashcard} điểm/thẻ
             </span>
           </div>
           <div>
-            <h3 className="text-base font-extrabold text-slate-900 group-hover:text-violet-700">
+            <h3 className="text-base font-black text-slate-900 group-hover:text-[#A560E8]">
               1. Thẻ từ (Flashcard)
             </h3>
-            <p className="text-xs text-slate-600 mt-1">
+            <p className="text-xs font-bold text-slate-600 mt-1 leading-relaxed">
               Lật thẻ Anh → Việt hoặc Việt → Anh, gõ kiểm tra nhanh và tự đánh giá Quên / Thuộc.
             </p>
           </div>
         </button>
 
-        {/* Card 2: Trắc nghiệm (Orange/Amber) */}
+        {/* Card 2: Trắc nghiệm (Fox Orange) */}
         <button
           type="button"
           disabled={!eligibility.canStartQuiz}
           onClick={() => setActiveSubModeModal('quiz')}
-          className="group text-left p-5 rounded-2xl border-2 border-amber-200 bg-gradient-to-br from-amber-50/80 to-white hover:border-amber-400 hover:shadow-md disabled:opacity-45 transition flex flex-col justify-between gap-3"
+          className="group text-left p-5 rounded-3xl border-2 border-[#FFC800] border-b-4 border-b-[#E5B400] bg-gradient-to-br from-[#FFF5D6]/70 to-white hover:bg-[#FFF5D6] active:border-b-2 active:translate-y-0.5 disabled:opacity-45 transition-all flex flex-col justify-between gap-3 cursor-pointer"
         >
           <div className="flex items-start justify-between gap-2">
-            <div className="w-11 h-11 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
+            <div className="w-12 h-12 rounded-2xl bg-[#FF9600] border-2 border-[#FF9600] border-b-4 border-b-[#E58700] text-white flex items-center justify-center">
               <HelpCircle className="w-5 h-5" />
             </div>
-            <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-extrabold">
+            <span className="px-3 py-1 rounded-xl bg-[#FFF5D6] border-2 border-[#FFC800] border-b-3 border-b-[#E5B400] text-[#FF9600] text-xs font-black">
               +{REWARD_CONFIG.quiz} điểm/câu
             </span>
           </div>
           <div>
-            <h3 className="text-base font-extrabold text-slate-900 group-hover:text-amber-700">
+            <h3 className="text-base font-black text-slate-900 group-hover:text-[#FF9600]">
               2. Trắc nghiệm (Quiz)
             </h3>
-            <p className="text-xs text-slate-600 mt-1">
+            <p className="text-xs font-bold text-slate-600 mt-1 leading-relaxed">
               3 chế độ: Từ → Nghĩa, Nghĩa → Từ, hoặc Điền khuyết ngữ cảnh (Cloze) trong 30 giây.
             </p>
           </div>
         </button>
 
-        {/* Card 3: Nghe & Gõ (Teal) */}
+        {/* Card 3: Nghe & Gõ (Macaw Blue) */}
         <button
           type="button"
           disabled={!eligibility.canStartAny}
           onClick={() => handleTriggerLaunch('dictation')}
-          className="group text-left p-5 rounded-2xl border-2 border-teal-200 bg-gradient-to-br from-teal-50/80 to-white hover:border-teal-400 hover:shadow-md disabled:opacity-45 transition flex flex-col justify-between gap-3"
+          className="group text-left p-5 rounded-3xl border-2 border-[#1CB0F6] border-b-4 border-b-[#1899D6] bg-gradient-to-br from-[#DDF4FF]/60 to-white hover:bg-[#DDF4FF]/80 active:border-b-2 active:translate-y-0.5 disabled:opacity-45 transition-all flex flex-col justify-between gap-3 cursor-pointer"
         >
           <div className="flex items-start justify-between gap-2">
-            <div className="w-11 h-11 rounded-xl bg-teal-600 text-white flex items-center justify-center shadow-xs">
+            <div className="w-12 h-12 rounded-2xl bg-[#1CB0F6] border-2 border-[#1CB0F6] border-b-4 border-b-[#1899D6] text-white flex items-center justify-center">
               <Headphones className="w-5 h-5" />
             </div>
-            <span className="px-2.5 py-1 rounded-full bg-teal-100 text-teal-800 text-xs font-extrabold">
+            <span className="px-3 py-1 rounded-xl bg-[#DDF4FF] border-2 border-[#1CB0F6] border-b-3 border-b-[#1899D6] text-[#1899D6] text-xs font-black">
               +{REWARD_CONFIG.dictation} điểm/câu
             </span>
           </div>
           <div>
-            <h3 className="text-base font-extrabold text-slate-900 group-hover:text-teal-700">
+            <h3 className="text-base font-black text-slate-900 group-hover:text-[#1899D6]">
               3. Nghe & Gõ từ (Dictation)
             </h3>
-            <p className="text-xs text-slate-600 mt-1">
+            <p className="text-xs font-bold text-slate-600 mt-1 leading-relaxed">
               Nghe phát âm chuẩn với 3 tốc độ (0.75x, 1x, 1.25x) và gõ lại chính xác từ vựng.
             </p>
           </div>
         </button>
 
-        {/* Card 4: Gõ từ (Emerald Green) */}
+        {/* Card 4: Gõ từ (Feather Green) */}
         <button
           type="button"
           disabled={!eligibility.canStartAny}
           onClick={() => handleTriggerLaunch('spell')}
-          className="group text-left p-5 rounded-2xl border-2 border-emerald-200 bg-gradient-to-br from-emerald-50/80 to-white hover:border-emerald-400 hover:shadow-md disabled:opacity-45 transition flex flex-col justify-between gap-3"
+          className="group text-left p-5 rounded-3xl border-2 border-[#58CC02] border-b-4 border-b-[#46A302] bg-gradient-to-br from-[#D7FFB8]/55 to-white hover:bg-[#D7FFB8]/75 active:border-b-2 active:translate-y-0.5 disabled:opacity-45 transition-all flex flex-col justify-between gap-3 cursor-pointer"
         >
           <div className="flex items-start justify-between gap-2">
-            <div className="w-11 h-11 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+            <div className="w-12 h-12 rounded-2xl bg-[#58CC02] border-2 border-[#58CC02] border-b-4 border-b-[#46A302] text-white flex items-center justify-center">
               <Keyboard className="w-5 h-5" />
             </div>
-            <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-extrabold">
+            <span className="px-3 py-1 rounded-xl bg-[#D7FFB8] border-2 border-[#58CC02] border-b-3 border-b-[#46A302] text-[#46A302] text-xs font-black">
               +{REWARD_CONFIG.spell} điểm/câu
             </span>
           </div>
           <div>
-            <h3 className="text-base font-extrabold text-slate-900 group-hover:text-emerald-700">
+            <h3 className="text-base font-black text-slate-900 group-hover:text-[#46A302]">
               4. Gõ từ vựng (Spelling)
             </h3>
-            <p className="text-xs text-slate-600 mt-1">
+            <p className="text-xs font-bold text-slate-600 mt-1 leading-relaxed">
               Nhìn nghĩa tiếng Việt và câu ví dụ khuyết từ để gõ lại từ tiếng Anh kèm 3 mức gợi ý.
             </p>
           </div>
@@ -544,46 +552,46 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
           type="button"
           disabled={!eligibility.canStartMatch}
           onClick={() => handleTriggerLaunch('match')}
-          className="group text-left p-5 rounded-2xl border-2 border-sky-200 bg-gradient-to-br from-sky-50/80 to-white hover:border-sky-400 hover:shadow-md disabled:opacity-45 transition flex flex-col justify-between gap-3"
+          className="group text-left p-5 rounded-3xl border-2 border-[#1CB0F6] border-b-4 border-b-[#1899D6] bg-gradient-to-br from-sky-50 to-white hover:bg-sky-100/70 active:border-b-2 active:translate-y-0.5 disabled:opacity-45 transition-all flex flex-col justify-between gap-3 cursor-pointer"
         >
           <div className="flex items-start justify-between gap-2">
-            <div className="w-11 h-11 rounded-xl bg-sky-600 text-white flex items-center justify-center shadow-xs">
+            <div className="w-12 h-12 rounded-2xl bg-[#1CB0F6] border-2 border-[#1CB0F6] border-b-4 border-b-[#1899D6] text-white flex items-center justify-center">
               <Puzzle className="w-5 h-5" />
             </div>
-            <span className="px-2.5 py-1 rounded-full bg-sky-100 text-sky-800 text-xs font-extrabold">
+            <span className="px-3 py-1 rounded-xl bg-[#DDF4FF] border-2 border-[#1CB0F6] border-b-3 border-b-[#1899D6] text-[#1899D6] text-xs font-black">
               +{REWARD_CONFIG.match} điểm/cặp
             </span>
           </div>
           <div>
-            <h3 className="text-base font-extrabold text-slate-900 group-hover:text-sky-700">
+            <h3 className="text-base font-black text-slate-900 group-hover:text-[#1899D6]">
               5. Ghép cặp (Matching)
             </h3>
-            <p className="text-xs text-slate-600 mt-1">
+            <p className="text-xs font-bold text-slate-600 mt-1 leading-relaxed">
               Ghép nhanh tối đa 8 cặp từ/vòng với 5 tim mạng sống. Yêu cầu tối thiểu 2 từ.
             </p>
           </div>
         </button>
 
-        {/* Card 6: Đặc biệt (Pink/Rose) */}
+        {/* Card 6: Đặc biệt (Cardinal Red) */}
         <button
           type="button"
           disabled={!eligibility.canStartAny}
           onClick={() => setActiveSubModeModal('special')}
-          className="group text-left p-5 rounded-2xl border-2 border-pink-200 bg-gradient-to-br from-pink-50/80 to-white hover:border-pink-400 hover:shadow-md disabled:opacity-45 transition flex flex-col justify-between gap-3"
+          className="group text-left p-5 rounded-3xl border-2 border-[#FF4B4B] border-b-4 border-b-[#EA2B2B] bg-gradient-to-br from-[#FFDADC]/60 to-white hover:bg-[#FFDADC]/80 active:border-b-2 active:translate-y-0.5 disabled:opacity-45 transition-all flex flex-col justify-between gap-3 cursor-pointer"
         >
           <div className="flex items-start justify-between gap-2">
-            <div className="w-11 h-11 rounded-xl bg-pink-600 text-white flex items-center justify-center shadow-xs">
+            <div className="w-12 h-12 rounded-2xl bg-[#FF4B4B] border-2 border-[#FF4B4B] border-b-4 border-b-[#EA2B2B] text-white flex items-center justify-center">
               <Sparkles className="w-5 h-5" />
             </div>
-            <span className="px-2.5 py-1 rounded-full bg-pink-100 text-pink-800 text-xs font-extrabold">
+            <span className="px-3 py-1 rounded-xl bg-[#FFDADC] border-2 border-[#FF4B4B] border-b-3 border-b-[#EA2B2B] text-[#EA2B2B] text-xs font-black">
               +10 đến +20 điểm
             </span>
           </div>
           <div>
-            <h3 className="text-base font-extrabold text-slate-900 group-hover:text-pink-700">
+            <h3 className="text-base font-black text-slate-900 group-hover:text-[#EA2B2B]">
               6. Chế độ Đặc biệt
             </h3>
-            <p className="text-xs text-slate-600 mt-1">
+            <p className="text-xs font-bold text-slate-600 mt-1 leading-relaxed">
               Hỗn hợp (Mixed +20đ), Flappy Bird từ vựng (+20đ), và Giải cứu khỉ khỏi Yeti (+10đ).
             </p>
           </div>
@@ -591,13 +599,13 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
       </div>
 
       {/* 4. Word List Table (Danh sách từ vựng trong bộ) */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+      <div className="bg-white border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-3xl p-5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-extrabold text-slate-900">
+            <h2 className="text-base font-black text-slate-900">
               Danh sách từ vựng trong bộ ({tableRows.length}/{totalCount})
             </h2>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs font-bold text-slate-500">
               Bật công tắc &ldquo;Đã thuộc&rdquo; để ghi nhận tiến độ và tự động đưa từ vào lịch ôn
               ngắt quãng (SRS Lv0).
             </p>
@@ -611,14 +619,14 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                 value={tableSearch}
                 onChange={(e) => setTableSearch(e.target.value)}
                 placeholder="Tìm từ hoặc nghĩa trong bảng..."
-                className="pl-9 pr-3 py-1.5 text-xs sm:text-sm border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                className="pl-9 pr-3 py-2 text-xs sm:text-sm font-bold border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-2xl focus:outline-hidden focus:border-[#58CC02]"
               />
             </div>
 
             <select
               value={tableStatusFilter}
               onChange={(e) => setTableStatusFilter(e.target.value as any)}
-              className="px-3 py-1.5 text-xs sm:text-sm font-semibold border border-slate-300 rounded-xl bg-white text-slate-700"
+              className="px-3.5 py-2 text-xs sm:text-sm font-black border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-2xl bg-white text-slate-700 cursor-pointer focus:outline-hidden focus:border-[#58CC02]"
             >
               <option value="all">Hiển thị: Tất cả</option>
               <option value="unknown">Hiển thị: Chưa thuộc</option>
@@ -627,11 +635,11 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
           </div>
         </div>
 
-        <div className="border border-slate-200 rounded-2xl overflow-hidden">
+        <div className="border-2 border-[#E5E5E5] rounded-2xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                <tr className="bg-slate-50 border-b-2 border-[#E5E5E5] text-[11px] font-black uppercase tracking-wider text-slate-500">
                   <th className="py-3 px-3 w-12 text-center">Loa</th>
                   <th className="py-3 px-3">Từ vựng & IPA</th>
                   <th className="py-3 px-3">Nghĩa tiếng Việt</th>
@@ -640,12 +648,12 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                   {isPersonalDeck && <th className="py-3 px-3 text-right w-24">Sửa/Xóa</th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-sm">
+              <tbody className="divide-y-2 divide-[#F0F0F0] text-sm">
                 {tableRows.length === 0 ? (
                   <tr>
                     <td
                       colSpan={isPersonalDeck ? 6 : 5}
-                      className="py-10 text-center text-slate-400"
+                      className="py-10 text-center font-bold text-slate-400"
                     >
                       Không có từ vựng nào khớp với bộ lọc hiển thị.
                     </td>
@@ -658,7 +666,7 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                         key={item.wordKey}
                         className={`transition ${
                           isKnown
-                            ? 'bg-emerald-50/60 hover:bg-emerald-50'
+                            ? 'bg-[#D7FFB8]/35 hover:bg-[#D7FFB8]/55'
                             : 'hover:bg-slate-50/80'
                         }`}
                       >
@@ -674,37 +682,37 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                                 onError: () => setPlayingWordId(null),
                               });
                             }}
-                            className={`p-2 rounded-xl transition cursor-pointer ${
+                            className={`p-2 rounded-xl border-2 border-b-3 transition-all cursor-pointer active:border-b-0 active:translate-y-0.5 ${
                               playingWordId === item.id
-                                ? 'bg-amber-100 text-amber-700 ring-2 ring-amber-400 scale-110 shadow-xs'
-                                : 'text-indigo-600 hover:bg-indigo-100/70 hover:scale-105'
+                                ? 'bg-[#FFF5D6] text-[#FF9600] border-[#FFC800] border-b-[#E5B400] scale-110'
+                                : 'bg-[#DDF4FF]/70 text-[#1899D6] border-[#1CB0F6] border-b-[#1899D6] hover:bg-[#DDF4FF]'
                             }`}
                             title={playingWordId === item.id ? 'Đang phát âm...' : 'Bấm để nghe phát âm tiếng Anh chuẩn'}
                           >
                             <Volume2
                               className={`w-4 h-4 ${
-                                playingWordId === item.id ? 'animate-bounce text-amber-600' : ''
+                                playingWordId === item.id ? 'animate-bounce text-[#FF9600]' : ''
                               }`}
                             />
                           </button>
                         </td>
                         <td className="py-3 px-3">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="font-extrabold text-slate-900">{item.word}</span>
+                            <span className="font-black text-slate-900">{item.word}</span>
                             {item.phonetic && (
-                              <span className="text-xs font-mono text-slate-500">
+                              <span className="text-xs font-mono font-bold text-slate-500">
                                 {item.phonetic}
                               </span>
                             )}
-                            <span className="px-1.5 py-0.5 rounded-md bg-white border border-slate-200 text-[10px] font-bold uppercase text-slate-600">
+                            <span className="px-2 py-0.5 rounded-lg bg-white border-2 border-[#E5E5E5] border-b-3 border-b-[#CECECE] text-[10px] font-black uppercase text-slate-600">
                               {item.partOfSpeech}
                             </span>
                           </div>
                         </td>
-                        <td className="py-3 px-3 font-semibold text-slate-800">
+                        <td className="py-3 px-3 font-black text-slate-800">
                           {item.meaningVi}
                         </td>
-                        <td className="py-3 px-3 text-xs text-slate-600 max-w-md">
+                        <td className="py-3 px-3 text-xs font-semibold text-slate-600 max-w-md">
                           {item.exampleEn ? (
                             <div>
                               <span className="italic">&ldquo;{item.exampleEn}&rdquo;</span>
@@ -723,7 +731,7 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                             aria-checked={isKnown}
                             onClick={() => handleToggleKnownRow(item)}
                             className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
-                              isKnown ? 'bg-emerald-600' : 'bg-slate-300'
+                              isKnown ? 'bg-[#58CC02]' : 'bg-slate-300'
                             }`}
                             title={isKnown ? 'Đã thuộc (Bấm để bỏ đánh dấu)' : 'Đánh dấu Đã thuộc'}
                           >
@@ -736,7 +744,7 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                         </td>
                         {isPersonalDeck && (
                           <td className="py-3 px-3 text-right">
-                            <div className="inline-flex items-center gap-1">
+                            <div className="inline-flex items-center gap-1.5">
                               {onUpdateManualWord && (
                                 <button
                                   type="button"
@@ -752,7 +760,7 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                                       exampleVi: item.exampleVi,
                                     })
                                   }
-                                  className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-200"
+                                  className="btn-duo-white p-1.5 rounded-xl text-slate-600 hover:text-[#1899D6] cursor-pointer"
                                   title="Sửa từ này"
                                 >
                                   <Edit3 className="w-4 h-4" />
@@ -762,7 +770,7 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => onDeleteManualWord(item.id)}
-                                  className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50"
+                                  className="btn-duo-white p-1.5 rounded-xl text-[#EA2B2B] hover:bg-rose-50 cursor-pointer"
                                   title="Xóa từ này"
                                 >
                                   <Trash2 className="w-4 h-4" />
@@ -783,30 +791,30 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
 
       {/* Submode Modal 1: Flashcard Direction */}
       {activeSubModeModal === 'flashcard' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-extrabold text-slate-900 text-base">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl border-2 border-[#E5E5E5] border-b-8 border-b-[#CECECE] max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b-2 border-[#F0F0F0] pb-3">
+              <h3 className="font-black text-slate-900 text-base">
                 Chọn chiều lật Thẻ từ (Flashcard)
               </h3>
               <button
                 type="button"
                 onClick={() => setActiveSubModeModal(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700"
+                className="btn-duo-white p-1.5 rounded-xl text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               <button
                 type="button"
                 onClick={() => handleTriggerLaunch('flashcard', 'en_to_vn')}
-                className="w-full p-4 rounded-xl border-2 border-violet-200 hover:border-violet-500 bg-violet-50/40 text-left transition"
+                className="w-full p-4 rounded-2xl border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8] hover:bg-[#F3E5FF]/80 bg-[#F3E5FF]/50 text-left transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer"
               >
-                <div className="font-extrabold text-slate-900 text-sm">
+                <div className="font-black text-slate-900 text-sm">
                   1. Tiếng Anh → Tiếng Việt (EN → VN)
                 </div>
-                <p className="text-xs text-slate-600 mt-0.5">
+                <p className="text-xs font-bold text-slate-600 mt-1">
                   Mặt trước hiển thị từ tiếng Anh, phiên âm & âm thanh. Mặt sau hiển thị nghĩa tiếng
                   Việt.
                 </p>
@@ -815,12 +823,12 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
               <button
                 type="button"
                 onClick={() => handleTriggerLaunch('flashcard', 'vn_to_en')}
-                className="w-full p-4 rounded-xl border-2 border-violet-200 hover:border-violet-500 bg-violet-50/40 text-left transition"
+                className="w-full p-4 rounded-2xl border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8] hover:bg-[#F3E5FF]/80 bg-[#F3E5FF]/50 text-left transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer"
               >
-                <div className="font-extrabold text-slate-900 text-sm">
+                <div className="font-black text-slate-900 text-sm">
                   2. Tiếng Việt → Tiếng Anh (VN → EN)
                 </div>
-                <p className="text-xs text-slate-600 mt-0.5">
+                <p className="text-xs font-bold text-slate-600 mt-1">
                   Mặt trước chỉ hiển thị nghĩa tiếng Việt & câu ví dụ ẩn từ để bạn tự nhớ lại từ
                   tiếng Anh.
                 </p>
@@ -832,28 +840,28 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
 
       {/* Submode Modal 2: Quiz Submode Selection */}
       {activeSubModeModal === 'quiz' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-extrabold text-slate-900 text-base">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl border-2 border-[#E5E5E5] border-b-8 border-b-[#CECECE] max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b-2 border-[#F0F0F0] pb-3">
+              <h3 className="font-black text-slate-900 text-base">
                 Chọn kiểu câu hỏi Trắc nghiệm (Quiz)
               </h3>
               <button
                 type="button"
                 onClick={() => setActiveSubModeModal(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700"
+                className="btn-duo-white p-1.5 rounded-xl text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               <button
                 type="button"
                 onClick={() => handleTriggerLaunch('quiz', 'word_to_meaning')}
-                className="w-full p-4 rounded-xl border-2 border-amber-200 hover:border-amber-500 bg-amber-50/40 text-left transition"
+                className="w-full p-4 rounded-2xl border-2 border-[#FFC800] border-b-4 border-b-[#E5B400] hover:bg-[#FFF5D6] bg-[#FFF5D6]/60 text-left transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer"
               >
-                <div className="font-extrabold text-slate-900 text-sm">1. Từ → Nghĩa</div>
-                <p className="text-xs text-slate-600 mt-0.5">
+                <div className="font-black text-slate-900 text-sm">1. Từ → Nghĩa</div>
+                <p className="text-xs font-bold text-slate-600 mt-1">
                   Nhìn từ tiếng Anh (kèm IPA & âm thanh), chọn nghĩa tiếng Việt chính xác.
                 </p>
               </button>
@@ -861,10 +869,10 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
               <button
                 type="button"
                 onClick={() => handleTriggerLaunch('quiz', 'meaning_to_word')}
-                className="w-full p-4 rounded-xl border-2 border-amber-200 hover:border-amber-500 bg-amber-50/40 text-left transition"
+                className="w-full p-4 rounded-2xl border-2 border-[#FFC800] border-b-4 border-b-[#E5B400] hover:bg-[#FFF5D6] bg-[#FFF5D6]/60 text-left transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer"
               >
-                <div className="font-extrabold text-slate-900 text-sm">2. Nghĩa → Từ</div>
-                <p className="text-xs text-slate-600 mt-0.5">
+                <div className="font-black text-slate-900 text-sm">2. Nghĩa → Từ</div>
+                <p className="text-xs font-bold text-slate-600 mt-1">
                   Nhìn nghĩa tiếng Việt (ẩn IPA đáp án), chọn từ tiếng Anh chính xác.
                 </p>
               </button>
@@ -873,12 +881,12 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                 type="button"
                 disabled={!eligibility.canStartCloze}
                 onClick={() => handleTriggerLaunch('quiz', 'context_cloze')}
-                className="w-full p-4 rounded-xl border-2 border-amber-200 hover:border-amber-500 bg-amber-50/40 disabled:opacity-45 text-left transition"
+                className="w-full p-4 rounded-2xl border-2 border-[#FFC800] border-b-4 border-b-[#E5B400] hover:bg-[#FFF5D6] bg-[#FFF5D6]/60 disabled:opacity-45 text-left transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer"
               >
-                <div className="font-extrabold text-slate-900 text-sm">
+                <div className="font-black text-slate-900 text-sm">
                   3. Ngữ cảnh điền khuyết (Cloze) ({eligibility.clozeEligibleCount} câu hợp lệ)
                 </div>
-                <p className="text-xs text-slate-600 mt-0.5">
+                <p className="text-xs font-bold text-slate-600 mt-1">
                   Điền từ còn thiếu vào chỗ trống &ldquo;_____&rdquo; trong câu ví dụ tiếng Anh.
                 </p>
               </button>
@@ -889,36 +897,36 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
 
       {/* Submode Modal 3: Special Modes (Mixed, Flappy Bird, Monkey Rescue) */}
       {activeSubModeModal === 'special' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 max-w-lg w-full p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-extrabold text-slate-900 text-base">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl border-2 border-[#E5E5E5] border-b-8 border-b-[#CECECE] max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b-2 border-[#F0F0F0] pb-3">
+              <h3 className="font-black text-slate-900 text-base">
                 Chọn Chế độ Học Đặc biệt
               </h3>
               <button
                 type="button"
                 onClick={() => setActiveSubModeModal(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700"
+                className="btn-duo-white p-1.5 rounded-xl text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               <button
                 type="button"
                 onClick={() => handleTriggerLaunch('mixed')}
-                className="w-full p-4 rounded-xl border-2 border-indigo-200 hover:border-indigo-500 bg-indigo-50/40 text-left transition flex items-center justify-between gap-3"
+                className="w-full p-4 rounded-2xl border-2 border-[#1CB0F6] border-b-4 border-b-[#1899D6] hover:bg-[#DDF4FF] bg-[#DDF4FF]/60 text-left transition-all active:border-b-2 active:translate-y-0.5 flex items-center justify-between gap-3 cursor-pointer"
               >
                 <div>
-                  <div className="font-extrabold text-slate-900 text-sm">
+                  <div className="font-black text-slate-900 text-sm">
                     1. Chế độ Hỗn hợp (Mixed Mode)
                   </div>
-                  <p className="text-xs text-slate-600 mt-0.5">
+                  <p className="text-xs font-bold text-slate-600 mt-1">
                     Kết hợp luân phiên Trắc nghiệm, Gõ từ và Nghe gõ từ trong cùng một lượt học.
                   </p>
                 </div>
-                <span className="px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-800 text-xs font-extrabold shrink-0">
+                <span className="px-3 py-1 rounded-xl bg-white border-2 border-[#1CB0F6] border-b-3 border-b-[#1899D6] text-[#1899D6] text-xs font-black shrink-0">
                   +{REWARD_CONFIG.mixed}đ/câu
                 </span>
               </button>
@@ -927,47 +935,47 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                 type="button"
                 disabled={!eligibility.canStartQuiz}
                 onClick={() => handleTriggerLaunch('flappy')}
-                className="w-full p-4 rounded-xl border-2 border-pink-200 hover:border-pink-500 bg-pink-50/40 disabled:opacity-45 text-left transition flex items-center justify-between gap-3"
+                className="w-full p-4 rounded-2xl border-2 border-[#FF4B4B] border-b-4 border-b-[#EA2B2B] hover:bg-[#FFDADC] bg-[#FFDADC]/60 disabled:opacity-45 text-left transition-all active:border-b-2 active:translate-y-0.5 flex items-center justify-between gap-3 cursor-pointer"
               >
                 <div>
-                  <div className="font-extrabold text-slate-900 text-sm">
+                  <div className="font-black text-slate-900 text-sm">
                     2. Flappy Bird Từ Vựng (5 mạng)
                   </div>
-                  <p className="text-xs text-slate-600 mt-0.5">
+                  <p className="text-xs font-bold text-slate-600 mt-1">
                     Điều khiển chim bay qua ống nước và trả lời câu hỏi từ vựng (có hỗ trợ chế độ Tự
                     bay).
                   </p>
                 </div>
-                <span className="px-2.5 py-1 rounded-full bg-pink-100 text-pink-800 text-xs font-extrabold shrink-0">
+                <span className="px-3 py-1 rounded-xl bg-white border-2 border-[#FF4B4B] border-b-3 border-b-[#EA2B2B] text-[#EA2B2B] text-xs font-black shrink-0">
                   +{REWARD_CONFIG.flappy}đ/câu
                 </span>
               </button>
 
-              <div className="p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/40 space-y-2.5">
+              <div className="p-4 rounded-2xl border-2 border-[#58CC02] border-b-4 border-b-[#46A302] bg-[#D7FFB8]/50 space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="font-extrabold text-slate-900 text-sm">
+                  <div className="font-black text-slate-900 text-sm">
                     3. Giải cứu khỉ khỏi Yeti (Monkey Rescue)
                   </div>
-                  <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-extrabold">
+                  <span className="px-3 py-1 rounded-xl bg-white border-2 border-[#58CC02] border-b-3 border-b-[#46A302] text-[#46A302] text-xs font-black">
                     +{REWARD_CONFIG.monkey}đ/câu
                   </span>
                 </div>
-                <p className="text-xs text-slate-600">
+                <p className="text-xs font-bold text-slate-700">
                   Giữ khoảng cách an toàn (100m, đúng +15m, sai -10m). Chọn hình thức trả lời:
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
                   <button
                     type="button"
                     disabled={!eligibility.canStartQuiz}
                     onClick={() => handleTriggerLaunch('monkey', 'quiz')}
-                    className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-45 text-white text-xs font-bold shadow-2xs transition"
+                    className="btn-duo-green py-2.5 px-3 rounded-xl disabled:opacity-45 text-xs font-black cursor-pointer"
                   >
                     Chế độ Trắc nghiệm (Yeti 2 m/s)
                   </button>
                   <button
                     type="button"
                     onClick={() => handleTriggerLaunch('monkey', 'spell')}
-                    className="py-2.5 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold shadow-2xs transition"
+                    className="btn-duo-blue py-2.5 px-3 rounded-xl text-xs font-black cursor-pointer"
                   >
                     Chế độ Gõ từ (Yeti 1 m/s)
                   </button>
@@ -980,16 +988,16 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
 
       {/* Manual Add/Edit Word Modal */}
       {editingWordModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 max-w-lg w-full p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-extrabold text-slate-900 text-base">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl border-2 border-[#E5E5E5] border-b-8 border-b-[#CECECE] max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b-2 border-[#F0F0F0] pb-3">
+              <h3 className="font-black text-slate-900 text-base">
                 {editingWordModal.mode === 'add' ? 'Thêm từ vựng mới' : 'Chỉnh sửa từ vựng'}
               </h3>
               <button
                 type="button"
                 onClick={() => setEditingWordModal(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700"
+                className="btn-duo-white p-1.5 rounded-xl text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -998,7 +1006,7 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
             <div className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block text-xs font-black text-slate-700 mb-1">
                     Từ / Cụm từ tiếng Anh *
                   </label>
                   <input
@@ -1007,11 +1015,11 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                     onChange={(e) =>
                       setEditingWordModal((prev) => (prev ? { ...prev, word: e.target.value } : null))
                     }
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm font-bold"
+                    className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] text-sm font-black focus:outline-hidden focus:border-[#58CC02]"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Từ loại</label>
+                  <label className="block text-xs font-black text-slate-700 mb-1">Từ loại</label>
                   <select
                     value={editingWordModal.partOfSpeech}
                     onChange={(e) =>
@@ -1019,7 +1027,7 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                         prev ? { ...prev, partOfSpeech: e.target.value as any } : null
                       )
                     }
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm font-bold bg-white"
+                    className="w-full px-3 py-2.5 rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] text-sm font-black bg-white focus:outline-hidden focus:border-[#58CC02]"
                   >
                     <option value="n">n (Danh từ)</option>
                     <option value="v">v (Động từ)</option>
@@ -1032,7 +1040,7 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block text-xs font-black text-slate-700 mb-1">
                     Nghĩa tiếng Việt *
                   </label>
                   <input
@@ -1043,11 +1051,11 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                         prev ? { ...prev, meaningVi: e.target.value } : null
                       )
                     }
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm font-semibold"
+                    className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] text-sm font-bold focus:outline-hidden focus:border-[#58CC02]"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block text-xs font-black text-slate-700 mb-1">
                     Phiên âm IPA (Tùy chọn)
                   </label>
                   <input
@@ -1059,13 +1067,13 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                       )
                     }
                     placeholder="/.../"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm font-mono"
+                    className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] text-sm font-mono font-bold focus:outline-hidden focus:border-[#58CC02]"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-black text-slate-700 mb-1">
                   Câu ví dụ tiếng Anh
                 </label>
                 <input
@@ -1076,12 +1084,12 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                       prev ? { ...prev, exampleEn: e.target.value } : null
                     )
                   }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm"
+                  className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] text-sm font-bold focus:outline-hidden focus:border-[#58CC02]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-black text-slate-700 mb-1">
                   Dịch nghĩa câu ví dụ
                 </label>
                 <input
@@ -1092,16 +1100,16 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                       prev ? { ...prev, exampleVi: e.target.value } : null
                     )
                   }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm"
+                  className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] text-sm font-bold focus:outline-hidden focus:border-[#58CC02]"
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+            <div className="flex justify-end gap-2.5 pt-3 border-t-2 border-[#F0F0F0]">
               <button
                 type="button"
                 onClick={() => setEditingWordModal(null)}
-                className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-xs font-semibold"
+                className="btn-duo-white px-4 py-2.5 rounded-2xl text-xs font-black cursor-pointer"
               >
                 Hủy
               </button>
@@ -1129,7 +1137,7 @@ export const VocabDeckDetailView: React.FC<VocabDeckDetailViewProps> = ({
                   }
                   setEditingWordModal(null);
                 }}
-                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs font-bold"
+                className="btn-duo-green px-5 py-2.5 rounded-2xl disabled:opacity-40 text-xs font-black cursor-pointer"
               >
                 Lưu từ vựng
               </button>

@@ -68,18 +68,18 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="relative w-full max-w-lg rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 sm:p-7 shadow-2xl">
+      <div className="relative w-full max-w-lg rounded-3xl border-2 border-[#E5E5E5] border-b-8 border-b-[#CECECE] dark:border-slate-700 dark:border-b-slate-950 bg-white dark:bg-slate-900 p-6 sm:p-7 shadow-2xl">
         {/* Header */}
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+        <div className="flex items-start justify-between gap-4 border-b-2 border-[#F0F0F0] dark:border-slate-800 pb-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#58CC02]/15 text-[#16A34A] dark:text-[#58CC02]">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#D7FFB8] border-2 border-[#58CC02] border-b-3 border-b-[#46A302] text-[#2B6600]">
               <User className="h-6 w-6" />
             </div>
             <div>
-              <h2 className="text-lg font-black text-slate-900 dark:text-white">
+              <h2 className="text-lg font-black text-[#3C3C3C] dark:text-white">
                 Thông tin cá nhân
               </h2>
-              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              <p className="text-xs font-bold text-[#777777] dark:text-slate-400">
                 Cập nhật hồ sơ, Nickname lời chào và ngày sinh linh vật 12 con giáp
               </p>
             </div>
@@ -87,7 +87,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer"
+            className="btn-duo-white rounded-xl p-1.5 text-slate-400 hover:text-slate-700 cursor-pointer"
           >
             <X className="h-5 w-5" />
           </button>
@@ -109,7 +109,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   onChange={(e) => setNickname(e.target.value)}
                   placeholder="VD: Harry, Minh Anh..."
                   maxLength={32}
-                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 pl-10 pr-3.5 py-2.5 text-sm font-bold text-slate-900 dark:text-white focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-800 focus:outline-hidden"
+                  className="w-full rounded-xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-700 bg-slate-50 dark:bg-slate-800 pl-10 pr-3.5 py-2.5 text-sm font-bold text-slate-900 dark:text-white focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-800 focus:outline-hidden"
                 />
               </div>
             </div>
@@ -127,7 +127,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   onChange={(e) => setDisplayName(e.target.value)}
                   placeholder="Nhập họ và tên..."
                   maxLength={50}
-                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 pl-10 pr-3.5 py-2.5 text-sm font-semibold text-slate-900 dark:text-white focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-800 focus:outline-hidden"
+                  className="w-full rounded-xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-700 bg-slate-50 dark:bg-slate-800 pl-10 pr-3.5 py-2.5 text-sm font-semibold text-slate-900 dark:text-white focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-800 focus:outline-hidden"
                 />
               </div>
             </div>
@@ -145,10 +145,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   type="date"
                   value={birthDate}
                   onChange={(e) => setBirthDate(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 pl-10 pr-3.5 py-2.5 text-sm font-semibold text-slate-900 dark:text-white focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-800 focus:outline-hidden"
+                  className="w-full rounded-xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-700 bg-slate-50 dark:bg-slate-800 pl-10 pr-3.5 py-2.5 text-sm font-semibold text-slate-900 dark:text-white focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-800 focus:outline-hidden"
                 />
               </div>
-              <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+              <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-[#46A302] dark:text-emerald-400">
                 <Sparkles className="h-3 w-3 shrink-0" />
                 <span>
                   Linh vật Bảng Mục Tiêu: {previewZodiac.branchName}
@@ -170,7 +170,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder="VD: 0901234567"
                   maxLength={20}
-                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 pl-10 pr-3.5 py-2.5 text-sm font-semibold text-slate-900 dark:text-white focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-800 focus:outline-hidden"
+                  className="w-full rounded-xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-700 bg-slate-50 dark:bg-slate-800 pl-10 pr-3.5 py-2.5 text-sm font-semibold text-slate-900 dark:text-white focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-800 focus:outline-hidden"
                 />
               </div>
             </div>
@@ -189,24 +189,24 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 onChange={(e) => setAddress(e.target.value)}
                 placeholder="Nhập địa chỉ, trường học hoặc nơi công tác..."
                 maxLength={120}
-                className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 pl-10 pr-3.5 py-2.5 text-sm font-semibold text-slate-900 dark:text-white focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-800 focus:outline-hidden"
+                className="w-full rounded-xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-700 bg-slate-50 dark:bg-slate-800 pl-10 pr-3.5 py-2.5 text-sm font-semibold text-slate-900 dark:text-white focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-800 focus:outline-hidden"
               />
             </div>
           </div>
 
           {/* Footer Buttons */}
-          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex items-center justify-end gap-2.5 pt-3 border-t-2 border-[#F0F0F0] dark:border-slate-800">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2.5 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              className="btn-duo-white rounded-xl px-4 py-2.5 text-xs font-black cursor-pointer"
             >
               Đóng
             </button>
             <button
               type="submit"
               disabled={isSaving}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-[#58CC02] hover:bg-[#46A302] px-5 py-2.5 text-xs font-black text-white shadow-sm transition-all cursor-pointer disabled:opacity-60"
+              className="btn-duo-green inline-flex items-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-black cursor-pointer disabled:opacity-60"
             >
               {savedSuccess ? (
                 <>

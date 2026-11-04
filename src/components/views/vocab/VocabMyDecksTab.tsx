@@ -122,21 +122,21 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
   return (
     <div className="space-y-6">
       {/* Top Action Header */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-white border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-3xl p-5 shadow-xs flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg sm:text-xl font-extrabold text-slate-900">
+          <h2 className="text-lg sm:text-xl font-black text-slate-900">
             Bộ từ vựng & Thư mục cá nhân
           </h2>
-          <p className="text-xs sm:text-sm text-slate-500">
+          <p className="text-xs sm:text-sm font-semibold text-slate-500">
             Tạo bộ từ riêng, phân loại theo thư mục, nhập CSV/JSON hoặc tạo từ vựng bằng AI
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
             onClick={onOpenSrsForPersonalDecks}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold transition"
+            className="btn-duo-blue inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-black cursor-pointer"
           >
             <Layers className="w-4 h-4" />
             Ôn ngắt quãng (SRS Bộ của tôi)
@@ -150,25 +150,25 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                 name: '',
               })
             }
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition"
+            className="btn-duo-white inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-slate-700 text-xs font-black cursor-pointer"
           >
-            <FolderPlus className="w-4 h-4 text-amber-500" />
+            <FolderPlus className="w-4 h-4 text-[#FF9600]" />
             + Thư mục
           </button>
 
           <button
             type="button"
             onClick={() => onOpenQuickImport()}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition"
+            className="btn-duo-white inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-slate-700 text-xs font-black cursor-pointer"
           >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+            <FileSpreadsheet className="w-4 h-4 text-[#46A302]" />
             Nhập CSV/JSON
           </button>
 
           <button
             type="button"
             onClick={() => onOpenAiModal()}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold transition"
+            className="btn-duo-purple inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-black cursor-pointer"
           >
             <Sparkles className="w-4 h-4" />
             Tạo từ AI
@@ -188,7 +188,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                 visibility: 'private',
               })
             }
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-bold shadow-xs transition"
+            className="btn-duo-green inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl text-xs sm:text-sm font-black cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             Tạo bộ từ mới
@@ -197,15 +197,15 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
       </div>
 
       {/* Folder Tabs & Search Bar */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="bg-white border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-3xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => setSelectedFolderFilter('ALL')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+            className={`px-3.5 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-1 ${
               selectedFolderFilter === 'ALL'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-4 border-b-[#46A302]'
+                : 'bg-slate-100 text-slate-600 border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] hover:bg-slate-200'
             }`}
           >
             Tất cả ({personalDecks.length})
@@ -214,10 +214,10 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
           <button
             type="button"
             onClick={() => setSelectedFolderFilter('UNCATEGORIZED')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+            className={`px-3.5 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-1 ${
               selectedFolderFilter === 'UNCATEGORIZED'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-4 border-b-[#46A302]'
+                : 'bg-slate-100 text-slate-600 border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] hover:bg-slate-200'
             }`}
           >
             Chưa phân loại ({personalDecks.filter((d) => !d.folderId).length})
@@ -230,16 +230,16 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
             return (
               <div
                 key={folder.id}
-                className={`inline-flex items-center rounded-xl border text-xs font-bold transition ${
+                className={`inline-flex items-center rounded-2xl border-2 border-b-4 text-xs font-black transition-all ${
                   isSelected
-                    ? 'bg-amber-500 text-white border-amber-500'
-                    : 'bg-amber-50/70 text-amber-900 border-amber-200 hover:bg-amber-100'
+                    ? 'bg-[#FF9600] text-white border-[#FF9600] border-b-[#E58700]'
+                    : 'bg-[#FFF5D6]/80 text-[#B36B00] border-[#FFC800] border-b-[#E5B400] hover:bg-[#FFF5D6]'
                 }`}
               >
                 <button
                   type="button"
                   onClick={() => setSelectedFolderFilter(folder.id)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 cursor-pointer"
                 >
                   <Folder className="w-3.5 h-3.5" />
                   <span>
@@ -255,7 +255,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                       name: folder.name,
                     })
                   }
-                  className="px-1.5 py-1.5 opacity-75 hover:opacity-100"
+                  className="px-1.5 py-1.5 opacity-75 hover:opacity-100 cursor-pointer"
                   title="Đổi tên thư mục"
                 >
                   <Edit3 className="w-3 h-3" />
@@ -269,7 +269,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                       title: folder.name,
                     })
                   }
-                  className="pr-2 pl-1 py-1.5 opacity-75 hover:opacity-100"
+                  className="pr-2.5 pl-1 py-1.5 opacity-75 hover:opacity-100 cursor-pointer"
                   title="Xóa thư mục (Các bộ từ sẽ chuyển về Chưa phân loại)"
                 >
                   <Trash2 className="w-3 h-3" />
@@ -280,26 +280,26 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
         </div>
 
         <div className="relative w-full md:w-64">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Tìm bộ từ của tôi..."
-            className="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+            className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm font-bold border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-2xl bg-slate-50 focus:outline-hidden focus:border-[#58CC02]"
           />
         </div>
       </div>
 
       {/* Personal Decks Grid */}
       {filteredPersonalDecks.length === 0 ? (
-        <div className="bg-white border-2 border-dashed border-slate-200 rounded-2xl p-10 text-center space-y-3">
-          <Folder className="w-10 h-10 text-slate-400 mx-auto" />
+        <div className="bg-white border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-3xl p-10 text-center space-y-3">
+          <Folder className="w-10 h-10 text-[#FF9600] mx-auto" />
           <div className="space-y-1">
-            <h3 className="text-base font-extrabold text-slate-800">
+            <h3 className="text-base font-black text-slate-800">
               Chưa có bộ từ cá nhân nào trong mục này
             </h3>
-            <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
+            <p className="text-xs sm:text-sm font-semibold text-slate-500 max-w-md mx-auto">
               Hãy tạo bộ từ mới để tự thêm từ vựng, nhập từ Excel/CSV hoặc tạo từ vựng thông minh
               bằng AI.
             </p>
@@ -316,7 +316,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                   visibility: 'private',
                 })
               }
-              className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-bold"
+              className="btn-duo-green inline-flex items-center gap-1.5 px-5 py-2.5 rounded-2xl text-xs sm:text-sm font-black cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               Tạo bộ từ đầu tiên
@@ -338,17 +338,17 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
             return (
               <div
                 key={deck.id}
-                className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs hover:shadow-md hover:border-indigo-300 transition flex flex-col justify-between gap-4"
+                className="bg-white border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] hover:border-[#58CC02] hover:border-b-[#46A302] rounded-3xl p-5 transition-all flex flex-col justify-between gap-4"
               >
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-bold">
-                        <Folder className="w-3 h-3 text-amber-500" />
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-xl bg-slate-100 border-2 border-[#E5E5E5] border-b-3 border-b-[#CECECE] text-slate-700 text-xs font-black">
+                        <Folder className="w-3 h-3 text-[#FF9600]" />
                         {folderName || 'Chưa phân loại'}
                       </span>
                       {deck.visibility === 'public' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xl bg-[#D7FFB8] text-[#46A302] border-2 border-[#58CC02] border-b-3 border-b-[#46A302] text-[10px] font-black">
                           🌐 Cộng đồng
                         </span>
                       )}
@@ -367,7 +367,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                             visibility: deck.visibility === 'public' ? 'public' : 'private',
                           })
                         }
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                        className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
                         title="Sửa tên / Chuyển thư mục / Chia sẻ Cộng đồng"
                       >
                         <Edit3 className="w-4 h-4" />
@@ -381,7 +381,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                             title: deck.title || deck.name || 'Bộ từ',
                           })
                         }
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                        className="p-1.5 rounded-xl text-slate-400 hover:text-[#EA2B2B] hover:bg-rose-50 cursor-pointer"
                         title="Xóa bộ từ"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -389,23 +389,23 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                     </div>
                   </div>
 
-                  <h3 className="text-base font-extrabold text-slate-900">{deck.title || deck.name}</h3>
+                  <h3 className="text-base font-black text-slate-900">{deck.title || deck.name}</h3>
                   {deck.description && (
-                    <p className="text-xs text-slate-500 line-clamp-2">{deck.description}</p>
+                    <p className="text-xs font-semibold text-slate-500 line-clamp-2">{deck.description}</p>
                   )}
                 </div>
 
                 <div className="space-y-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-xs">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-bold">
                       <span className="text-slate-600">
-                        Đã thuộc: <strong className="text-slate-900">{known}/{total}</strong> từ
+                        Đã thuộc: <strong className="text-slate-900 font-black">{known}/{total}</strong> từ
                       </span>
-                      <span className="font-bold text-indigo-600">{percent}%</span>
+                      <span className="font-black text-[#46A302]">{percent}%</span>
                     </div>
-                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden border border-[#E5E5E5]">
                       <div
-                        className="h-full bg-emerald-500 transition-all duration-300"
+                        className="h-full bg-[#58CC02] rounded-full transition-all duration-300"
                         style={{ width: `${percent}%` }}
                       />
                     </div>
@@ -415,7 +415,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                     <button
                       type="button"
                       onClick={() => onSelectDeck(deck.id)}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-bold transition"
+                      className="btn-duo-green flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-2xl text-xs sm:text-sm font-black cursor-pointer"
                     >
                       <span>Học & Quản lý từ</span>
                       <ArrowRight className="w-4 h-4" />
@@ -423,7 +423,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                     <button
                       type="button"
                       onClick={() => onOpenAiModal(deck.id)}
-                      className="p-2.5 rounded-xl border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700"
+                      className="btn-duo-purple p-2.5 rounded-2xl cursor-pointer"
                       title="Thêm từ bằng AI vào bộ này"
                     >
                       <Sparkles className="w-4 h-4" />
@@ -440,8 +440,8 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
       {savedSystemDecks.length > 0 && (
         <div className="space-y-3 pt-2">
           <div className="flex items-center gap-2">
-            <Bookmark className="w-4 h-4 text-indigo-600 fill-indigo-600" />
-            <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+            <Bookmark className="w-4 h-4 text-[#1CB0F6] fill-[#1CB0F6]" />
+            <h3 className="text-sm sm:text-base font-black text-slate-900">
               Bộ từ hệ thống đã lưu ({savedSystemDecks.length})
             </h3>
           </div>
@@ -459,25 +459,25 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
               return (
                 <div
                   key={deck.id}
-                  className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs flex flex-col justify-between gap-4"
+                  className="bg-white border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-3xl p-5 flex flex-col justify-between gap-4"
                 >
                   <div>
-                    <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-[11px] font-bold">
+                    <span className="px-2.5 py-0.5 rounded-xl bg-[#DDF4FF] text-[#1899D6] border-2 border-[#1CB0F6] border-b-3 border-b-[#1899D6] text-[11px] font-black">
                       Bộ từ Hệ thống
                     </span>
-                    <h4 className="text-base font-extrabold text-slate-900 mt-1">{deck.title}</h4>
+                    <h4 className="text-base font-black text-slate-900 mt-1.5">{deck.title}</h4>
                   </div>
 
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center justify-between text-xs font-bold">
                       <span>
-                        Đã thuộc: <strong>{known}/{total}</strong> từ ({percent}%)
+                        Đã thuộc: <strong className="font-black">{known}/{total}</strong> từ ({percent}%)
                       </span>
                     </div>
                     <button
                       type="button"
                       onClick={() => onSelectDeck(deck.id)}
-                      className="w-full py-2 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold"
+                      className="btn-duo-blue w-full py-2.5 px-4 rounded-2xl text-xs font-black cursor-pointer"
                     >
                       Vào học bộ từ
                     </button>
@@ -492,15 +492,15 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
       {/* Create / Edit Deck Modal */}
       {deckModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-extrabold text-slate-900 text-base">
+          <div className="bg-white rounded-3xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] max-w-md w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b-2 border-[#E5E5E5] pb-3">
+              <h3 className="font-black text-slate-900 text-base">
                 {deckModal.mode === 'create' ? 'Tạo bộ từ cá nhân mới' : 'Chỉnh sửa bộ từ'}
               </h3>
               <button
                 type="button"
                 onClick={() => setDeckModal(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700"
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -508,7 +508,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-black text-slate-700 mb-1">
                   Tên bộ từ vựng *
                 </label>
                 <input
@@ -518,13 +518,13 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                     setDeckModal((prev) => (prev ? { ...prev, title: e.target.value } : null))
                   }
                   placeholder="Ví dụ: Từ vựng Reading Part 3..."
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm font-bold"
+                  className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] text-sm font-black focus:border-[#58CC02] focus:outline-hidden"
                   autoFocus
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-black text-slate-700 mb-1">
                   Mô tả ngắn (Tùy chọn)
                 </label>
                 <input
@@ -536,12 +536,12 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                     )
                   }
                   placeholder="Ghi chú mục tiêu học tập..."
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm"
+                  className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] text-sm font-semibold focus:border-[#58CC02] focus:outline-hidden"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-black text-slate-700 mb-1">
                   Thuộc thư mục:
                 </label>
                 <select
@@ -549,7 +549,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                   onChange={(e) =>
                     setDeckModal((prev) => (prev ? { ...prev, folderId: e.target.value } : null))
                   }
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm bg-white font-semibold"
+                  className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] text-sm bg-white font-bold"
                 >
                   <option value="">-- Chưa phân loại --</option>
                   {folders.map((f) => (
@@ -561,7 +561,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-black text-slate-700 mb-1">
                   Quyền hiển thị & Chia sẻ Cloud:
                 </label>
                 <select
@@ -576,7 +576,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                         : null
                     )
                   }
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm bg-white font-semibold"
+                  className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] text-sm bg-white font-bold"
                 >
                   <option value="private">🔒 Cá nhân (Chỉ mình tôi & Giáo viên quản lý)</option>
                   <option value="public">🌐 Công khai lên Thư viện Cộng đồng Cloud</option>
@@ -584,11 +584,11 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+            <div className="flex justify-end gap-2.5 pt-3 border-t-2 border-[#E5E5E5]">
               <button
                 type="button"
                 onClick={() => setDeckModal(null)}
-                className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-xs font-semibold"
+                className="btn-duo-white px-4 py-2 rounded-2xl text-slate-700 text-xs font-black cursor-pointer"
               >
                 Hủy
               </button>
@@ -614,7 +614,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                   }
                   setDeckModal(null);
                 }}
-                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-xs font-bold"
+                className="btn-duo-green px-5 py-2 rounded-2xl disabled:opacity-40 text-xs font-black cursor-pointer"
               >
                 Lưu bộ từ
               </button>
@@ -626,22 +626,22 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
       {/* Create / Rename Folder Modal */}
       {folderModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-extrabold text-slate-900 text-base">
+          <div className="bg-white rounded-3xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b-2 border-[#E5E5E5] pb-3">
+              <h3 className="font-black text-slate-900 text-base">
                 {folderModal.mode === 'create' ? 'Tạo thư mục mới' : 'Đổi tên thư mục'}
               </h3>
               <button
                 type="button"
                 onClick={() => setFolderModal(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700"
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Tên thư mục *</label>
+              <label className="block text-xs font-black text-slate-700 mb-1">Tên thư mục *</label>
               <input
                 type="text"
                 value={folderModal.name}
@@ -649,16 +649,16 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                   setFolderModal((prev) => (prev ? { ...prev, name: e.target.value } : null))
                 }
                 placeholder="Ví dụ: Ôn thi VSTEP B2..."
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm font-bold"
+                className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] text-sm font-black focus:border-[#58CC02] focus:outline-hidden"
                 autoFocus
               />
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex justify-end gap-2.5 pt-2">
               <button
                 type="button"
                 onClick={() => setFolderModal(null)}
-                className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-xs font-semibold"
+                className="btn-duo-white px-4 py-2 rounded-2xl text-slate-700 text-xs font-black cursor-pointer"
               >
                 Hủy
               </button>
@@ -674,7 +674,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                   }
                   setFolderModal(null);
                 }}
-                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold"
+                className="btn-duo-orange px-5 py-2 rounded-2xl text-xs font-black cursor-pointer"
               >
                 Lưu thư mục
               </button>
@@ -686,27 +686,27 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
       {/* Delete Confirmation Modal */}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-5 shadow-2xl space-y-4">
+          <div className="bg-white rounded-3xl border-2 border-[#FF4B4B] border-b-4 border-b-[#EA2B2B] max-w-md w-full p-5 shadow-2xl space-y-4">
             <div className="flex items-start gap-3">
-              <AlertTriangle className="w-6 h-6 text-rose-600 shrink-0 mt-0.5" />
+              <AlertTriangle className="w-6 h-6 text-[#EA2B2B] shrink-0 mt-0.5" />
               <div>
-                <h3 className="font-extrabold text-slate-900 text-base">
+                <h3 className="font-black text-slate-900 text-base">
                   {deleteTarget.type === 'deck'
                     ? `Xóa bộ từ "${deleteTarget.title}"?`
                     : `Xóa thư mục "${deleteTarget.title}"?`}
                 </h3>
-                <p className="text-xs sm:text-sm text-slate-600 mt-1">
+                <p className="text-xs sm:text-sm font-semibold text-slate-600 mt-1">
                   {deleteTarget.type === 'deck'
                     ? 'Bộ từ cá nhân này sẽ bị xóa khỏi danh sách của bạn.'
                     : 'Các bộ từ bên trong thư mục này sẽ KHÔNG bị xóa mà được chuyển về mục "Chưa phân loại".'}
                 </p>
               </div>
             </div>
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex justify-end gap-2.5 pt-2">
               <button
                 type="button"
                 onClick={() => setDeleteTarget(null)}
-                className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-xs font-semibold"
+                className="btn-duo-white px-4 py-2 rounded-2xl text-slate-700 text-xs font-black cursor-pointer"
               >
                 Hủy
               </button>
@@ -723,7 +723,7 @@ export const VocabMyDecksTab: React.FC<VocabMyDecksTabProps> = ({
                   }
                   setDeleteTarget(null);
                 }}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold"
+                className="btn-duo-red px-4 py-2 rounded-2xl text-xs font-black cursor-pointer"
               >
                 Xác nhận xóa
               </button>

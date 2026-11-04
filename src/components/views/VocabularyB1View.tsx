@@ -725,21 +725,21 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Real-time Cloud Database Backup Banner */}
-      <div className="rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 p-3.5 sm:p-4 text-white shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3">
+      <div className="rounded-3xl bg-gradient-to-r from-[#58CC02] via-[#46A302] to-[#1CB0F6] p-4 sm:p-5 text-white border-2 border-[#46A302] border-b-4 border-b-[#2B6600] shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0 backdrop-blur-xs">
-            <Database className="h-5 w-5 text-emerald-200" />
+          <div className="h-11 w-11 rounded-2xl bg-white/20 border-2 border-white/30 flex items-center justify-center shrink-0 backdrop-blur-xs">
+            <Database className="h-5 w-5 text-white" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-300 animate-pulse" />
-              <span className="font-black text-xs uppercase tracking-wider text-emerald-100">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#FFC800] animate-pulse" />
+              <span className="font-black text-xs uppercase tracking-wider text-lime-100">
                 Sao Lưu Thực Tế Trên Database Cloud Firestore
               </span>
             </div>
-            <div className="text-[11px] sm:text-xs text-emerald-50 mt-0.5">
+            <div className="text-[11px] sm:text-xs text-white/95 font-bold mt-0.5">
               Toàn bộ 15 Chủ đề chính thức VSTEP B1 & bộ từ vựng cá nhân ({cloudStatus?.totalWords || '850+'} từ) được sao lưu trên database:{' '}
-              <span className="font-mono font-bold text-white">
+              <span className="font-mono font-black text-[#FFC800]">
                 ai-studio-vsteptutor-6c9f7e6d-6d42-4864-9991-780c76d9f4dc
               </span>
             </div>
@@ -748,7 +748,7 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
 
         <div className="flex items-center gap-2.5 shrink-0">
           {cloudStatus?.lastBackupAt && (
-            <span className="text-[11px] text-emerald-100 hidden sm:inline">
+            <span className="text-[11px] text-lime-100 font-bold hidden sm:inline">
               Sao lưu: {new Date(cloudStatus.lastBackupAt).toLocaleTimeString('vi-VN')} {new Date(cloudStatus.lastBackupAt).toLocaleDateString('vi-VN')}
             </span>
           )}
@@ -756,7 +756,7 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
             type="button"
             onClick={handleManualBackup}
             disabled={isBackingUpCloud}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white text-emerald-800 hover:bg-emerald-50 text-xs font-black transition-colors cursor-pointer disabled:opacity-50 shadow-xs"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-white text-[#46A302] border-2 border-white border-b-4 border-b-[#D7FFB8] hover:bg-lime-50 text-xs font-black transition-all cursor-pointer disabled:opacity-50 active:border-b-0 active:translate-y-1"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isBackingUpCloud ? 'animate-spin' : ''}`} />
             <span>{isBackingUpCloud ? 'Đang sao lưu...' : 'Sao lưu lên Database ngay'}</span>
@@ -765,22 +765,22 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
       </div>
 
       {cloudBackupSuccessMessage && (
-        <div className="rounded-xl bg-emerald-100 border border-emerald-300 p-3 text-xs font-bold text-emerald-900 flex items-center gap-2 animate-in fade-in">
-          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+        <div className="rounded-2xl bg-[#D7FFB8] border-2 border-[#58CC02] border-b-4 border-b-[#46A302] p-3.5 text-xs font-black text-[#2B6600] flex items-center gap-2 animate-in fade-in">
+          <CheckCircle2 className="h-4 w-4 text-[#46A302] shrink-0" />
           <span>{cloudBackupSuccessMessage}</span>
         </div>
       )}
 
       {/* Top Vocabulary Navigation Header (Section 8) */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs flex flex-wrap items-center justify-between gap-4">
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="bg-white dark:bg-slate-900 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 rounded-3xl p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
             onClick={() => handleSelectWorkspace('roadmaps')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer active:border-b-0 active:translate-y-1 ${
               currentWorkspace === 'roadmaps' && !selectedDeckId
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-4 border-b-[#46A302]'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-900 hover:bg-slate-200/70'
             }`}
           >
             <MapIcon className="w-4 h-4" />
@@ -790,10 +790,10 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
           <button
             type="button"
             onClick={() => handleSelectWorkspace('my_decks')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer active:border-b-0 active:translate-y-1 ${
               currentWorkspace === 'my_decks' && !selectedDeckId
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-[#1CB0F6] text-white border-2 border-[#1CB0F6] border-b-4 border-b-[#1899D6]'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-900 hover:bg-slate-200/70'
             }`}
           >
             <FolderHeart className="w-4 h-4" />
@@ -803,10 +803,10 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
           <button
             type="button"
             onClick={() => handleSelectWorkspace('study_hub')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer active:border-b-0 active:translate-y-1 ${
               currentWorkspace === 'study_hub' && !selectedDeckId
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-[#FF9600] text-white border-2 border-[#FF9600] border-b-4 border-b-[#E58700]'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-900 hover:bg-slate-200/70'
             }`}
           >
             <BookOpenCheck className="w-4 h-4" />
@@ -816,10 +816,10 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
           <button
             type="button"
             onClick={() => handleSelectWorkspace('community')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer active:border-b-0 active:translate-y-1 ${
               currentWorkspace === 'community' && !selectedDeckId
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-[#CE82FF] text-white border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8]'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-900 hover:bg-slate-200/70'
             }`}
           >
             <Users className="w-4 h-4" />
@@ -828,9 +828,9 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
         </div>
 
         {/* Right Quick Actions & Points Pill */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-extrabold">
-            <Trophy className="w-4 h-4 text-amber-500" />
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-[#FFF5D6] border-2 border-[#FFC800] border-b-4 border-b-[#E5B400] text-[#B36B00] text-xs font-black">
+            <Trophy className="w-4 h-4 text-[#FF9600]" />
             <span>{vocabState.pointsBalance} điểm</span>
           </div>
 
@@ -848,7 +848,7 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
                 scopeItems: allNormalizedItems,
               })
             }
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold transition"
+            className="btn-duo-blue inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-black cursor-pointer"
           >
             <Layers className="w-4 h-4" />
             <span>SRS ({globalDueCount} đến hạn)</span>
@@ -860,7 +860,7 @@ export const VocabularyB1View: React.FC<VocabularyB1ViewProps> = ({
               setAiTargetDeckId(selectedDeckId && isPersonalActiveDeck ? selectedDeckId : undefined);
               setIsAiModalOpen(true);
             }}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold shadow-2xs transition"
+            className="btn-duo-purple inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-black cursor-pointer"
           >
             <Sparkles className="w-4 h-4" />
             <span>Tạo từ AI</span>

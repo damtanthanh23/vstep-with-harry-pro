@@ -750,21 +750,21 @@ export const LeaderboardView: React.FC = () => {
   return (
     <div className="space-y-6 pb-24 max-w-6xl mx-auto px-2 sm:px-4">
       {/* Real-time Cloud Firestore Status Banner */}
-      <div className="rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 p-3 sm:p-4 text-white shadow-md flex flex-wrap items-center justify-between gap-3">
+      <div className="rounded-3xl bg-gradient-to-r from-[#58CC02] via-[#46A302] to-[#1CB0F6] p-3.5 sm:p-4 text-white border-2 border-[#46A302] border-b-4 border-b-[#2B6600] shadow-md flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-xl bg-white/20 flex items-center justify-center shrink-0 backdrop-blur-xs">
-            <Database className="h-4 w-4 text-emerald-200" />
+          <div className="h-9 w-9 rounded-2xl bg-white/20 border-2 border-white/30 flex items-center justify-center shrink-0 backdrop-blur-xs">
+            <Database className="h-4 w-4 text-white" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-300 animate-pulse" />
-              <span className="font-black text-xs uppercase tracking-wider text-emerald-100">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#FFC800] animate-pulse" />
+              <span className="font-black text-xs uppercase tracking-wider text-lime-100">
                 Cloud Firestore Real-Time Sync
               </span>
             </div>
-            <div className="text-[11px] sm:text-xs text-emerald-50">
+            <div className="text-[11px] sm:text-xs text-white/95 font-bold">
               Đồng bộ trực tuyến 100% tài khoản & bài thi thật từ database:{' '}
-              <span className="font-mono font-bold text-white">
+              <span className="font-mono font-black text-[#FFC800]">
                 ai-studio-vsteptutor-6c9f7e6d-6d42-4864-9991-780c76d9f4dc
               </span>
             </div>
@@ -772,14 +772,14 @@ export const LeaderboardView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-emerald-100 font-medium hidden sm:inline">
+          <span className="text-[11px] text-lime-100 font-bold hidden sm:inline">
             Đồng bộ lúc: {lastSyncTime}
           </span>
           <button
             type="button"
             onClick={fetchRealFirestoreLeaderboard}
             disabled={isRefreshing}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-white text-xs font-black transition-colors cursor-pointer disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-white text-[#46A302] border-2 border-white border-b-4 border-b-[#D7FFB8] hover:bg-lime-50 text-xs font-black transition-all cursor-pointer disabled:opacity-50 active:border-b-0 active:translate-y-1"
             title="Tải lại ngay dữ liệu mới nhất từ Cloud Firestore"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
@@ -789,15 +789,15 @@ export const LeaderboardView: React.FC = () => {
       </div>
 
       {/* Mode Switcher Tabs: 🏆 Điểm Thi VSTEP Thật vs 📚 Lộ Trình Từ Vựng */}
-      <div className="rounded-3xl bg-white dark:bg-slate-800/90 p-2 border border-slate-200/90 dark:border-slate-700 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        <div className="grid grid-cols-2 gap-2 flex-1">
+      <div className="rounded-3xl bg-white dark:bg-slate-800/90 p-2.5 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <div className="grid grid-cols-2 gap-2.5 flex-1">
           <button
             type="button"
             onClick={() => setActiveCategory('exam_score')}
-            className={`flex items-center justify-center gap-2 py-3 px-4 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer ${
+            className={`flex items-center justify-center gap-2 py-3 px-4 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer active:border-b-0 active:translate-y-1 ${
               activeCategory === 'exam_score'
-                ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-md'
-                : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800'
+                ? 'bg-[#FF9600] text-white border-2 border-[#FF9600] border-b-4 border-b-[#E58700]'
+                : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-950 hover:bg-slate-200/60 dark:hover:bg-slate-800'
             }`}
           >
             <Trophy className="h-4 w-4 shrink-0" />
@@ -807,10 +807,10 @@ export const LeaderboardView: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveCategory('vocab_roadmap')}
-            className={`flex items-center justify-center gap-2 py-3 px-4 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer ${
+            className={`flex items-center justify-center gap-2 py-3 px-4 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer active:border-b-0 active:translate-y-1 ${
               activeCategory === 'vocab_roadmap'
-                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md'
-                : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800'
+                ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-4 border-b-[#46A302]'
+                : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-950 hover:bg-slate-200/60 dark:hover:bg-slate-800'
             }`}
           >
             <BookOpen className="h-4 w-4 shrink-0" />
@@ -823,13 +823,13 @@ export const LeaderboardView: React.FC = () => {
           <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
             Nguồn học viên:
           </span>
-          <div className="inline-flex rounded-xl bg-slate-100 dark:bg-slate-900 p-1 border border-slate-200 dark:border-slate-700">
+          <div className="inline-flex rounded-2xl bg-slate-100 dark:bg-slate-900 p-1 border-2 border-[#E5E5E5] dark:border-slate-700 gap-1">
             <button
               type="button"
               onClick={() => setDataSourceFilter('all')}
-              className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 text-xs font-black rounded-xl transition-all cursor-pointer ${
                 dataSourceFilter === 'all'
-                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-2xs'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white border-2 border-[#E5E5E5] border-b-3 border-b-[#CECECE]'
                   : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
               }`}
             >
@@ -838,13 +838,13 @@ export const LeaderboardView: React.FC = () => {
             <button
               type="button"
               onClick={() => setDataSourceFilter('real_only')}
-              className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${
+              className={`px-3 py-1.5 text-xs font-black rounded-xl transition-all cursor-pointer flex items-center gap-1 ${
                 dataSourceFilter === 'real_only'
-                  ? 'bg-emerald-500 text-white shadow-2xs'
-                  : 'text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400'
+                  ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-3 border-b-[#46A302]'
+                  : 'text-slate-500 hover:text-[#46A302] dark:hover:text-[#58CC02]'
               }`}
             >
-              <CloudCheck className="h-3 w-3" />
+              <CloudCheck className="h-3.5 w-3.5" />
               <span>Chỉ Cloud Firestore ({realUsersCount})</span>
             </button>
           </div>
@@ -853,53 +853,53 @@ export const LeaderboardView: React.FC = () => {
 
       {/* 3 Summary KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="rounded-2xl bg-white dark:bg-slate-800 p-4 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs flex items-center gap-4">
-          <div className="h-12 w-12 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+        <div className="rounded-3xl bg-white dark:bg-slate-800 p-4 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-900 flex items-center gap-4">
+          <div className="h-12 w-12 rounded-2xl bg-[#FFF5D6] dark:bg-amber-950/60 border-2 border-[#FFC800] border-b-4 border-b-[#E5B400] text-[#FF9600] flex items-center justify-center shrink-0">
             <Users className="h-6 w-6" />
           </div>
           <div>
-            <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+            <div className="text-xs text-slate-500 dark:text-slate-400 font-bold">
               {summaryKPIs.card1Title}
             </div>
             <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tabular-nums">
               {summaryKPIs.card1Value}
             </div>
-            <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
+            <div className="text-[11px] text-[#46A302] dark:text-[#58CC02] font-black flex items-center gap-1 mt-0.5">
               <CheckCircle2 className="h-3 w-3" />
               <span>{summaryKPIs.card1Sub}</span>
             </div>
           </div>
         </div>
 
-        <div className="rounded-2xl bg-white dark:bg-slate-800 p-4 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs flex items-center gap-4">
-          <div className="h-12 w-12 rounded-2xl bg-purple-100 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+        <div className="rounded-3xl bg-white dark:bg-slate-800 p-4 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-900 flex items-center gap-4">
+          <div className="h-12 w-12 rounded-2xl bg-[#F3E5FF] dark:bg-purple-950/60 border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8] text-[#A560E8] flex items-center justify-center shrink-0">
             <Target className="h-6 w-6" />
           </div>
           <div>
-            <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+            <div className="text-xs text-slate-500 dark:text-slate-400 font-bold">
               {summaryKPIs.card2Title}
             </div>
             <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tabular-nums">
               {summaryKPIs.card2Value}
             </div>
-            <div className="text-[11px] text-purple-600 dark:text-purple-400 font-bold truncate max-w-[200px] mt-0.5">
+            <div className="text-[11px] text-[#A560E8] dark:text-purple-400 font-black truncate max-w-[200px] mt-0.5">
               {summaryKPIs.card2Sub}
             </div>
           </div>
         </div>
 
-        <div className="rounded-2xl bg-white dark:bg-slate-800 p-4 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs flex items-center gap-4">
-          <div className="h-12 w-12 rounded-2xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+        <div className="rounded-3xl bg-white dark:bg-slate-800 p-4 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-900 flex items-center gap-4">
+          <div className="h-12 w-12 rounded-2xl bg-[#D7FFB8] dark:bg-emerald-950/60 border-2 border-[#58CC02] border-b-4 border-b-[#46A302] text-[#46A302] flex items-center justify-center shrink-0">
             <ShieldCheck className="h-6 w-6" />
           </div>
           <div>
-            <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+            <div className="text-xs text-slate-500 dark:text-slate-400 font-bold">
               {summaryKPIs.card3Title}
             </div>
             <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tabular-nums">
               {summaryKPIs.card3Value}
             </div>
-            <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium mt-0.5">
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 font-bold mt-0.5">
               {summaryKPIs.card3Sub}
             </div>
           </div>
@@ -907,19 +907,19 @@ export const LeaderboardView: React.FC = () => {
       </div>
 
       {/* Control Bar: Filters & Live Search */}
-      <div className="rounded-3xl bg-white dark:bg-slate-800/90 border border-slate-200/90 dark:border-slate-700 p-4 sm:p-5 shadow-sm space-y-4">
+      <div className="rounded-3xl bg-white dark:bg-slate-800/90 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 p-4 sm:p-5 space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           {activeCategory === 'vocab_roadmap' ? (
             <div className="flex-1">
               <label className="block text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5 flex items-center gap-1.5">
-                <BookOpen className="h-3.5 w-3.5 text-amber-500" />
+                <BookOpen className="h-3.5 w-3.5 text-[#58CC02]" />
                 <span>Lộ Trình Học Tập</span>
               </label>
               <div className="relative">
                 <select
                   value={selectedRoadmapId}
                   onChange={(e) => setSelectedRoadmapId(e.target.value)}
-                  className="w-full appearance-none rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 py-3 pl-4 pr-10 text-xs sm:text-sm font-bold text-slate-900 dark:text-white shadow-2xs focus:border-amber-500 focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 cursor-pointer"
+                  className="w-full appearance-none rounded-2xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 bg-slate-50 dark:bg-slate-900 py-3 pl-4 pr-10 text-xs sm:text-sm font-black text-slate-900 dark:text-white focus:border-[#58CC02] focus:outline-hidden cursor-pointer"
                 >
                   {ROADMAP_OPTIONS.map((rm) => (
                     <option key={rm.id} value={rm.id}>
@@ -929,13 +929,13 @@ export const LeaderboardView: React.FC = () => {
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               </div>
-              <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 truncate">
+              <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 truncate font-semibold">
                 {activeRoadmap.description}
               </p>
             </div>
           ) : (
-            <div className="flex-1 flex items-center gap-3 bg-slate-50 dark:bg-slate-900/60 p-3 rounded-2xl border border-slate-200/70 dark:border-slate-700/60">
-              <div className="h-10 w-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 flex items-center justify-center shrink-0">
+            <div className="flex-1 flex items-center gap-3 bg-slate-50 dark:bg-slate-900/60 p-3 rounded-2xl border-2 border-[#E5E5E5] dark:border-slate-700">
+              <div className="h-10 w-10 rounded-xl bg-[#FFF5D6] dark:bg-amber-950/60 border-2 border-[#FFC800] text-[#FF9600] flex items-center justify-center shrink-0">
                 <Trophy className="h-5 w-5" />
               </div>
               <div>
@@ -943,11 +943,11 @@ export const LeaderboardView: React.FC = () => {
                   Quy chuẩn VSTEP B1–B2–C1 Bộ GD&ĐT (Thang Điểm 10.0 · Làm tròn 0.5)
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 flex flex-wrap gap-2 mt-0.5">
-                  <span className="text-amber-600 font-bold">C1: 8.5 – 10.0</span>
+                  <span className="text-[#FF9600] font-black">C1: 8.5 – 10.0</span>
                   <span>·</span>
-                  <span className="text-emerald-600 font-bold">B2: 6.0 – 8.0</span>
+                  <span className="text-[#46A302] font-black">B2: 6.0 – 8.0</span>
                   <span>·</span>
-                  <span className="text-sky-600 font-bold">B1: 4.0 – 5.5</span>
+                  <span className="text-[#1899D6] font-black">B1: 4.0 – 5.5</span>
                 </div>
               </div>
             </div>
@@ -956,16 +956,16 @@ export const LeaderboardView: React.FC = () => {
           {/* Timeframe selector */}
           <div className="shrink-0">
             <label className="block text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5 flex items-center gap-1.5">
-              <Calendar className="h-3.5 w-3.5 text-orange-500" />
+              <Calendar className="h-3.5 w-3.5 text-[#FF9600]" />
               <span>Mốc Thời Gian</span>
             </label>
-            <div className="inline-flex rounded-2xl bg-slate-100 dark:bg-slate-900 p-1 border border-slate-200/80 dark:border-slate-700">
+            <div className="inline-flex rounded-2xl bg-slate-100 dark:bg-slate-900 p-1.5 border-2 border-[#E5E5E5] dark:border-slate-700 gap-1">
               <button
                 type="button"
                 onClick={() => setSelectedTimeframe('this_week')}
-                className={`px-3 sm:px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                className={`px-3 sm:px-4 py-2 text-xs font-black rounded-xl transition-all cursor-pointer ${
                   selectedTimeframe === 'this_week'
-                    ? 'bg-white dark:bg-slate-800 text-amber-600 dark:text-amber-400 shadow-xs'
+                    ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-3 border-b-[#46A302]'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
@@ -974,9 +974,9 @@ export const LeaderboardView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setSelectedTimeframe('this_month')}
-                className={`px-3 sm:px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                className={`px-3 sm:px-4 py-2 text-xs font-black rounded-xl transition-all cursor-pointer ${
                   selectedTimeframe === 'this_month'
-                    ? 'bg-white dark:bg-slate-800 text-amber-600 dark:text-amber-400 shadow-xs'
+                    ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-3 border-b-[#46A302]'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
@@ -985,9 +985,9 @@ export const LeaderboardView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setSelectedTimeframe('all_time')}
-                className={`px-3 sm:px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                className={`px-3 sm:px-4 py-2 text-xs font-black rounded-xl transition-all cursor-pointer ${
                   selectedTimeframe === 'all_time'
-                    ? 'bg-white dark:bg-slate-800 text-amber-600 dark:text-amber-400 shadow-xs'
+                    ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-3 border-b-[#46A302]'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
@@ -1005,7 +1005,7 @@ export const LeaderboardView: React.FC = () => {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Tìm kiếm học viên theo tên, email hoặc bậc VSTEP..."
-            className="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 py-2.5 pl-10 pr-10 text-xs sm:text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:border-amber-500 focus:outline-hidden focus:ring-2 focus:ring-amber-500/20"
+            className="w-full rounded-2xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 bg-slate-50 dark:bg-slate-900 py-2.5 pl-10 pr-10 text-xs sm:text-sm font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:border-[#58CC02] focus:outline-hidden"
           />
           {searchQuery && (
             <button
@@ -1021,18 +1021,18 @@ export const LeaderboardView: React.FC = () => {
 
       {/* Top 3 Podium (Bục Vinh Danh Top 3) */}
       {!searchQuery && top1 && top2 && top3 && (
-        <div className="rounded-3xl bg-gradient-to-b from-amber-500/10 via-slate-50 to-white dark:from-amber-950/20 dark:via-slate-900 dark:to-slate-900 border border-amber-200/60 dark:border-amber-900/30 p-6 sm:p-8 shadow-sm">
+        <div className="rounded-3xl bg-gradient-to-b from-[#FFF5D6]/60 via-white to-white dark:from-amber-950/20 dark:via-slate-900 dark:to-slate-900 border-2 border-[#FFC800] dark:border-amber-800 border-b-4 border-b-[#E5B400] p-6 sm:p-8 shadow-xs">
           <div className="text-center mb-8">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-black text-xs">
-              <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+            <span className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-xl bg-[#FFF5D6] dark:bg-amber-950/60 border-2 border-[#FFC800] border-b-3 border-b-[#E5B400] text-[#FF9600] dark:text-amber-300 font-black text-xs uppercase tracking-wider">
+              <Sparkles className="h-3.5 w-3.5 text-[#FF9600]" />
               <span>BỤC VINH DANH TOP 3 XUẤT SẮC NHẤT</span>
             </span>
-            <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mt-1">
+            <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mt-2">
               {activeCategory === 'exam_score'
                 ? 'Anh Tài Đạt Điểm VSTEP Cao Nhất Hệ Thống'
                 : `Thủ Lĩnh Lộ Trình: ${activeRoadmap.title}`}
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-0.5">
               Áp dụng quy tắc xếp hạng chuẩn thi đấu quốc tế (1, 2, 2, 4)
             </p>
           </div>
@@ -1042,7 +1042,7 @@ export const LeaderboardView: React.FC = () => {
             {/* Rank 2 (Silver - Left) */}
             <div className="flex flex-col items-center text-center">
               <div className="relative mb-3 group">
-                <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-full p-1 bg-gradient-to-br from-slate-200 via-slate-400 to-slate-300 shadow-md">
+                <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-full p-1 bg-slate-200 border-2 border-slate-300 border-b-4 border-b-slate-400 shadow-xs">
                   <div className="h-full w-full rounded-full overflow-hidden bg-slate-100">
                     {top2.avatarUrl ? (
                       <img
@@ -1057,7 +1057,7 @@ export const LeaderboardView: React.FC = () => {
                     )}
                   </div>
                 </div>
-                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 flex items-center justify-center h-7 w-7 rounded-full bg-slate-300 text-slate-800 font-black text-xs border-2 border-white dark:border-slate-800 shadow-xs">
+                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 flex items-center justify-center h-7 w-7 rounded-xl bg-slate-200 text-slate-800 font-black text-xs border-2 border-slate-400 border-b-3 border-b-slate-500">
                   🥈
                 </div>
               </div>
@@ -1066,10 +1066,10 @@ export const LeaderboardView: React.FC = () => {
                 <div className="font-black text-xs sm:text-sm text-slate-900 dark:text-white truncate flex items-center justify-center gap-1">
                   <span>{top2.name}</span>
                   {top2.isRealFirestoreUser && (
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" title="Tài khoản thật từ Firestore" />
+                    <span className="h-2 w-2 rounded-full bg-[#58CC02]" title="Tài khoản thật từ Firestore" />
                   )}
                 </div>
-                <div className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                <div className="text-[10px] sm:text-xs font-bold text-slate-500 dark:text-slate-400 truncate mt-0.5">
                   {activeCategory === 'exam_score' ? top2.levelLabel : top2.badge || 'Bứt Phá'}
                 </div>
               </div>
@@ -1081,7 +1081,7 @@ export const LeaderboardView: React.FC = () => {
                     <div className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-200 tabular-nums">
                       {top2.vstepBandScore.toFixed(1)} / 10.0
                     </div>
-                    <div className="text-[10px] text-slate-400 font-medium">
+                    <div className="text-[10px] text-slate-400 font-bold">
                       ({top2.bestRawScore}/{top2.totalQuestions} câu · {top2.attemptsCount} lượt)
                     </div>
                   </div>
@@ -1090,13 +1090,13 @@ export const LeaderboardView: React.FC = () => {
                     <div className="text-xs font-black text-slate-700 dark:text-slate-300 tabular-nums">
                       {top2.knownCount} <span className="text-[10px] text-slate-400">/{top2.totalTarget} từ</span>
                     </div>
-                    <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden mt-1">
+                    <div className="w-full h-2.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden mt-1 border border-slate-300">
                       <div
-                        className="h-full bg-slate-400 rounded-full"
+                        className="h-full bg-[#1CB0F6] rounded-full"
                         style={{ width: `${top2.percentage}%` }}
                       />
                     </div>
-                    <div className="text-[10px] text-slate-500 font-bold mt-0.5">
+                    <div className="text-[10px] text-slate-500 font-black mt-0.5">
                       {top2.percentage}% thuộc
                     </div>
                   </div>
@@ -1104,16 +1104,16 @@ export const LeaderboardView: React.FC = () => {
               </div>
 
               {/* Pedestal Box */}
-              <div className="w-full mt-4 rounded-t-2xl bg-gradient-to-t from-slate-200 via-slate-100 to-white dark:from-slate-800 dark:via-slate-800/80 dark:to-slate-700/60 border-t-4 border-slate-300 dark:border-slate-600 h-28 sm:h-36 flex flex-col items-center justify-center shadow-inner">
-                <span className="text-2xl sm:text-4xl font-black text-slate-400 dark:text-slate-500">
+              <div className="w-full mt-4 rounded-t-3xl bg-gradient-to-t from-slate-200 via-slate-100 to-white dark:from-slate-800 dark:via-slate-800/80 dark:to-slate-700/60 border-2 border-slate-300 dark:border-slate-600 border-b-4 border-b-slate-400 h-28 sm:h-36 flex flex-col items-center justify-center">
+                <span className="text-2xl sm:text-4xl font-black text-slate-500 dark:text-slate-400">
                   2
                 </span>
-                <span className="text-[11px] font-black uppercase text-slate-500 dark:text-slate-400 tracking-wider">
+                <span className="text-[11px] font-black uppercase text-slate-600 dark:text-slate-300 tracking-wider">
                   Hạng Nhì
                 </span>
                 {top2.streakDays && (
-                  <span className="text-[10px] text-orange-500 font-bold flex items-center gap-0.5 mt-1">
-                    <Flame className="h-3 w-3 fill-orange-500" />
+                  <span className="text-[10px] text-[#FF9600] font-black flex items-center gap-0.5 mt-1">
+                    <Flame className="h-3 w-3 fill-[#FF9600]" />
                     {top2.streakDays}d
                   </span>
                 )}
@@ -1122,10 +1122,10 @@ export const LeaderboardView: React.FC = () => {
 
             {/* Rank 1 (Gold - Center - Highest) */}
             <div className="flex flex-col items-center text-center -mt-6">
-              <Crown className="h-8 w-8 sm:h-10 sm:w-10 text-amber-500 animate-bounce mb-1 drop-shadow-md" />
+              <Crown className="h-8 w-8 sm:h-10 sm:w-10 text-[#FFC800] fill-[#FFC800] animate-bounce mb-1 drop-shadow-xs" />
 
               <div className="relative mb-3 group">
-                <div className="h-20 w-20 sm:h-24 sm:w-24 rounded-full p-1.5 bg-gradient-to-tr from-amber-400 via-yellow-300 to-amber-500 shadow-xl ring-4 ring-amber-400/30">
+                <div className="h-20 w-20 sm:h-24 sm:w-24 rounded-full p-1.5 bg-[#FFC800] border-2 border-[#FFC800] border-b-4 border-b-[#E5B400] shadow-md">
                   <div className="h-full w-full rounded-full overflow-hidden bg-amber-50">
                     {top1.avatarUrl ? (
                       <img
@@ -1140,7 +1140,7 @@ export const LeaderboardView: React.FC = () => {
                     )}
                   </div>
                 </div>
-                <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 flex items-center justify-center h-8 w-8 rounded-full bg-gradient-to-tr from-amber-500 to-yellow-400 text-white font-black text-xs border-2 border-white dark:border-slate-800 shadow-md">
+                <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 flex items-center justify-center h-8 w-8 rounded-xl bg-[#FFC800] text-slate-900 font-black text-xs border-2 border-[#E5B400] border-b-3 border-b-[#C89D00]">
                   🥇
                 </div>
               </div>
@@ -1149,10 +1149,10 @@ export const LeaderboardView: React.FC = () => {
                 <div className="font-black text-xs sm:text-base text-slate-900 dark:text-white truncate flex items-center justify-center gap-1">
                   <span>{top1.name}</span>
                   {top1.isRealFirestoreUser && (
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" title="Tài khoản thật từ Firestore" />
+                    <span className="h-2 w-2 rounded-full bg-[#58CC02]" title="Tài khoản thật từ Firestore" />
                   )}
                 </div>
-                <div className="text-[10px] sm:text-xs text-amber-600 dark:text-amber-400 font-extrabold truncate mt-0.5">
+                <div className="text-[10px] sm:text-xs text-[#FF9600] dark:text-amber-400 font-black truncate mt-0.5">
                   {activeCategory === 'exam_score' ? top1.levelLabel : top1.badge || 'Quán Quân'}
                 </div>
               </div>
@@ -1161,7 +1161,7 @@ export const LeaderboardView: React.FC = () => {
               <div className="mt-2 w-full max-w-[160px]">
                 {activeCategory === 'exam_score' ? (
                   <div>
-                    <div className="text-sm sm:text-base font-black text-amber-600 dark:text-amber-400 tabular-nums">
+                    <div className="text-sm sm:text-base font-black text-[#FF9600] dark:text-amber-400 tabular-nums">
                       {top1.vstepBandScore.toFixed(1)} / 10.0
                     </div>
                     <div className="text-[10px] text-amber-700 dark:text-amber-300 font-bold">
@@ -1170,16 +1170,16 @@ export const LeaderboardView: React.FC = () => {
                   </div>
                 ) : (
                   <div>
-                    <div className="text-xs sm:text-sm font-black text-amber-600 dark:text-amber-400 tabular-nums">
+                    <div className="text-xs sm:text-sm font-black text-[#FF9600] dark:text-amber-400 tabular-nums">
                       {top1.knownCount} <span className="text-[10px] text-slate-400">/{top1.totalTarget} từ</span>
                     </div>
-                    <div className="w-full h-2 bg-amber-100 dark:bg-amber-950/60 rounded-full overflow-hidden mt-1">
+                    <div className="w-full h-2.5 bg-amber-100 dark:bg-amber-950/60 rounded-full overflow-hidden mt-1 border border-[#FFC800]">
                       <div
-                        className="h-full bg-gradient-to-r from-amber-500 to-yellow-400 rounded-full"
+                        className="h-full bg-[#FFC800] rounded-full"
                         style={{ width: `${top1.percentage}%` }}
                       />
                     </div>
-                    <div className="text-[10px] text-amber-700 dark:text-amber-300 font-black mt-0.5">
+                    <div className="text-[10px] text-[#FF9600] dark:text-amber-300 font-black mt-0.5">
                       {top1.percentage}% hoàn thành
                     </div>
                   </div>
@@ -1187,16 +1187,16 @@ export const LeaderboardView: React.FC = () => {
               </div>
 
               {/* Pedestal Box */}
-              <div className="w-full mt-4 rounded-t-2xl bg-gradient-to-t from-amber-200 via-amber-100 to-amber-50 dark:from-amber-950/80 dark:via-amber-900/60 dark:to-amber-800/40 border-t-4 border-amber-400 h-36 sm:h-48 flex flex-col items-center justify-center shadow-lg">
-                <span className="text-3xl sm:text-5xl font-black text-amber-500 dark:text-amber-400">
+              <div className="w-full mt-4 rounded-t-3xl bg-gradient-to-t from-[#FFF5D6] via-amber-50 to-white dark:from-amber-950/80 dark:via-amber-900/60 dark:to-amber-800/40 border-2 border-[#FFC800] border-b-4 border-b-[#E5B400] h-36 sm:h-48 flex flex-col items-center justify-center">
+                <span className="text-3xl sm:text-5xl font-black text-[#FF9600] dark:text-amber-400">
                   1
                 </span>
-                <span className="text-[11px] sm:text-xs font-black uppercase text-amber-700 dark:text-amber-300 tracking-wider">
+                <span className="text-[11px] sm:text-xs font-black uppercase text-[#FF9600] dark:text-amber-300 tracking-wider">
                   Quán Quân
                 </span>
                 {top1.streakDays && (
-                  <span className="text-xs text-orange-600 dark:text-orange-400 font-black flex items-center gap-0.5 mt-1">
-                    <Flame className="h-3.5 w-3.5 fill-orange-500" />
+                  <span className="text-xs text-[#FF9600] dark:text-orange-400 font-black flex items-center gap-0.5 mt-1">
+                    <Flame className="h-3.5 w-3.5 fill-[#FF9600]" />
                     {top1.streakDays} ngày streak
                   </span>
                 )}
@@ -1206,7 +1206,7 @@ export const LeaderboardView: React.FC = () => {
             {/* Rank 3 (Bronze - Right) */}
             <div className="flex flex-col items-center text-center">
               <div className="relative mb-3 group">
-                <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-full p-1 bg-gradient-to-br from-amber-700 via-amber-600 to-yellow-800 shadow-md">
+                <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-full p-1 bg-[#FF9600] border-2 border-[#FF9600] border-b-4 border-b-[#E58700] shadow-xs">
                   <div className="h-full w-full rounded-full overflow-hidden bg-amber-50">
                     {top3.avatarUrl ? (
                       <img
@@ -1221,7 +1221,7 @@ export const LeaderboardView: React.FC = () => {
                     )}
                   </div>
                 </div>
-                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 flex items-center justify-center h-7 w-7 rounded-full bg-amber-700 text-amber-100 font-black text-xs border-2 border-white dark:border-slate-800 shadow-xs">
+                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 flex items-center justify-center h-7 w-7 rounded-xl bg-[#FF9600] text-white font-black text-xs border-2 border-[#E58700] border-b-3 border-b-[#C26E00]">
                   🥉
                 </div>
               </div>
@@ -1230,10 +1230,10 @@ export const LeaderboardView: React.FC = () => {
                 <div className="font-black text-xs sm:text-sm text-slate-900 dark:text-white truncate flex items-center justify-center gap-1">
                   <span>{top3.name}</span>
                   {top3.isRealFirestoreUser && (
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" title="Tài khoản thật từ Firestore" />
+                    <span className="h-2 w-2 rounded-full bg-[#58CC02]" title="Tài khoản thật từ Firestore" />
                   )}
                 </div>
-                <div className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                <div className="text-[10px] sm:text-xs font-bold text-slate-500 dark:text-slate-400 truncate mt-0.5">
                   {activeCategory === 'exam_score' ? top3.levelLabel : top3.badge || 'Xuất Sắc'}
                 </div>
               </div>
@@ -1245,7 +1245,7 @@ export const LeaderboardView: React.FC = () => {
                     <div className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-200 tabular-nums">
                       {top3.vstepBandScore.toFixed(1)} / 10.0
                     </div>
-                    <div className="text-[10px] text-slate-400 font-medium">
+                    <div className="text-[10px] text-slate-400 font-bold">
                       ({top3.bestRawScore}/{top3.totalQuestions} câu · {top3.attemptsCount} lượt)
                     </div>
                   </div>
@@ -1254,13 +1254,13 @@ export const LeaderboardView: React.FC = () => {
                     <div className="text-xs font-black text-slate-700 dark:text-slate-300 tabular-nums">
                       {top3.knownCount} <span className="text-[10px] text-slate-400">/{top3.totalTarget} từ</span>
                     </div>
-                    <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden mt-1">
+                    <div className="w-full h-2.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden mt-1 border border-slate-300">
                       <div
-                        className="h-full bg-amber-700 rounded-full"
+                        className="h-full bg-[#FF9600] rounded-full"
                         style={{ width: `${top3.percentage}%` }}
                       />
                     </div>
-                    <div className="text-[10px] text-slate-500 font-bold mt-0.5">
+                    <div className="text-[10px] text-slate-500 font-black mt-0.5">
                       {top3.percentage}% thuộc
                     </div>
                   </div>
@@ -1268,16 +1268,16 @@ export const LeaderboardView: React.FC = () => {
               </div>
 
               {/* Pedestal Box */}
-              <div className="w-full mt-4 rounded-t-2xl bg-gradient-to-t from-amber-100 via-stone-100 to-white dark:from-stone-900 dark:via-stone-800 dark:to-stone-700/50 border-t-4 border-amber-600 h-24 sm:h-32 flex flex-col items-center justify-center shadow-inner">
-                <span className="text-2xl sm:text-4xl font-black text-amber-700 dark:text-amber-500">
+              <div className="w-full mt-4 rounded-t-3xl bg-gradient-to-t from-orange-100 via-amber-50 to-white dark:from-stone-900 dark:via-stone-800 dark:to-stone-700/50 border-2 border-[#FF9600] border-b-4 border-b-[#E58700] h-24 sm:h-32 flex flex-col items-center justify-center">
+                <span className="text-2xl sm:text-4xl font-black text-[#FF9600] dark:text-amber-500">
                   3
                 </span>
-                <span className="text-[11px] font-black uppercase text-amber-800 dark:text-amber-400 tracking-wider">
+                <span className="text-[11px] font-black uppercase text-[#E58700] dark:text-amber-400 tracking-wider">
                   Hạng Ba
                 </span>
                 {top3.streakDays && (
-                  <span className="text-[10px] text-orange-500 font-bold flex items-center gap-0.5 mt-1">
-                    <Flame className="h-3 w-3 fill-orange-500" />
+                  <span className="text-[10px] text-[#FF9600] font-black flex items-center gap-0.5 mt-1">
+                    <Flame className="h-3 w-3 fill-[#FF9600]" />
                     {top3.streakDays}d
                   </span>
                 )}
@@ -1287,15 +1287,15 @@ export const LeaderboardView: React.FC = () => {
         </div>
       )}
 
-      {/* Pinned "My Rank" Bar */}
+      {/* Pinned "My Rank" Bar (Duolingo 3D Green Card) */}
       {currentUserEntry && (
-        <div className="rounded-2xl bg-gradient-to-r from-emerald-500/10 via-lime-50 to-teal-50 dark:from-emerald-950/40 dark:via-slate-800 dark:to-slate-800 border-2 border-emerald-500/40 dark:border-emerald-500/30 p-4 sm:p-5 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3 sm:gap-4">
-            <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-[#58CC02] to-emerald-600 text-white font-black text-base flex items-center justify-center shadow-sm shrink-0">
+        <div className="rounded-3xl bg-gradient-to-r from-[#D7FFB8]/60 via-lime-50/70 to-white dark:from-emerald-950/40 dark:via-slate-800 dark:to-slate-800 border-2 border-[#58CC02] dark:border-emerald-600 border-b-4 border-b-[#46A302] dark:border-b-emerald-800 p-4 sm:p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5 sm:gap-4">
+            <div className="h-13 w-13 rounded-2xl bg-[#58CC02] border-2 border-[#58CC02] border-b-4 border-b-[#46A302] text-white font-black text-base flex items-center justify-center shrink-0">
               {currentUserEntry.rank ? `#${currentUserEntry.rank}` : '—'}
             </div>
 
-            <div className="h-11 w-11 rounded-full overflow-hidden bg-emerald-100 shrink-0 border-2 border-[#58CC02]">
+            <div className="h-12 w-12 rounded-full overflow-hidden bg-[#D7FFB8] shrink-0 border-2 border-[#58CC02] border-b-3 border-b-[#46A302]">
               {currentUserEntry.avatarUrl ? (
                 <img
                   src={currentUserEntry.avatarUrl}
@@ -1303,28 +1303,28 @@ export const LeaderboardView: React.FC = () => {
                   className="h-full w-full object-cover"
                 />
               ) : (
-                <div className="h-full w-full flex items-center justify-center font-black text-[#3C8C02]">
+                <div className="h-full w-full flex items-center justify-center font-black text-[#46A302]">
                   {currentUserEntry.name.charAt(0)}
                 </div>
               )}
             </div>
 
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-black text-sm sm:text-base text-slate-900 dark:text-white">
                   {currentUserEntry.name}
                 </span>
-                <span className="px-2 py-0.5 rounded-full bg-[#58CC02] text-white text-[10px] font-black uppercase tracking-wider shadow-2xs">
+                <span className="px-2.5 py-0.5 rounded-xl bg-[#58CC02] border-2 border-[#58CC02] border-b-3 border-b-[#46A302] text-white text-[10px] font-black uppercase tracking-wider">
                   (Bạn)
                 </span>
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-800">
-                  <CloudCheck className="h-3 w-3 text-emerald-600" />
+                <span className="inline-flex items-center gap-1 text-[10px] font-black text-[#46A302] dark:text-emerald-300 bg-white dark:bg-emerald-950/60 px-2.5 py-0.5 rounded-xl border-2 border-[#58CC02] border-b-3 border-b-[#46A302]">
+                  <CloudCheck className="h-3 w-3 text-[#58CC02]" />
                   <span>Cloud Firestore</span>
                 </span>
               </div>
-              <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                <span className="flex items-center gap-1 text-orange-500 font-extrabold">
-                  <Flame className="h-3.5 w-3.5 fill-orange-500" />
+              <div className="flex items-center gap-3 text-xs font-bold text-slate-600 dark:text-slate-400 mt-1">
+                <span className="flex items-center gap-1 text-[#FF9600] font-black">
+                  <Flame className="h-3.5 w-3.5 fill-[#FF9600]" />
                   {currentUserEntry.streakDays} ngày streak
                 </span>
                 <span>·</span>
@@ -1351,21 +1351,21 @@ export const LeaderboardView: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-4 sm:min-w-[260px]">
+          <div className="flex items-center gap-4 sm:min-w-[280px]">
             <div className="flex-1">
-              <div className="flex items-center justify-between text-xs font-black mb-1">
+              <div className="flex items-center justify-between text-xs font-black mb-1.5">
                 <span className="text-slate-600 dark:text-slate-300">
                   {activeCategory === 'exam_score' ? 'Cấp độ VSTEP' : 'Tiến độ lộ trình'}
                 </span>
-                <span className="text-emerald-600 dark:text-emerald-400 tabular-nums">
+                <span className="text-[#46A302] dark:text-[#58CC02] tabular-nums">
                   {activeCategory === 'exam_score'
                     ? currentUserEntry.levelLabel
                     : `${currentUserEntry.percentage}%`}
                 </span>
               </div>
-              <div className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+              <div className="w-full h-3.5 rounded-full bg-white dark:bg-slate-700 border-2 border-[#58CC02] overflow-hidden p-0.5">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-[#58CC02] to-emerald-500 transition-all duration-500"
+                  className="h-full rounded-full bg-[#58CC02] transition-all duration-500"
                   style={{
                     width:
                       activeCategory === 'exam_score'
@@ -1376,8 +1376,8 @@ export const LeaderboardView: React.FC = () => {
               </div>
             </div>
             <div className="hidden sm:block text-right shrink-0">
-              <span className="text-[11px] text-slate-400 block">Thứ hạng</span>
-              <span className="text-lg font-black text-emerald-600 dark:text-emerald-400">
+              <span className="text-[11px] font-bold text-slate-400 block">Thứ hạng</span>
+              <span className="text-lg font-black text-[#46A302] dark:text-[#58CC02]">
                 Top {Math.max(1, Math.round(((currentUserEntry.rank || 1) / completeLeaderboardPool.length) * 100))}%
               </span>
             </div>
@@ -1385,25 +1385,27 @@ export const LeaderboardView: React.FC = () => {
         </div>
       )}
 
-      {/* Detailed Leaderboard Table */}
-      <div className="rounded-3xl bg-white dark:bg-slate-800/90 border border-slate-200/90 dark:border-slate-700 overflow-hidden shadow-sm">
-        <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Medal className="h-4 w-4 text-amber-500" />
-            <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">
+      {/* Detailed Leaderboard Table (Duolingo 3D Card & Rows) */}
+      <div className="rounded-3xl bg-white dark:bg-slate-800/90 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 overflow-hidden shadow-xs">
+        <div className="p-4 sm:p-5 border-b-2 border-[#E5E5E5] dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#FFF5D6] dark:bg-amber-950/60 border-2 border-[#FFC800] border-b-3 border-b-[#E5B400] text-[#FF9600]">
+              <Medal className="h-4 w-4" />
+            </div>
+            <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-slate-800 dark:text-slate-100">
               Bảng Danh Sách Xếp Hạng ({displayedLearners.length} học viên)
             </h3>
           </div>
 
           <div className="flex items-center gap-2 text-xs">
-            <span className="text-slate-400 font-medium">Chế độ hiển thị:</span>
-            <div className="inline-flex rounded-xl bg-slate-100 dark:bg-slate-900 p-0.5 border border-slate-200 dark:border-slate-700">
+            <span className="text-slate-500 font-black">Chế độ hiển thị:</span>
+            <div className="inline-flex rounded-2xl bg-slate-100 dark:bg-slate-900 p-1 border-2 border-[#E5E5E5] dark:border-slate-700 gap-1">
               <button
                 type="button"
                 onClick={() => setViewScope('all')}
-                className={`px-3 py-1 rounded-lg font-bold transition-colors cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-xl font-black transition-all cursor-pointer active:border-b-0 active:translate-y-0.5 ${
                   viewScope === 'all'
-                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-2xs'
+                    ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-3 border-b-[#46A302]'
                     : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                 }`}
               >
@@ -1412,9 +1414,9 @@ export const LeaderboardView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setViewScope('rest')}
-                className={`px-3 py-1 rounded-lg font-bold transition-colors cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-xl font-black transition-all cursor-pointer active:border-b-0 active:translate-y-0.5 ${
                   viewScope === 'rest'
-                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-2xs'
+                    ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-3 border-b-[#46A302]'
                     : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                 }`}
               >
@@ -1458,7 +1460,7 @@ export const LeaderboardView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setSearchQuery('')}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 text-white text-xs font-bold hover:bg-amber-600 transition-colors cursor-pointer"
+                className="btn-duo-orange inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl text-xs font-black cursor-pointer"
               >
                 <X className="h-3.5 w-3.5" />
                 <span>Xóa bộ lọc tìm kiếm</span>
@@ -1466,7 +1468,7 @@ export const LeaderboardView: React.FC = () => {
             )}
           </div>
         ) : (
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+          <div className="divide-y-2 divide-[#F0F0F0] dark:divide-slate-800">
             {displayedLearners.map((learner) => {
               const rank = learner.rank || 0;
               const isTop1 = rank === 1;
@@ -1479,37 +1481,46 @@ export const LeaderboardView: React.FC = () => {
                   key={learner.id}
                   className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 sm:px-6 transition-all gap-3 ${
                     learner.isCurrentUser
-                      ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-l-4 border-[#58CC02]'
-                      : 'hover:bg-slate-50/80 dark:hover:bg-slate-750/50'
+                      ? 'bg-[#D7FFB8]/35 dark:bg-emerald-950/30 border-l-4 border-[#58CC02]'
+                      : 'hover:bg-slate-50/90 dark:hover:bg-slate-750/50'
                   }`}
                 >
                   {/* Left: Rank + Avatar + Name + Badges */}
                   <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-                    <div className="w-8 shrink-0 text-center font-black">
+                    <div className="w-9 shrink-0 text-center font-black">
                       {isTop1 ? (
-                        <span className="text-xl drop-shadow-xs" title="Hạng 1 Quán Quân">
+                        <span
+                          className="inline-flex items-center justify-center h-8 w-8 rounded-xl bg-[#FFF5D6] border-2 border-[#FFC800] border-b-3 border-b-[#E5B400] text-base"
+                          title="Hạng 1 Quán Quân"
+                        >
                           🥇
                         </span>
                       ) : isTop2 ? (
-                        <span className="text-xl drop-shadow-xs" title="Hạng 2 Á Quân">
+                        <span
+                          className="inline-flex items-center justify-center h-8 w-8 rounded-xl bg-slate-100 border-2 border-slate-300 border-b-3 border-b-slate-400 text-base"
+                          title="Hạng 2 Á Quân"
+                        >
                           🥈
                         </span>
                       ) : isTop3 ? (
-                        <span className="text-xl drop-shadow-xs" title="Hạng 3">
+                        <span
+                          className="inline-flex items-center justify-center h-8 w-8 rounded-xl bg-orange-50 border-2 border-[#FF9600] border-b-3 border-b-[#E58700] text-base"
+                          title="Hạng 3"
+                        >
                           🥉
                         </span>
                       ) : isTop10 ? (
-                        <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-xs font-black">
+                        <span className="inline-flex items-center justify-center h-8 w-8 rounded-xl bg-[#FFF5D6] dark:bg-amber-950/60 border-2 border-[#FFC800] border-b-3 border-b-[#E5B400] text-[#FF9600] dark:text-amber-300 text-xs font-black">
                           #{rank}
                         </span>
                       ) : (
-                        <span className="text-xs font-extrabold text-slate-400 dark:text-slate-500 tabular-nums">
+                        <span className="inline-flex items-center justify-center h-8 w-8 rounded-xl bg-slate-100 dark:bg-slate-800 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] text-xs font-black text-slate-500 dark:text-slate-400 tabular-nums">
                           #{rank}
                         </span>
                       )}
                     </div>
 
-                    <div className="h-10 w-10 sm:h-11 sm:w-11 rounded-full overflow-hidden shrink-0 border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                    <div className="h-11 w-11 rounded-full overflow-hidden shrink-0 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
                       {learner.avatarUrl ? (
                         <img
                           src={learner.avatarUrl}
@@ -1529,30 +1540,35 @@ export const LeaderboardView: React.FC = () => {
                           {learner.name}
                         </span>
                         {learner.isCurrentUser && (
-                          <span className="text-[10px] bg-[#58CC02] text-white font-black px-1.5 py-0.2 rounded-md">
+                          <span className="text-[10px] bg-[#58CC02] border-2 border-[#58CC02] border-b-3 border-b-[#46A302] text-white font-black px-2 py-0.5 rounded-lg">
                             Bạn
                           </span>
                         )}
                         {learner.isRealFirestoreUser && (
-                          <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 px-1.5 py-0.2 rounded-md border border-emerald-300 dark:border-emerald-800">
-                            <CloudCheck className="h-2.5 w-2.5 text-emerald-600" />
+                          <span className="inline-flex items-center gap-0.5 text-[9px] font-black text-[#46A302] dark:text-emerald-300 bg-[#D7FFB8]/60 dark:bg-emerald-950/50 px-2 py-0.5 rounded-lg border-2 border-[#58CC02] border-b-3 border-b-[#46A302]">
+                            <CloudCheck className="h-2.5 w-2.5 text-[#46A302]" />
                             <span>Cloud</span>
                           </span>
                         )}
                         <span
-                          className={`text-[10px] font-bold px-2 py-0.2 rounded-full border ${
-                            learner.badgeColor ||
-                            'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                          className={`text-[10px] font-black px-2.5 py-0.5 rounded-xl border-2 border-b-3 ${
+                            learner.vstepBandScore >= 8.5
+                              ? 'bg-[#FFF5D6] text-[#FF9600] border-[#FFC800] border-b-[#E5B400]'
+                              : learner.vstepBandScore >= 6.0
+                              ? 'bg-[#D7FFB8] text-[#46A302] border-[#58CC02] border-b-[#46A302]'
+                              : learner.vstepBandScore >= 4.0
+                              ? 'bg-[#DDF4FF] text-[#1899D6] border-[#1CB0F6] border-b-[#1899D6]'
+                              : 'bg-slate-100 text-slate-600 border-[#E5E5E5] border-b-[#CECECE] dark:bg-slate-800 dark:text-slate-300'
                           }`}
                         >
                           {activeCategory === 'exam_score' ? learner.levelLabel : learner.badge}
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-2.5 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      <div className="flex items-center gap-2.5 text-[11px] font-bold text-slate-500 dark:text-slate-400 mt-1">
                         {learner.streakDays ? (
-                          <span className="flex items-center gap-1 text-orange-500 font-bold">
-                            <Flame className="h-3 w-3 fill-orange-500" />
+                          <span className="flex items-center gap-1 text-[#FF9600] font-black">
+                            <Flame className="h-3.5 w-3.5 fill-[#FF9600]" />
                             {learner.streakDays} ngày streak
                           </span>
                         ) : null}
@@ -1570,26 +1586,26 @@ export const LeaderboardView: React.FC = () => {
                   <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0 sm:min-w-[260px] pl-11 sm:pl-0">
                     {activeCategory === 'exam_score' ? (
                       <div className="text-right">
-                        <div className="text-xs sm:text-sm font-black text-slate-900 dark:text-white tabular-nums">
+                        <div className="text-sm sm:text-base font-black text-slate-900 dark:text-white tabular-nums">
                           {learner.vstepBandScore > 0
                             ? `${learner.vstepBandScore.toFixed(1)} / 10.0`
                             : 'Chưa có điểm'}
                         </div>
-                        <div className="flex items-center justify-end gap-1.5 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        <div className="flex items-center justify-end gap-1.5 text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-1">
                           {learner.bestRawScore > 0 && (
                             <span className="font-mono">
                               ({learner.bestRawScore}/{learner.totalQuestions} câu đúng)
                             </span>
                           )}
                           <span
-                            className={`font-black uppercase px-1.5 py-0.2 rounded-md text-[9px] ${
+                            className={`font-black uppercase px-2 py-0.5 rounded-lg text-[9px] border-2 border-b-3 ${
                               learner.vstepBandScore >= 8.5
-                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300'
+                                ? 'bg-[#FFF5D6] text-[#FF9600] border-[#FFC800] border-b-[#E5B400] dark:bg-amber-950/80 dark:text-amber-300'
                                 : learner.vstepBandScore >= 6.0
-                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'
+                                ? 'bg-[#D7FFB8] text-[#46A302] border-[#58CC02] border-b-[#46A302] dark:bg-emerald-950/80 dark:text-emerald-300'
                                 : learner.vstepBandScore >= 4.0
-                                ? 'bg-sky-100 text-sky-800 dark:bg-sky-950/80 dark:text-sky-300'
-                                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                                ? 'bg-[#DDF4FF] text-[#1899D6] border-[#1CB0F6] border-b-[#1899D6] dark:bg-sky-950/80 dark:text-sky-300'
+                                : 'bg-slate-100 text-slate-600 border-[#E5E5E5] border-b-[#CECECE] dark:bg-slate-800 dark:text-slate-400'
                             }`}
                           >
                             {learner.levelLabel}
@@ -1600,27 +1616,27 @@ export const LeaderboardView: React.FC = () => {
                       <>
                         <div className="flex-1 sm:w-44">
                           <div className="flex items-center justify-between text-xs mb-1">
-                            <span className="font-bold text-slate-500 dark:text-slate-400 text-[11px]">
+                            <span className="font-black text-slate-500 dark:text-slate-400 text-[11px]">
                               Tiến độ
                             </span>
                             <span className="font-black text-slate-900 dark:text-white tabular-nums">
                               {learner.knownCount}/{learner.totalTarget} từ
                             </span>
                           </div>
-                          <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                          <div className="h-3 w-full rounded-full bg-slate-100 dark:bg-slate-700 border border-[#E5E5E5] dark:border-slate-600 overflow-hidden">
                             <div
                               className={`h-full rounded-full transition-all duration-300 ${
                                 isTop1
-                                  ? 'bg-amber-500'
+                                  ? 'bg-[#FFC800]'
                                   : isTop2
-                                  ? 'bg-slate-400'
+                                  ? 'bg-[#1CB0F6]'
                                   : isTop3
-                                  ? 'bg-amber-700'
+                                  ? 'bg-[#FF9600]'
                                   : learner.percentage >= 70
-                                  ? 'bg-emerald-500'
+                                  ? 'bg-[#58CC02]'
                                   : learner.percentage >= 40
-                                  ? 'bg-sky-500'
-                                  : 'bg-indigo-400'
+                                  ? 'bg-[#1CB0F6]'
+                                  : 'bg-[#CE82FF]'
                               }`}
                               style={{ width: `${learner.percentage}%` }}
                             />
@@ -1643,15 +1659,15 @@ export const LeaderboardView: React.FC = () => {
       </div>
 
       {/* Footer Info Box */}
-      <div className="rounded-2xl bg-slate-50 dark:bg-slate-900/60 p-4 border border-slate-200/80 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 flex flex-col sm:flex-row items-center justify-between gap-3">
+      <div className="rounded-3xl bg-white dark:bg-slate-900/60 p-4 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 text-xs font-bold text-slate-500 dark:text-slate-400 flex flex-col sm:flex-row items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Zap className="h-4 w-4 text-amber-500 shrink-0" />
+          <Zap className="h-4 w-4 text-[#FF9600] shrink-0" />
           <span>
             Bảng xếp hạng tự động đồng bộ thời gian thực mỗi khi bạn hoàn thành bài thi VSTEP hoặc đánh dấu từ vựng trong hệ thống.
           </span>
         </div>
-        <span className="font-bold text-emerald-600 dark:text-emerald-400 shrink-0 flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+        <span className="font-black text-[#46A302] dark:text-[#58CC02] shrink-0 flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-[#58CC02] animate-pulse" />
           Đồng bộ Firestore Trực Tiếp
         </span>
       </div>

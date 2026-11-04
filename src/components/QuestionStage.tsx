@@ -16,6 +16,7 @@ import {
   Columns,
   GripVertical,
   Check,
+  Lock,
 } from 'lucide-react';
 import { Question, StimulusCard, getPartRelativeNumber } from '../types/exam';
 import { examAudioManager } from '../utils/audioManager';
@@ -218,6 +219,11 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
       if (q.section === 'LISTENING' && q.partNumber === 1) return;
       if (q.section === 'READING') return;
 
+      // In practice mode, only unlock script section for questions the student has already answered
+      if (mode === 'practice' && !(answers[q.id] && answers[q.id].trim().length > 0)) {
+        return;
+      }
+
       const relNum = getPartRelativeNumber(q.id, questions);
       if (q.section === 'LISTENING') {
         let label = `Câu ${relNum}`;
@@ -244,7 +250,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
       }
     });
     return items;
-  }, [questions]);
+  }, [questions, answers, mode]);
 
   if (!questions || questions.length === 0) {
     return null;
@@ -494,7 +500,9 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
             const relNum = getPartRelativeNumber(q.id, questions);
             const currentVal = answers[q.id] || '';
             const answered = currentVal.trim().length > 0;
-            const isRevealed = isReviewMode || !!revealedAnswers[q.id];
+            const isLocked = isReviewMode || (mode === 'practice' && answered);
+            const canShowQuestionSolution = isReviewMode || (mode === 'practice' && answered);
+            const isRevealed = isReviewMode || (mode === 'practice' ? answered : !!revealedAnswers[q.id]);
             const correct = isCorrect(q);
             const isFocused = activeQuestionId === q.id;
 
@@ -541,46 +549,41 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 sm:w-5/12">
-                    <input
-                      id={`note-input-${q.id}`}
-                      type="text"
-                      readOnly={isReviewMode}
-                      value={currentVal}
-                      onChange={(e) => !isReviewMode && onAnswerChange(q.id, e.target.value)}
-                      onFocus={() => onSelectQuestion(q.id)}
-                      placeholder="Điền tối đa 3 từ..."
-                      className={`h-11 flex-1 rounded-xl border-2 px-3.5 text-sm font-bold transition-all focus:outline-none ${
-                        isRevealed && canShowSolution
-                          ? correct
-                            ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200'
-                            : 'border-rose-400 bg-rose-50 dark:bg-rose-950/40 text-rose-900 dark:text-rose-200'
-                          : answered
-                          ? 'border-[#58CC02] bg-lime-50/50 dark:bg-lime-950/30 text-slate-900 dark:text-white'
-                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 hover:border-slate-300 focus:border-[#58CC02]'
-                      }`}
-                    />
+                    <div className="relative flex-1">
+                      <input
+                        id={`note-input-${q.id}`}
+                        type="text"
+                        readOnly={isLocked}
+                        value={currentVal}
+                        onChange={(e) => !isLocked && onAnswerChange(q.id, e.target.value)}
+                        onFocus={() => onSelectQuestion(q.id)}
+                        placeholder="Điền tối đa 3 từ..."
+                        className={`h-11 w-full rounded-xl border-2 px-3.5 text-sm font-bold transition-all focus:outline-none ${
+                          isLocked ? 'cursor-not-allowed' : ''
+                        } ${
+                          isRevealed && canShowQuestionSolution
+                            ? correct
+                              ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200'
+                              : 'border-rose-400 bg-rose-50 dark:bg-rose-950/40 text-rose-900 dark:text-rose-200'
+                            : answered
+                            ? 'border-[#58CC02] bg-lime-50/50 dark:bg-lime-950/30 text-slate-900 dark:text-white'
+                            : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 hover:border-slate-300 focus:border-[#58CC02]'
+                        }`}
+                      />
+                      {mode === 'practice' && answered && (
+                        <span className="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 text-[10px] font-black text-slate-500 bg-white/80 dark:bg-slate-800 px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-slate-700">
+                          <Lock className="h-3 w-3" /> Đã chốt
+                        </span>
+                      )}
+                    </div>
                     {renderFlagButton(q.id)}
                   </div>
                 </div>
 
-                {/* Practice / Review Feedback */}
-                {canShowSolution && (
+                {/* Practice / Review Feedback (Revealed only AFTER student answers in Practice mode) */}
+                {canShowQuestionSolution && (
                   <div className="mt-3 pt-2.5 border-t border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs">
                     <div className="flex flex-wrap items-center gap-3">
-                      {!isReviewMode && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setRevealedAnswers((prev) => ({
-                              ...prev,
-                              [q.id]: !prev[q.id],
-                            }))
-                          }
-                          className="font-bold text-[#58CC02] hover:underline cursor-pointer"
-                        >
-                          {isRevealed ? 'Ẩn đáp án & Dịch' : 'Kiểm tra đáp án & Dịch'}
-                        </button>
-                      )}
                       {q.audioScript && (
                         <>
                           <button
@@ -864,7 +867,10 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
 
                     const relNum = getPartRelativeNumber(targetQ.id);
                     const currentVal = answers[targetQ.id] || '';
-                    const isRevealed = isReviewMode || !!revealedAnswers[targetQ.id];
+                    const isTargetAnswered = currentVal.trim().length > 0;
+                    const isTargetLocked = isReviewMode || (mode === 'practice' && isTargetAnswered);
+                    const canShowTargetSolution = isReviewMode || (mode === 'practice' && isTargetAnswered);
+                    const isRevealed = isReviewMode || (mode === 'practice' ? isTargetAnswered : !!revealedAnswers[targetQ.id]);
                     const correct = isCorrect(targetQ);
                     const isFocused = activeQuestionId === targetQ.id;
 
@@ -887,13 +893,15 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
 
                           <div className="relative inline-flex items-center">
                             <select
-                              disabled={isReviewMode}
+                              disabled={isTargetLocked}
                               value={currentVal}
-                              onChange={(e) => onAnswerChange(targetQ.id, e.target.value)}
+                              onChange={(e) => !isTargetLocked && onAnswerChange(targetQ.id, e.target.value)}
                               onFocus={() => onSelectQuestion(targetQ.id)}
                               aria-label={`Câu ${relNum}`}
-                              className={`h-8 w-14 appearance-none rounded-lg border-2 pl-2.5 pr-6 text-center font-mono text-sm font-black bg-white dark:bg-slate-900 cursor-pointer focus:outline-none transition-colors ${
-                                isRevealed && canShowSolution
+                              className={`h-8 w-14 appearance-none rounded-lg border-2 pl-2.5 pr-6 text-center font-mono text-sm font-black bg-white dark:bg-slate-900 transition-colors focus:outline-none ${
+                                isTargetLocked ? 'cursor-not-allowed' : 'cursor-pointer'
+                              } ${
+                                isRevealed && canShowTargetSolution
                                   ? correct
                                     ? 'border-emerald-500 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50'
                                     : 'border-rose-400 text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/50'
@@ -912,23 +920,20 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                             <ChevronDown className="pointer-events-none absolute right-1.5 h-3.5 w-3.5 text-slate-500" />
                           </div>
 
-                          {renderFlagButton(targetQ.id, true)}
-
-                          {canShowSolution && !isReviewMode && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setRevealedAnswers((prev) => ({
-                                  ...prev,
-                                  [targetQ.id]: !prev[targetQ.id],
-                                }));
-                              }}
-                              className="text-[11px] font-black text-[#46a302] dark:text-[#78E014] hover:underline px-1 cursor-pointer"
+                          {mode === 'practice' && isTargetAnswered && (
+                            <span
+                              className={`text-[10px] font-black px-1.5 py-0.5 rounded flex items-center gap-1 ${
+                                correct
+                                  ? 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200'
+                                  : 'bg-rose-100 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200'
+                              }`}
                             >
-                              {isRevealed ? `Đ/A: ${targetQ.correctAnswer}` : 'Kiểm tra & Dịch'}
-                            </button>
+                              <Lock className="h-2.5 w-2.5" />
+                              {correct ? 'Đúng' : `Sai (Đ/A: ${targetQ.correctAnswer})`}
+                            </span>
                           )}
+
+                          {renderFlagButton(targetQ.id, true)}
 
                           {isReviewMode && (
                             <span
@@ -943,7 +948,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                           )}
                         </span>
 
-                        {canShowSolution && isRevealed && (
+                        {canShowTargetSolution && isRevealed && (
                           <div className="mt-2.5 mb-3 space-y-2 text-left block w-full max-w-2xl animate-in fade-in duration-150">
                             {/* Evidence Quote Button: correlates with Left Column Options A-G */}
                             {targetQ.evidenceQuote && (
@@ -1172,7 +1177,10 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                 const relNum = getPartRelativeNumber(q.id);
                 const isOpen = openAccordionIds[q.id] ?? true;
                 const currentAnswer = answers[q.id];
-                const isRevealed = isReviewMode || !!revealedAnswers[q.id];
+                const isQAnswered = Boolean(currentAnswer && currentAnswer.trim().length > 0);
+                const isQLocked = isReviewMode || (mode === 'practice' && isQAnswered);
+                const canShowQSolution = isReviewMode || (mode === 'practice' && isQAnswered);
+                const isRevealed = isReviewMode || (mode === 'practice' ? isQAnswered : !!revealedAnswers[q.id]);
                 const correct = isCorrect(q);
 
                 return (
@@ -1197,6 +1205,11 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                         </span>
                       </div>
                       <div className="flex items-center gap-2 shrink-0 ml-2">
+                        {mode === 'practice' && isQAnswered && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-black text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700">
+                            <Lock className="h-3 w-3" /> Đã chốt: Text {currentAnswer}
+                          </span>
+                        )}
                         {renderFlagButton(q.id, true)}
                         {isOpen ? (
                           <ChevronUp className="h-4 w-4 text-slate-400" />
@@ -1217,12 +1230,14 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                               <button
                                 key={letter}
                                 type="button"
-                                disabled={isReviewMode}
-                                onClick={() => !isReviewMode && onAnswerChange(q.id, letter)}
-                                className={`flex items-center justify-center gap-2 rounded-xl border-2 py-2.5 px-3 text-xs font-black transition-all cursor-pointer ${
-                                  isRevealed && canShowSolution && isCorrectLetter
+                                disabled={isQLocked}
+                                onClick={() => !isQLocked && onAnswerChange(q.id, letter)}
+                                className={`flex items-center justify-center gap-2 rounded-xl border-2 py-2.5 px-3 text-xs font-black transition-all ${
+                                  isQLocked ? 'cursor-not-allowed' : 'cursor-pointer'
+                                } ${
+                                  isRevealed && canShowQSolution && isCorrectLetter
                                     ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-950 dark:text-emerald-200 shadow-xs'
-                                    : isRevealed && canShowSolution && selected && !isCorrectLetter
+                                    : isRevealed && canShowQSolution && selected && !isCorrectLetter
                                     ? 'border-rose-400 bg-rose-50 dark:bg-rose-950/50 text-rose-950 dark:text-rose-200'
                                     : selected
                                     ? 'border-[#58CC02] bg-lime-50 dark:bg-lime-950/40 text-lime-950 dark:text-lime-200 shadow-sm border-b-3 border-[#46a302]'
@@ -1244,24 +1259,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                           })}
                         </div>
 
-                        {canShowSolution && (
-                          <div className="mt-3 pt-2.5 border-t border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2">
-                            {!isReviewMode && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setRevealedAnswers((prev) => ({
-                                    ...prev,
-                                    [q.id]: !prev[q.id],
-                                  }))
-                                }
-                                className="text-xs font-bold text-[#58CC02] hover:underline cursor-pointer"
-                              >
-                                {isRevealed ? 'Ẩn đáp án & Dịch' : 'Kiểm tra đáp án & Dịch'}
-                              </button>
-                            )}
-
-                            {isRevealed && (
+                        {canShowQSolution && isRevealed && (
                               <div className="w-full mt-2 rounded-xl bg-lime-50 dark:bg-lime-950/40 p-3.5 border border-lime-200 dark:border-lime-800 text-xs text-slate-700 dark:text-slate-300 space-y-2">
                                 <span
                                   className={`font-black block text-sm ${
@@ -1286,10 +1284,8 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                           </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
+                    );
+                  })}
             </div>
           </div>
         </div>
@@ -1425,7 +1421,9 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                 const relNum = getPartRelativeNumber(q.id);
                 const currentVal = answers[q.id] || '';
                 const answered = currentVal.trim().length > 0;
-                const isRevealed = isReviewMode || !!revealedAnswers[q.id];
+                const isLocked = isReviewMode || (mode === 'practice' && answered);
+                const canShowQuestionSolution = isReviewMode || (mode === 'practice' && answered);
+                const isRevealed = isReviewMode || (mode === 'practice' ? answered : !!revealedAnswers[q.id]);
                 const correct = isCorrect(q);
                 const isFocused = activeQuestionId === q.id;
 
@@ -1449,19 +1447,28 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                         </span>
                         {q.prompt}
                       </label>
-                      {renderFlagButton(q.id, true)}
+                      <div className="flex items-center gap-2">
+                        {mode === 'practice' && answered && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-black text-slate-500 bg-white/80 dark:bg-slate-800 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700">
+                            <Lock className="h-3 w-3" /> Đã chốt
+                          </span>
+                        )}
+                        {renderFlagButton(q.id, true)}
+                      </div>
                     </div>
 
                     <input
                       id={`short-ans-${q.id}`}
                       type="text"
-                      readOnly={isReviewMode}
+                      readOnly={isLocked}
                       value={currentVal}
-                      onChange={(e) => !isReviewMode && onAnswerChange(q.id, e.target.value)}
+                      onChange={(e) => !isLocked && onAnswerChange(q.id, e.target.value)}
                       onFocus={() => onSelectQuestion(q.id)}
                       placeholder="Điền tối đa 3 từ..."
                       className={`h-11 w-full rounded-2xl border-2 px-3.5 text-sm font-bold transition-all focus:outline-none ${
-                        isRevealed && canShowSolution
+                        isLocked ? 'cursor-not-allowed' : ''
+                      } ${
+                        isRevealed && canShowQuestionSolution
                           ? correct
                             ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200'
                             : 'border-rose-400 bg-rose-50 dark:bg-rose-950/40 text-rose-900 dark:text-rose-200'
@@ -1471,24 +1478,8 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                       }`}
                     />
 
-                    {canShowSolution && (
+                    {canShowQuestionSolution && (
                       <div className="mt-2.5 flex flex-col gap-1.5 text-xs">
-                        {!isReviewMode && (
-                          <div className="flex items-center justify-between">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setRevealedAnswers((prev) => ({
-                                  ...prev,
-                                  [q.id]: !prev[q.id],
-                                }))
-                              }
-                              className="font-bold text-[#58CC02] hover:underline cursor-pointer"
-                            >
-                              {isRevealed ? 'Ẩn đáp án & Dịch' : 'Kiểm tra đáp án & Dịch'}
-                            </button>
-                          </div>
-                        )}
 
                         {isRevealed && (
                           <div className="rounded-2xl bg-lime-50/80 dark:bg-lime-950/40 p-4 border-2 border-lime-300 dark:border-lime-800 text-xs text-slate-700 dark:text-slate-300 space-y-2.5">
@@ -1689,7 +1680,10 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
               {questions.map((q) => {
                 const relNum = getPartRelativeNumber(q.id, questions);
                 const currentAnswer = answers[q.id] || '';
-                const isRevealed = isReviewMode || !!revealedAnswers[q.id];
+                const isQAnswered = Boolean(currentAnswer && currentAnswer.trim().length > 0);
+                const isQLocked = isReviewMode || (mode === 'practice' && isQAnswered);
+                const canShowQSolution = isReviewMode || (mode === 'practice' && isQAnswered);
+                const isRevealed = isReviewMode || (mode === 'practice' ? isQAnswered : !!revealedAnswers[q.id]);
                 const isTranslated = !!translatedQuestions[q.id];
                 const correct = isCorrect(q);
                 const isFocused = activeQuestionId === q.id;
@@ -1714,7 +1708,14 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                           {renderRichFormattedTokens(q.prompt || `Question ${relNum}`, `prompt-${q.id}`)}
                         </div>
                       </div>
-                      {renderFlagButton(q.id, true)}
+                      <div className="flex items-center gap-2">
+                        {mode === 'practice' && isQAnswered && (
+                          <span className="inline-flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-black text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                            <Lock className="h-3 w-3 text-emerald-600" /> Đã chốt {currentAnswer}
+                          </span>
+                        )}
+                        {renderFlagButton(q.id, true)}
+                      </div>
                     </div>
 
                     {/* 4 Options A, B, C, D */}
@@ -1726,27 +1727,29 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                           <button
                             key={opt.id}
                             type="button"
-                            disabled={isReviewMode}
+                            disabled={isQLocked}
                             onClick={(e) => {
                               e.stopPropagation();
                               onSelectQuestion(q.id);
-                              if (!isReviewMode) onAnswerChange(q.id, opt.id);
+                              if (!isQLocked) onAnswerChange(q.id, opt.id);
                             }}
-                            className={`flex w-full items-center gap-3.5 rounded-2xl border-2 p-3 text-left text-xs sm:text-sm font-bold transition-all cursor-pointer ${
-                              isRevealed && canShowSolution && isCorrectOpt
-                                ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-950 dark:text-emerald-200 shadow-xs'
-                                : isRevealed && canShowSolution && selected && !isCorrectOpt
-                                ? 'border-rose-400 bg-rose-50 dark:bg-rose-950/50 text-rose-950 dark:text-rose-200'
+                            className={`flex w-full items-center gap-3.5 rounded-2xl border-2 border-b-4 p-3.5 text-left text-xs sm:text-sm font-bold transition-all active:border-b-2 active:translate-y-0.5 ${
+                              isQLocked ? 'cursor-not-allowed' : 'cursor-pointer'
+                            } ${
+                              isRevealed && canShowQSolution && isCorrectOpt
+                                ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/65 dark:bg-emerald-950/50 text-[#2B6600] dark:text-emerald-200 shadow-xs'
+                                : isRevealed && canShowQSolution && selected && !isCorrectOpt
+                                ? 'border-[#FF4B4B] border-b-[#EA2B2B] bg-[#FFDFE0]/70 dark:bg-rose-950/50 text-rose-950 dark:text-rose-200'
                                 : selected
-                                ? 'border-[#58CC02] bg-lime-50 dark:bg-lime-950/40 text-lime-950 dark:text-lime-200 shadow-xs border-b-4 border-[#46a302]'
-                                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-lime-300'
+                                ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/55 dark:bg-lime-950/40 text-lime-950 dark:text-lime-200 shadow-xs'
+                                : 'border-slate-200 dark:border-slate-700 border-b-slate-300 dark:border-b-slate-950 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-[#58CC02] hover:border-b-[#46A302]'
                             }`}
                           >
                             <div
-                              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-xs font-black transition-colors ${
+                              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border-b-2 text-xs font-black transition-colors ${
                                 selected
-                                  ? 'bg-[#58CC02] text-white'
-                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                                  ? 'bg-[#58CC02] border-[#46A302] text-white'
+                                  : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                               }`}
                             >
                               {opt.id}
@@ -1758,7 +1761,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                     </div>
 
                     {/* Vietnamese Translation Accordion for Question & Options */}
-                    {canShowSolution && isTranslated && !isRevealed && q.vietnameseTranslation && (
+                    {canShowQSolution && isTranslated && !isRevealed && q.vietnameseTranslation && (
                       <div className="mt-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 p-3.5 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-900 dark:text-emerald-200 flex items-start gap-2">
                         <Languages className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
                         <div>
@@ -1772,8 +1775,8 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                       </div>
                     )}
 
-                    {/* Practice / Review Controls */}
-                    {canShowSolution && (
+                    {/* Practice / Review Controls (Unlocked after answering) */}
+                    {canShowQSolution && (
                       <div className="mt-4 pt-3 border-t border-slate-200/80 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs">
                         <div className="flex flex-wrap items-center gap-3">
                           {q.evidenceQuote && (
@@ -1807,29 +1810,10 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                             </button>
                           )}
                         </div>
-
-                        {!isReviewMode && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (q.evidenceQuote && !revealedAnswers[q.id]) {
-                                handleHighlightPassageEvidence(q.evidenceQuote);
-                              }
-                              setRevealedAnswers((prev) => ({
-                                ...prev,
-                                [q.id]: !prev[q.id],
-                              }));
-                            }}
-                            className="font-black text-[#58CC02] hover:underline ml-auto cursor-pointer"
-                          >
-                            {isRevealed ? 'Ẩn đáp án & Giải thích' : 'Kiểm tra đáp án & Giải thích'}
-                          </button>
-                        )}
                       </div>
                     )}
 
-                    {canShowSolution && isRevealed && (
+                    {canShowQSolution && isRevealed && (
                       <div className="mt-3 rounded-2xl bg-lime-50 dark:bg-lime-950/40 p-4 border-2 border-lime-300 dark:border-lime-800 text-xs text-slate-800 dark:text-slate-200 space-y-2.5">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2">
@@ -1943,7 +1927,10 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
         const relNum = getPartRelativeNumber(q.id);
         const isOpen = openAccordionIds[q.id] ?? false;
         const currentAnswer = answers[q.id];
-        const isRevealed = isReviewMode || !!revealedAnswers[q.id];
+        const isQAnswered = Boolean(currentAnswer && currentAnswer.trim().length > 0);
+        const isQLocked = isReviewMode || (mode === 'practice' && isQAnswered);
+        const canShowQSolution = isReviewMode || (mode === 'practice' && isQAnswered);
+        const isRevealed = isReviewMode || (mode === 'practice' ? isQAnswered : !!revealedAnswers[q.id]);
         const isTranslated = !!translatedQuestions[q.id];
         const correct = isCorrect(q);
         const convHeader = getConversationGroupHeader(q.id);
@@ -1985,8 +1972,9 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                       ? q.prompt.replace(/^Question\s+\d+$/i, `Question ${relNum}`)
                       : `Question ${relNum}`}
                   </span>
-                  {currentAnswer && !isOpen && (
-                    <span className="rounded-lg bg-lime-100 dark:bg-lime-900/60 px-2.5 py-0.5 text-xs font-black text-lime-800 dark:text-lime-200">
+                  {currentAnswer && (
+                    <span className="rounded-lg bg-lime-100 dark:bg-lime-900/60 px-2.5 py-0.5 text-xs font-black text-lime-800 dark:text-lime-200 flex items-center gap-1">
+                      {mode === 'practice' && <Lock className="h-3 w-3 text-[#2E7D32] dark:text-[#78E014]" />}
                       Đã chọn: {currentAnswer}
                     </span>
                   )}
@@ -2053,7 +2041,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                             {renderHighlightedContent(q.stimulusCard.content)}
                           </div>
                         )}
-                        {canShowSolution && (isTranslated || isRevealed) && q.stimulusCardTranslation && (
+                        {canShowQSolution && (isTranslated || isRevealed) && q.stimulusCardTranslation && (
                           <div className="rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 p-3 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-950 dark:text-emerald-100">
                             <div className="font-black text-emerald-800 dark:text-emerald-300 mb-1 flex items-center gap-1">
                               <Languages className="h-3.5 w-3.5" />
@@ -2089,12 +2077,14 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                             <button
                               key={opt.id}
                               type="button"
-                              disabled={isReviewMode}
-                              onClick={() => !isReviewMode && onAnswerChange(q.id, opt.id)}
-                              className={`flex w-full items-center gap-3.5 rounded-2xl border-2 p-3.5 text-left text-xs sm:text-sm font-bold transition-all cursor-pointer ${
-                                isRevealed && canShowSolution && isCorrectOpt
+                              disabled={isQLocked}
+                              onClick={() => !isQLocked && onAnswerChange(q.id, opt.id)}
+                              className={`flex w-full items-center gap-3.5 rounded-2xl border-2 p-3.5 text-left text-xs sm:text-sm font-bold transition-all ${
+                                isQLocked ? 'cursor-not-allowed' : 'cursor-pointer'
+                              } ${
+                                isRevealed && canShowQSolution && isCorrectOpt
                                   ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-950 dark:text-emerald-200 shadow-sm'
-                                  : isRevealed && canShowSolution && selected && !isCorrectOpt
+                                  : isRevealed && canShowQSolution && selected && !isCorrectOpt
                                   ? 'border-rose-400 bg-rose-50 dark:bg-rose-950/50 text-rose-950 dark:text-rose-200'
                                   : selected
                                   ? 'border-[#58CC02] bg-lime-50 dark:bg-lime-950/40 text-lime-950 dark:text-lime-200 shadow-sm border-b-4 border-[#46a302]'
@@ -2144,8 +2134,8 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                           )}
                         </div>
                       )}
-                      {/* Listening Part 1: Question Script rendered directly above options A, B, C (Practice/Review mode only) */}
-                      {canShowSolution && isListeningPart1 && q.audioScript && (showPart1Script[q.id] || isRevealed) && (
+                      {/* Listening Part 1: Question Script rendered directly above options A, B, C (Unlocked only AFTER answering in Practice) */}
+                      {canShowQSolution && isListeningPart1 && q.audioScript && (showPart1Script[q.id] || isRevealed) && (
                         <div className="rounded-2xl bg-emerald-50/90 dark:bg-emerald-950/40 p-4 border-2 border-emerald-300 dark:border-emerald-800 text-xs mb-3 space-y-2 animate-in fade-in duration-150">
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-[11px] font-black uppercase tracking-wider text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
@@ -2180,23 +2170,25 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                             <button
                               key={opt.id}
                               type="button"
-                              disabled={isReviewMode}
-                              onClick={() => !isReviewMode && onAnswerChange(q.id, opt.id)}
-                              className={`flex w-full items-center gap-3.5 rounded-2xl border-2 p-3.5 text-left text-xs sm:text-sm font-bold transition-all cursor-pointer ${
-                                isRevealed && canShowSolution && isCorrectOpt
-                                  ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-950 dark:text-emerald-200 shadow-sm'
-                                  : isRevealed && canShowSolution && selected && !isCorrectOpt
-                                  ? 'border-rose-400 bg-rose-50 dark:bg-rose-950/50 text-rose-950 dark:text-rose-200'
+                              disabled={isQLocked}
+                              onClick={() => !isQLocked && onAnswerChange(q.id, opt.id)}
+                              className={`flex w-full items-center gap-3.5 rounded-2xl border-2 border-b-4 p-3.5 text-left text-xs sm:text-sm font-bold transition-all active:border-b-2 active:translate-y-0.5 ${
+                                isQLocked ? 'cursor-not-allowed' : 'cursor-pointer'
+                              } ${
+                                isRevealed && canShowQSolution && isCorrectOpt
+                                  ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/65 dark:bg-emerald-950/50 text-[#2B6600] dark:text-emerald-200 shadow-sm'
+                                  : isRevealed && canShowQSolution && selected && !isCorrectOpt
+                                  ? 'border-[#FF4B4B] border-b-[#EA2B2B] bg-[#FFDFE0]/70 dark:bg-rose-950/50 text-rose-950 dark:text-rose-200'
                                   : selected
-                                  ? 'border-[#58CC02] bg-lime-50 dark:bg-lime-950/40 text-lime-950 dark:text-lime-200 shadow-sm border-b-4 border-[#46a302]'
-                                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-lime-300'
+                                  ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/55 dark:bg-lime-950/40 text-lime-950 dark:text-lime-200 shadow-sm'
+                                  : 'border-slate-200 dark:border-slate-700 border-b-slate-300 dark:border-b-slate-950 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-[#58CC02] hover:border-b-[#46A302]'
                               }`}
                             >
                               <div
-                                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-xs font-black transition-colors ${
+                                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border-b-2 text-xs font-black transition-colors ${
                                   selected
-                                    ? 'bg-[#58CC02] text-white'
-                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                                    ? 'bg-[#58CC02] border-[#46A302] text-white'
+                                    : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                                 }`}
                               >
                                 {opt.id}
@@ -2210,7 +2202,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                   )}
 
                   {/* Vietnamese Translation Accordion for Question & Options (Practice/Review mode only) */}
-                  {canShowSolution && isTranslated && !isRevealed && q.vietnameseTranslation && (
+                  {canShowQSolution && isTranslated && !isRevealed && q.vietnameseTranslation && (
                     <div className="mt-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 p-3.5 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-900 dark:text-emerald-200 flex items-start gap-2">
                       <Languages className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
                       <div>
@@ -2224,8 +2216,8 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                     </div>
                   )}
 
-                  {/* Practice / Review Controls & Audio Narration (Completely hidden in Exam mode) */}
-                  {canShowSolution && (
+                  {/* Practice / Review Controls & Audio Narration (Unlocked only AFTER answering in Practice) */}
+                  {canShowQSolution && (
                     <div className="mt-5 pt-3 border-t border-slate-200/80 dark:border-slate-700 flex flex-wrap items-center justify-between gap-3 text-xs">
                       <div className="flex flex-wrap items-center gap-3">
                         {q.audioScript && (
@@ -2283,26 +2275,11 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                           </button>
                         )}
                       </div>
-
-                      {!isReviewMode && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setRevealedAnswers((prev) => ({
-                              ...prev,
-                              [q.id]: !prev[q.id],
-                            }))
-                          }
-                          className="font-black text-[#58CC02] hover:underline ml-auto cursor-pointer"
-                        >
-                          {isRevealed ? 'Ẩn đáp án & Dịch' : 'Kiểm tra đáp án & Dịch'}
-                        </button>
-                      )}
                     </div>
                   )}
 
                   {/* Answer Check, Evidence Quote & Full Question/Options Translation Box */}
-                  {canShowSolution && isRevealed && (
+                  {canShowQSolution && isRevealed && (
                     <div className="mt-3 rounded-2xl bg-lime-50 dark:bg-lime-950/40 p-4 border-2 border-lime-300 dark:border-lime-800 text-xs text-slate-800 dark:text-slate-200 space-y-2.5">
                       <div className="flex items-center gap-2">
                         {correct ? (

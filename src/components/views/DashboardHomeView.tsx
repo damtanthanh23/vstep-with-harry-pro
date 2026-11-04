@@ -456,7 +456,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
   return (
     <div className="space-y-6 pb-20">
       {/* Greeting + Daily Inspirational Study Quote Card */}
-      <div className="rounded-3xl bg-white dark:bg-slate-900 border-2 border-lime-200/80 dark:border-slate-800 p-5 sm:p-6 shadow-sm relative overflow-hidden">
+      <div className="rounded-3xl bg-white dark:bg-slate-900 border-2 border-lime-200 dark:border-slate-800 border-b-4 border-b-lime-300 dark:border-b-slate-950 p-5 sm:p-6 shadow-sm relative overflow-hidden">
         <div className="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-lime-100/60 dark:bg-emerald-950/30 blur-2xl pointer-events-none" />
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           {/* Left: Time-of-Day Greeting + Nickname (Nickname editor moved to Avatar -> Thông tin cá nhân) */}
@@ -501,7 +501,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
             <button
               type="button"
               onClick={handleRefreshQuote}
-              className="shrink-0 inline-flex items-center justify-center rounded-xl bg-white dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-slate-700 border border-amber-200 dark:border-slate-600 p-2.5 text-amber-700 dark:text-amber-300 shadow-2xs transition-all active:scale-95 cursor-pointer"
+              className="shrink-0 inline-flex items-center justify-center rounded-xl bg-white dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-slate-700 border-2 border-amber-200 dark:border-slate-600 border-b-4 border-b-amber-300 dark:border-b-slate-950 p-2.5 text-amber-700 dark:text-amber-300 shadow-2xs transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer"
               title="Đổi câu châm ngôn học tập khác"
               aria-label="Đổi câu châm ngôn học tập khác"
             >
@@ -518,7 +518,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
       {/* Top Banner Row: Interactive Goal Board (Bảng Mục Tiêu + 12-Zodiac Pixel Mascot) & Streak Widget */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-6">
         {/* Left Hero Card: Bảng Mục Tiêu Điểm Số + Linh Vật 12 Con Giáp Pixel */}
-        <div className="md:col-span-7 rounded-3xl bg-gradient-to-br from-[#58CC02] via-[#46A302] to-[#2E7D32] p-5 sm:p-6 text-white shadow-md relative overflow-hidden flex flex-col justify-between">
+        <div className="md:col-span-7 rounded-3xl bg-gradient-to-br from-[#58CC02] via-[#46A302] to-[#2E7D32] border-2 border-[#46A302] border-b-4 border-b-[#1B5E20] p-5 sm:p-6 text-white shadow-md relative overflow-hidden flex flex-col justify-between">
           <div className="relative z-10 flex flex-col sm:flex-row items-start justify-between gap-4">
             {/* Left Column: Goal Board Header, Overall Target & 4 VSTEP Skill Bars / Sliders */}
             <div className="flex-1 w-full min-w-0">
@@ -682,7 +682,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
               <button
                 type="button"
                 onClick={() => handleStartExamMode(tests[0]?.id || 'test-1')}
-                className="inline-flex items-center gap-2 rounded-2xl bg-white text-[#2E7D32] hover:bg-lime-50 px-4 py-2 text-xs font-black shadow-md border-b-2 border-slate-200 transition-all active:translate-y-0.5 cursor-pointer"
+                className="inline-flex items-center gap-2 rounded-2xl bg-white text-[#2E7D32] hover:bg-lime-50 px-4 py-2 text-xs font-black shadow-md border-2 border-lime-200 border-b-4 border-b-lime-400 transition-all active:border-b-0 active:translate-y-1 cursor-pointer"
               >
                 <Play className="h-3.5 w-3.5 fill-[#2E7D32]" />
                 <span>Thi thử ngay</span>
@@ -691,7 +691,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
               <button
                 type="button"
                 onClick={() => onNavigateTab('listening')}
-                className="inline-flex items-center gap-1.5 rounded-2xl bg-black/20 hover:bg-black/30 text-white px-3.5 py-2 text-xs font-bold transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-2xl bg-[#1CB0F6] hover:bg-[#1899D6] text-white border-2 border-[#1899D6] border-b-4 border-b-[#1480B3] px-3.5 py-2 text-xs font-black transition-all active:border-b-0 active:translate-y-1 cursor-pointer"
               >
                 <Headphones className="h-3.5 w-3.5" />
                 <span>Luyện nghe theo Part</span>
@@ -708,7 +708,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
         </div>
 
         {/* Right Streak Card (Real Calendar-Tracked Streak) */}
-        <div className="md:col-span-5 rounded-3xl bg-gradient-to-br from-orange-500 to-amber-500 p-6 text-white shadow-md flex flex-col justify-between relative overflow-hidden">
+        <div className="md:col-span-5 rounded-3xl bg-gradient-to-br from-[#FF9600] to-[#FFC800] border-2 border-[#E58700] border-b-4 border-b-[#CC7700] p-6 text-white shadow-md flex flex-col justify-between relative overflow-hidden">
           <div className="relative z-10">
             <div className="flex items-center justify-between gap-2 mb-2">
               <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-orange-100">
@@ -805,64 +805,64 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <div
             onClick={() => onNavigateTab('tests')}
-            className="group cursor-pointer rounded-2xl bg-white dark:bg-slate-800/80 p-4 border border-slate-200 dark:border-slate-800 hover:border-[#58CC02] dark:hover:border-[#58CC02] shadow-2xs hover:shadow-md transition-all"
+            className="group cursor-pointer rounded-3xl bg-white dark:bg-slate-800/90 p-4 border-2 border-slate-200 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 hover:border-[#58CC02] hover:border-b-[#46A302] dark:hover:border-[#58CC02] shadow-2xs hover:-translate-y-0.5 active:translate-y-0.5 transition-all"
           >
             <div className="flex items-center justify-between mb-3">
-              <div className="h-10 w-10 rounded-xl bg-lime-100 dark:bg-emerald-950/60 flex items-center justify-center text-[#3C8C02] dark:text-[#58CC02] group-hover:scale-110 transition-transform">
+              <div className="h-11 w-11 rounded-2xl bg-[#D7FFB8] dark:bg-emerald-950/60 border-b-2 border-[#58CC02]/40 flex items-center justify-center text-[#46A302] dark:text-[#58CC02] group-hover:scale-110 transition-transform">
                 <BookOpen className="h-5 w-5" />
               </div>
-              <ArrowRight className="h-4 w-4 text-slate-400 group-hover:translate-x-1 transition-transform text-[#58CC02]" />
+              <ArrowRight className="h-4 w-4 text-slate-400 group-hover:translate-x-1 transition-transform group-hover:text-[#58CC02]" />
             </div>
             <div className="font-black text-sm text-slate-800 dark:text-white">Luyện đề</div>
-            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+            <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
               {tests.length} bộ đề chuẩn 4 kỹ năng L-R-W-S
             </div>
           </div>
 
           <div
             onClick={() => onNavigateTab('listening')}
-            className="group cursor-pointer rounded-2xl bg-white dark:bg-slate-800/80 p-4 border border-slate-200 dark:border-slate-800 hover:border-[#58CC02] dark:hover:border-[#58CC02] shadow-2xs hover:shadow-md transition-all"
+            className="group cursor-pointer rounded-3xl bg-white dark:bg-slate-800/90 p-4 border-2 border-slate-200 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 hover:border-[#1CB0F6] hover:border-b-[#1899D6] dark:hover:border-[#1CB0F6] shadow-2xs hover:-translate-y-0.5 active:translate-y-0.5 transition-all"
           >
             <div className="flex items-center justify-between mb-3">
-              <div className="h-10 w-10 rounded-xl bg-blue-100 dark:bg-blue-950/60 flex items-center justify-center text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform">
+              <div className="h-11 w-11 rounded-2xl bg-[#DDF4FF] dark:bg-sky-950/60 border-b-2 border-[#1CB0F6]/40 flex items-center justify-center text-[#1899D6] dark:text-[#1CB0F6] group-hover:scale-110 transition-transform">
                 <Headphones className="h-5 w-5" />
               </div>
-              <ArrowRight className="h-4 w-4 text-slate-400 group-hover:translate-x-1 transition-transform text-blue-500" />
+              <ArrowRight className="h-4 w-4 text-slate-400 group-hover:translate-x-1 transition-transform group-hover:text-[#1CB0F6]" />
             </div>
             <div className="font-black text-sm text-slate-800 dark:text-white">Luyện nghe</div>
-            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+            <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
               Audio từng Part & Highlight script
             </div>
           </div>
 
           <div
             onClick={() => onNavigateTab('reading')}
-            className="group cursor-pointer rounded-2xl bg-white dark:bg-slate-800/80 p-4 border border-slate-200 dark:border-slate-800 hover:border-[#58CC02] dark:hover:border-[#58CC02] shadow-2xs hover:shadow-md transition-all"
+            className="group cursor-pointer rounded-3xl bg-white dark:bg-slate-800/90 p-4 border-2 border-slate-200 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 hover:border-[#FF9600] hover:border-b-[#E58700] dark:hover:border-[#FF9600] shadow-2xs hover:-translate-y-0.5 active:translate-y-0.5 transition-all"
           >
             <div className="flex items-center justify-between mb-3">
-              <div className="h-10 w-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 flex items-center justify-center text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform">
+              <div className="h-11 w-11 rounded-2xl bg-[#FFF0D6] dark:bg-amber-950/60 border-b-2 border-[#FF9600]/40 flex items-center justify-center text-[#E58700] dark:text-[#FF9600] group-hover:scale-110 transition-transform">
                 <FileText className="h-5 w-5" />
               </div>
-              <ArrowRight className="h-4 w-4 text-slate-400 group-hover:translate-x-1 transition-transform text-amber-500" />
+              <ArrowRight className="h-4 w-4 text-slate-400 group-hover:translate-x-1 transition-transform group-hover:text-[#FF9600]" />
             </div>
             <div className="font-black text-sm text-slate-800 dark:text-white">Luyện đọc</div>
-            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+            <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
               Split screen đối chiếu 4 Passages
             </div>
           </div>
 
           <div
             onClick={() => onNavigateTab('vocab')}
-            className="group cursor-pointer rounded-2xl bg-white dark:bg-slate-800/80 p-4 border border-slate-200 dark:border-slate-800 hover:border-[#58CC02] dark:hover:border-[#58CC02] shadow-2xs hover:shadow-md transition-all"
+            className="group cursor-pointer rounded-3xl bg-white dark:bg-slate-800/90 p-4 border-2 border-slate-200 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 hover:border-[#CE82FF] hover:border-b-[#A560E8] dark:hover:border-[#CE82FF] shadow-2xs hover:-translate-y-0.5 active:translate-y-0.5 transition-all"
           >
             <div className="flex items-center justify-between mb-3">
-              <div className="h-10 w-10 rounded-xl bg-purple-100 dark:bg-purple-950/60 flex items-center justify-center text-purple-600 dark:text-purple-400 group-hover:scale-110 transition-transform">
+              <div className="h-11 w-11 rounded-2xl bg-[#F3E5FF] dark:bg-purple-950/60 border-b-2 border-[#CE82FF]/40 flex items-center justify-center text-[#A560E8] dark:text-[#CE82FF] group-hover:scale-110 transition-transform">
                 <BookmarkCheck className="h-5 w-5" />
               </div>
-              <ArrowRight className="h-4 w-4 text-slate-400 group-hover:translate-x-1 transition-transform text-purple-500" />
+              <ArrowRight className="h-4 w-4 text-slate-400 group-hover:translate-x-1 transition-transform group-hover:text-[#CE82FF]" />
             </div>
             <div className="font-black text-sm text-slate-800 dark:text-white">Từ vựng VSTEP</div>
-            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+            <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
               Quizlet + Anki Spaced Repetition
             </div>
           </div>
@@ -889,7 +889,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
           )}
         </div>
 
-        {/* Search + Sort + Admin Reorder + View Mode Switcher Bar (Matching image_353a9b31.png & image_5713125d.png) */}
+        {/* Search + Sort + Admin Reorder + View Mode Switcher Bar */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           {/* Left: Search Input */}
           <div className="relative flex-1 max-w-xl">
@@ -899,7 +899,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Tìm kiếm bộ đề theo tên..."
-              className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 text-xs sm:text-sm font-medium text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#6D28D9]/30 focus:border-[#6D28D9]"
+              className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 border-b-4 border-b-slate-300 dark:border-b-slate-950 text-xs sm:text-sm font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#58CC02]/30 focus:border-[#58CC02] focus:border-b-[#46A302]"
             />
           </div>
 
@@ -907,11 +907,11 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             {/* Quick Sort Dropdown */}
             <div className="relative inline-flex items-center">
-              <ArrowUpDown className="h-3.5 w-3.5 text-slate-400 absolute left-3 pointer-events-none" />
+              <ArrowUpDown className="h-3.5 w-3.5 text-[#58CC02] absolute left-3 pointer-events-none" />
               <select
                 value={sortMode}
                 onChange={(e) => setSortMode(e.target.value as ExamSortMode)}
-                className="pl-8 pr-7 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 text-xs font-extrabold text-slate-700 dark:text-slate-200 focus:outline-hidden focus:border-[#6D28D9] cursor-pointer"
+                className="pl-8 pr-7 py-2 rounded-2xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 border-b-4 border-b-slate-300 dark:border-b-slate-950 text-xs font-extrabold text-slate-700 dark:text-slate-200 focus:outline-hidden focus:border-[#58CC02] cursor-pointer"
                 title="Chọn cách sắp xếp bộ đề"
               >
                 <option value="custom">Thứ tự chuẩn GV (Cloud)</option>
@@ -930,10 +930,10 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                   setIsReorderMode((prev) => !prev);
                   setSortMode('custom');
                 }}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-extrabold border transition-all cursor-pointer ${
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-black border-2 border-b-4 transition-all active:border-b-0 active:translate-y-1 cursor-pointer ${
                   isReorderMode
-                    ? 'bg-[#6D28D9] text-white border-[#6D28D9] shadow-xs'
-                    : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200/90 dark:border-slate-800 hover:border-[#6D28D9]'
+                    ? 'bg-[#58CC02] text-white border-[#58CC02] border-b-[#46A302] shadow-xs'
+                    : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-800 border-b-slate-300 dark:border-b-slate-950 hover:border-[#58CC02] hover:border-b-[#46A302]'
                 }`}
                 title="Bật chế độ kéo thả hoặc bấm nút đổi vị trí đề và đồng bộ Cloud cho toàn bộ học viên"
               >
@@ -943,13 +943,13 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
             )}
 
             {/* Lưới | Danh sách View Mode Switcher */}
-            <div className="inline-flex items-center p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700">
+            <div className="inline-flex items-center p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 border-2 border-slate-200/80 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950">
               <button
                 type="button"
                 onClick={() => handleSelectViewMode('grid')}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                   viewMode === 'grid'
-                    ? 'bg-white dark:bg-slate-900 text-[#6D28D9] dark:text-purple-300 shadow-2xs border border-purple-200/80 dark:border-purple-800'
+                    ? 'bg-[#58CC02] text-white shadow-2xs border-b-2 border-[#46A302]'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
@@ -961,7 +961,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                 onClick={() => handleSelectViewMode('list')}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                   viewMode === 'list'
-                    ? 'bg-white dark:bg-slate-900 text-[#6D28D9] dark:text-purple-300 shadow-2xs border border-purple-200/80 dark:border-purple-800'
+                    ? 'bg-[#58CC02] text-white shadow-2xs border-b-2 border-[#46A302]'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
@@ -974,14 +974,14 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
 
         {/* Admin Active Reorder Helper Bar */}
         {canManageExams && isReorderMode && (
-          <div className="rounded-2xl bg-purple-50/90 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="text-xs text-purple-950 dark:text-purple-200 font-semibold">
+          <div className="rounded-2xl bg-[#D7FFB8]/60 dark:bg-emerald-950/40 border-2 border-[#58CC02] border-b-4 border-b-[#46A302] p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="text-xs text-[#2B6600] dark:text-lime-200 font-bold">
               <strong className="font-black">Chế độ Sắp xếp đề (Đồng bộ Cloud):</strong> Kéo thả trực tiếp thẻ đề, bấm nút mũi tên <span className="font-black">← / →</span> để đổi vị trí hoặc bấm <span className="font-black">📌 Ghim</span> để cố định đề lên đầu trang cho mọi học viên.
             </div>
             <button
               type="button"
               onClick={handleAutoSortNaturalOrderToCloud}
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 hover:bg-purple-100/60 text-[#6D28D9] dark:text-purple-300 border border-purple-300 dark:border-purple-700 text-xs font-black shadow-2xs transition-all cursor-pointer shrink-0"
+              className="btn-duo-green px-3.5 py-2 rounded-xl text-xs shrink-0"
               title="Tự động xếp theo tên Test 1 -> Test 2 -> Test 3... và lưu lên Cloud"
             >
               <ArrowUpDown className="h-3.5 w-3.5" />
@@ -991,13 +991,13 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
         )}
 
         {/* Dynamic Category Tag Filter Bar */}
-        <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200/70 dark:border-slate-800 rounded-2xl">
+        <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100/90 dark:bg-slate-800/90 border-2 border-slate-200/80 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 rounded-2xl">
           <button
             type="button"
             onClick={() => setFilterCategory('all')}
             className={`px-3.5 py-1.5 text-xs font-black rounded-xl transition-all cursor-pointer ${
               filterCategory === 'all'
-                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs border border-slate-200/80 dark:border-slate-700'
+                ? 'bg-[#58CC02] text-white shadow-2xs border-b-2 border-[#46A302]'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
@@ -1016,15 +1016,15 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                 className={`px-3.5 py-1.5 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
                   filterCategory === cat
                     ? isDraftTab
-                      ? 'bg-amber-500 text-white shadow-2xs'
-                      : 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs border border-slate-200/80 dark:border-slate-700'
+                      ? 'bg-[#FF9600] text-white shadow-2xs border-b-2 border-[#E58700]'
+                      : 'bg-[#58CC02] text-white shadow-2xs border-b-2 border-[#46A302]'
                     : isDraftTab
                     ? 'text-amber-700 dark:text-amber-400 hover:bg-amber-100/60 dark:hover:bg-amber-950/40'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <span>{cat}</span>
-                <span className="text-[11px] opacity-75">({count})</span>
+                <span className="text-[11px] opacity-85">({count})</span>
               </button>
             );
           })}

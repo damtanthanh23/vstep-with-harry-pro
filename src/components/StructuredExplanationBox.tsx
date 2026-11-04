@@ -88,7 +88,7 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
     <div className="space-y-3 pt-1">
       {/* 0. Detailed Vietnamese Explanation (Giải thích chi tiết) */}
       {explanation && explanation.trim().length > 0 && (
-        <div className="rounded-2xl border-2 border-lime-300 dark:border-lime-800 bg-white dark:bg-slate-900 p-3.5 text-xs text-slate-800 dark:text-slate-100 shadow-2xs space-y-1">
+        <div className="rounded-2xl border-2 border-[#58CC02] dark:border-lime-800 border-b-4 border-b-[#46A302] bg-white dark:bg-slate-900 p-3.5 text-xs text-slate-800 dark:text-slate-100 shadow-2xs space-y-1">
           <div className="font-black text-[#2B6601] dark:text-[#78E014] text-[11px] uppercase tracking-wider flex items-center gap-1.5">
             <Sparkles className="h-3.5 w-3.5 text-[#58CC02]" />
             <span>Giải thích chi tiết đáp án:</span>
@@ -105,15 +105,15 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
           <button
             type="button"
             onClick={handleEvidenceClick}
-            className="w-full inline-flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-gradient-to-r from-amber-100 to-amber-200/90 dark:from-amber-950/80 dark:to-amber-900/60 hover:from-amber-200 hover:to-amber-300 dark:hover:from-amber-900 dark:hover:to-amber-800 p-3 sm:px-4 sm:py-2.5 text-xs font-black text-amber-950 dark:text-amber-100 border-2 border-amber-300 dark:border-amber-700 shadow-2xs transition-all cursor-pointer active:scale-99"
+            className="w-full inline-flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-[#FFF5D6] dark:bg-amber-950/70 hover:bg-[#FFECB3] p-3 sm:px-4 sm:py-2.5 text-xs font-black text-amber-950 dark:text-amber-100 border-2 border-[#FFC800] dark:border-amber-700 border-b-4 border-b-[#E5B400] transition-all cursor-pointer active:border-b-0 active:translate-y-1"
           >
             <div className="flex items-start sm:items-center gap-2 text-left min-w-0 flex-1">
-              <Sparkles className="h-4 w-4 shrink-0 text-amber-700 dark:text-amber-300 mt-0.5 sm:mt-0" />
+              <Sparkles className="h-4 w-4 shrink-0 text-[#E58700] dark:text-amber-300 mt-0.5 sm:mt-0" />
               <span className="leading-snug">
                 Câu bằng chứng: <span className="font-semibold italic">"{evidenceQuote}"</span>
               </span>
             </div>
-            <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-amber-900 dark:bg-amber-100 text-white dark:text-amber-950 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider shadow-2xs">
+            <span className="shrink-0 inline-flex items-center gap-1 rounded-xl bg-[#FF9600] border border-[#E58700] border-b-2 border-b-[#B36B00] text-white px-2.5 py-1 text-[10px] font-black uppercase tracking-wider">
               <PanelLeftOpen className="h-3 w-3" />
               <span>Đối chiếu cột trái</span>
             </span>
@@ -123,11 +123,11 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
 
       {/* 2. Vietnamese Translation of Question & All Options A, B, C, D */}
       {effectiveQuestionTranslation ? (
-        <div className="rounded-2xl border-2 border-emerald-200 dark:border-emerald-800/80 bg-emerald-50/90 dark:bg-emerald-950/40 p-3.5 text-xs text-emerald-950 dark:text-emerald-100 shadow-2xs space-y-1.5">
-          <div className="flex items-center justify-between gap-2 font-black text-emerald-800 dark:text-emerald-300 text-[11px] uppercase tracking-wider">
+        <div className="rounded-2xl border-2 border-[#58CC02] dark:border-emerald-800/80 border-b-4 border-b-[#46A302] bg-[#D7FFB8]/40 dark:bg-emerald-950/40 p-3.5 text-xs text-emerald-950 dark:text-emerald-100 shadow-2xs space-y-1.5">
+          <div className="flex items-center justify-between gap-2 font-black text-[#2B6600] dark:text-emerald-300 text-[11px] uppercase tracking-wider">
             <span className="flex items-center gap-1.5">
-              <Languages className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-              <span>Bản dịch Câu hỏi & Các phương án:</span>
+              <Languages className="h-4 w-4 text-[#46A302] dark:text-emerald-400" />
+              <span>Bản dịch Câu hỏi &amp; Các phương án:</span>
             </span>
           </div>
           <p className="leading-relaxed font-semibold whitespace-pre-line pl-1 text-slate-800 dark:text-slate-100">
@@ -141,9 +141,9 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
               type="button"
               onClick={handleTranslateQuestionAndOptions}
               disabled={isTranslatingQuestion}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-white dark:bg-slate-900 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 px-3 py-1.5 text-xs font-black text-emerald-800 dark:text-emerald-300 transition-colors cursor-pointer"
+              className="btn-duo-white inline-flex items-center gap-1.5 rounded-2xl px-3.5 py-2 text-xs font-black text-[#2B6600] dark:text-emerald-300 cursor-pointer"
             >
-              <Languages className="h-3.5 w-3.5 text-emerald-600" />
+              <Languages className="h-3.5 w-3.5 text-[#58CC02]" />
               <span>
                 {isTranslatingQuestion
                   ? 'Đang dịch câu hỏi & đáp án...'
@@ -156,18 +156,18 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
 
       {/* 3. Speaker-Grouped Audio Script & Whole-Turn Translation (if Listening and not hidden) */}
       {!hideInlineScript && speakerTurns.length > 0 && (
-        <div className="rounded-2xl bg-white dark:bg-slate-900 p-3.5 text-xs border border-slate-200 dark:border-slate-800 shadow-2xs space-y-2.5">
+        <div className="rounded-2xl bg-white dark:bg-slate-900 p-3.5 text-xs border-2 border-[#E5E5E5] dark:border-slate-800 border-b-4 border-b-[#CECECE] dark:border-b-slate-950 shadow-2xs space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-800 font-black text-slate-700 dark:text-slate-200">
             <span className="flex items-center gap-1.5">
               <Volume2 className="h-3.5 w-3.5 text-[#58CC02]" />
-              <span>Lời thoại theo lượt người nói (A, B, C) & Dịch nghĩa:</span>
+              <span>Lời thoại theo lượt người nói (A, B, C) &amp; Dịch nghĩa:</span>
             </span>
             <div className="flex items-center gap-2">
               {onOpenEvidence && (
                 <button
                   type="button"
                   onClick={handleEvidenceClick}
-                  className="inline-flex items-center gap-1 rounded-lg bg-lime-100 dark:bg-lime-950/60 px-2.5 py-1 text-[11px] text-[#2E7D32] dark:text-[#78E014] hover:bg-lime-200 font-black cursor-pointer"
+                  className="inline-flex items-center gap-1 rounded-xl bg-[#D7FFB8] dark:bg-lime-950/60 border border-[#58CC02] border-b-2 border-b-[#46A302] px-2.5 py-1 text-[11px] text-[#2B6600] dark:text-[#78E014] hover:bg-lime-200 font-black cursor-pointer active:translate-y-0.5"
                 >
                   <PanelLeftOpen className="h-3 w-3" />
                   <span>Mở ở cột trái</span>
@@ -176,7 +176,7 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
               <button
                 type="button"
                 onClick={() => audioScript && examAudioManager.speakText(audioScript)}
-                className="text-[11px] text-[#58CC02] hover:underline font-extrabold cursor-pointer"
+                className="text-[11px] text-[#46A302] hover:underline font-extrabold cursor-pointer"
               >
                 Nghe cả đoạn
               </button>
@@ -187,7 +187,7 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
             {speakerTurns.map((turn) => (
               <div
                 key={turn.id}
-                className="rounded-xl bg-slate-50 dark:bg-slate-800/60 p-2.5 border border-slate-200/70 dark:border-slate-700/70 space-y-1"
+                className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 p-2.5 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] space-y-1"
               >
                 <div className="flex items-start gap-2">
                   <button
@@ -195,12 +195,12 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
                     onClick={() =>
                       examAudioManager.speakText(turn.englishText, undefined, turn.speaker)
                     }
-                    className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg font-mono text-[11px] font-black text-white cursor-pointer ${
+                    className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg font-mono text-[11px] font-black text-white cursor-pointer border-b-2 ${
                       turn.speaker === 'B'
-                        ? 'bg-sky-600'
+                        ? 'bg-[#1CB0F6] border-[#1899D6]'
                         : turn.speaker === 'C'
-                        ? 'bg-purple-600'
-                        : 'bg-[#58CC02]'
+                        ? 'bg-[#CE82FF] border-[#A560E8]'
+                        : 'bg-[#58CC02] border-[#46A302]'
                     }`}
                     title={`Nghe giọng đọc người nói ${turn.speaker}`}
                   >
@@ -211,8 +211,8 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
                       {turn.englishText}
                     </p>
                     {turn.vietnameseText && (
-                      <p className="mt-1 text-[11px] font-medium text-emerald-800 dark:text-emerald-300 flex items-start gap-1">
-                        <Check className="h-3 w-3 text-emerald-600 shrink-0 mt-0.5" />
+                      <p className="mt-1 text-[11px] font-semibold text-[#2B6600] dark:text-emerald-300 flex items-start gap-1">
+                        <Check className="h-3 w-3 text-[#58CC02] shrink-0 mt-0.5" />
                         <span>
                           <strong>{turn.speaker}:</strong> {turn.vietnameseText}
                         </span>

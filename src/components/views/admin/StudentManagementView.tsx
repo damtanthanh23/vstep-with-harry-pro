@@ -33,21 +33,34 @@ import {
   PlayCircle,
   Target,
   BarChart2,
+  ClipboardList,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
-import { UserProfile, UserRole } from '../../../types/studentManagement';
+import { UserProfile, UserRole, GuestSubmission } from '../../../types/studentManagement';
 import {
   subscribeToStudentDirectory,
+  subscribeToGuestSubmissions,
   isUserOnline,
   formatRelativeActiveTime,
   formatExactLoginTimestamp,
   resolveTestTitle,
   updateStudentRole,
+  forceRefreshAllStudentsFromCloud,
   DEMO_STUDENTS,
   SUPER_ADMIN_EMAILS,
 } from '../../../services/studentManagementService';
 import { StudentDetail360Modal } from './StudentDetail360Modal';
 import { getZodiacFromBirthDate } from '../ZodiacPixelMascot';
+import firebaseConfig from '../../../../firebase-applet-config.json';
+import {
+  REAL_DATABASE_ID,
+  FIREBASE_STORAGE_BUCKET,
+  APP_SITE_ID,
+  STORAGE_AUDIO_FOLDER,
+  AUDIO_KEY_PREFIX,
+} from '../../../firebase';
 
 interface StudentManagementViewProps {
   onOpenTest?: (testId: string) => void;
@@ -58,10 +71,14 @@ type ActivityFilterType = 'all' | 'online' | 'in_progress' | 'submitted' | 'voca
 
 export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ onOpenTest }) => {
   const { currentUser, userProfile, isAdmin, isSuperAdmin, isCoTeacher, canManageExams } = useAuth();
+  const [activeMainTab, setActiveMainTab] = useState<'registered' | 'guest'>('registered');
+  const [guestSubmissions, setGuestSubmissions] = useState<GuestSubmission[]>([]);
   const [realStudents, setRealStudents] = useState<UserProfile[]>([]);
   const [showDemoStudents, setShowDemoStudents] = useState<boolean>(false);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState<boolean>(false);
   const [showDiagnosticModal, setShowDiagnosticModal] = useState<boolean>(false);
+  const [showExportPromptModal, setShowExportPromptModal] = useState<boolean>(false);
+  const [copiedPrompt, setCopiedPrompt] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [roleFilter, setRoleFilter] = useState<RoleFilterType>('all');
@@ -107,7 +124,15 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
       }
     );
 
-    return () => unsubscribe();
+    // Also subscribe in real-time to unauthenticated guest submissions (e.g. Uyên or Nam submitting before login)
+    const unsubGuest = subscribeToGuestSubmissions((list) => {
+      setGuestSubmissions(list);
+    });
+
+    return () => {
+      unsubscribe();
+      unsubGuest();
+    };
   }, [canManageExams, userProfile]);
 
   // Combined student list: real Firestore students, plus optional demo students if toggled
@@ -127,17 +152,22 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
     });
   }, [realStudents, showDemoStudents]);
 
-  // Manual refresh trigger
+  // Manual refresh trigger with deep Firestore subcollection scan
   const handleManualRefresh = async () => {
     setIsLoading(true);
     try {
-      showToast('Đang làm mới dữ liệu học viên từ Cloud Firestore...', 'success');
-      // The snapshot listener handles the sync automatically; toggle loading state for feedback
-      setTimeout(() => {
-        setIsLoading(false);
-        showToast('Đã đồng bộ dữ liệu mới nhất!', 'success');
-      }, 600);
-    } catch {
+      showToast('Đang quét sâu toàn bộ bài nộp & từ vựng từ Cloud Firestore...', 'success');
+      const enriched = await forceRefreshAllStudentsFromCloud();
+      if (userProfile && !enriched.some((u) => u.uid === userProfile.uid)) {
+        enriched.unshift(userProfile);
+      }
+      setRealStudents(enriched);
+      setIsRealtimeConnected(true);
+      showToast(`Đã đồng bộ thành công dữ liệu thật của ${enriched.length} tài khoản!`, 'success');
+    } catch (err) {
+      console.warn('Manual refresh notice:', err);
+      showToast('Đã làm mới danh bạ học viên!', 'success');
+    } finally {
       setIsLoading(false);
     }
   };
@@ -207,6 +237,52 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
     });
   }, [allStudents, roleFilter, activityFilter, searchTerm, currentUser]);
 
+  // Filter guest submissions based on search term
+  const filteredGuestSubmissions = useMemo(() => {
+    if (!searchTerm.trim()) return guestSubmissions;
+    const term = searchTerm.toLowerCase().trim();
+    return guestSubmissions.filter((sub) => {
+      const name = (sub.studentName || '').toLowerCase();
+      const email = (sub.studentEmail || '').toLowerCase();
+      const phone = (sub.studentPhone || '').toLowerCase();
+      const title = (sub.testTitle || '').toLowerCase();
+      return (
+        name.includes(term) ||
+        email.includes(term) ||
+        phone.includes(term) ||
+        title.includes(term)
+      );
+    });
+  }, [guestSubmissions, searchTerm]);
+
+  // Open 360 view for a guest submission (e.g. Uyên or Nam submitting before login)
+  const handleOpenGuestSubmission = (sub: GuestSubmission) => {
+    const synthUid = sub.id || `guest_${sub.submittedAt || Date.now()}`;
+    const timestamp = sub.submittedAt || sub.completedAt || Date.now();
+    const syntheticStudent: UserProfile = {
+      uid: synthUid,
+      displayName: sub.studentName || 'Học viên tự do',
+      email: sub.studentEmail || '',
+      phone: sub.studentPhone || '',
+      role: 'student',
+      createdAt: timestamp,
+      lastActiveAt: timestamp,
+      totalExamAttempts: 1,
+      bestVstepBandScore: sub.attempt?.vstepBandScore,
+      bestRawScore: sub.attempt?.score,
+      lastAttemptAt: timestamp,
+      lastTestTitle: sub.testTitle,
+    };
+    if (sub.attempt) {
+      try {
+        localStorage.setItem(`langcert_attempts_${synthUid}`, JSON.stringify([sub.attempt]));
+      } catch {
+        // Ignore
+      }
+    }
+    setSelectedStudent(syntheticStudent);
+  };
+
   // Summary Metrics
   const stats = useMemo(() => {
     const total = allStudents.length;
@@ -215,8 +291,99 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
     ).length;
     const staff = allStudents.filter((s) => s.role === 'admin' || s.role === 'co_teacher').length;
     const studentsOnly = allStudents.filter((s) => s.role === 'student').length;
-    return { total, withGoals, staff, studentsOnly };
-  }, [allStudents]);
+    const inProgressCount = allStudents.filter((s) =>
+      Boolean(
+        (s.activeDraftSummary && s.activeDraftSummary.testId) ||
+          (Array.isArray(s.inProgressSummary) && s.inProgressSummary.length > 0)
+      )
+    ).length;
+    const totalSubmittedAttempts =
+      allStudents.reduce(
+        (acc, s) =>
+          acc +
+          (s.totalExamAttempts ||
+            s.leaderboardStats?.totalAttempts ||
+            s.recentAttempts?.length ||
+            0),
+        0
+      ) + guestSubmissions.length;
+
+    return { total, withGoals, staff, studentsOnly, inProgressCount, totalSubmittedAttempts };
+  }, [allStudents, guestSubmissions]);
+
+  const realPromptExportText = useMemo(() => {
+    const cleanConfig = {
+      apiKey: firebaseConfig.apiKey,
+      authDomain: firebaseConfig.authDomain,
+      projectId: firebaseConfig.projectId,
+      storageBucket: FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: firebaseConfig.messagingSenderId,
+      appId: firebaseConfig.appId,
+      firestoreDatabaseId: REAL_DATABASE_ID,
+    };
+
+    return `Hãy sửa lại toàn bộ kết nối Firebase, Firestore và Storage của ứng dụng Quản lý Học viên này để kết nối TRỰC TIẾP 100% với dữ liệu thật của hệ thống VSTEP B1-B2-C1.
+
+⚠️ QUY TẮC BẮT BUỘC:
+1. TUYỆT ĐỐI KHÔNG gọi công cụ \`set_up_firebase\` hay \`ProvisionFirebase\` (vì sẽ tạo ra một database mới trống rỗng làm mất kết nối với database thật đang có học viên).
+2. TUYỆT ĐỐI KHÔNG dùng dữ liệu mẫu (Mock Data / Dummy Students). Phải lấy 100% từ Cloud Firestore theo thời gian thực (\`onSnapshot\`).
+3. BẮT BUỘC truyền đúng \`firestoreDatabaseId\` là \`"${REAL_DATABASE_ID}"\` vào hàm \`getFirestore(app, REAL_DATABASE_ID)\`.
+
+---
+
+### BƯỚC 1: CẤU HÌNH \`firebase-applet-config.json\` THẬT
+\`\`\`json
+${JSON.stringify(cleanConfig, null, 2)}
+\`\`\`
+
+### BƯỚC 2: KHỞI TẠO KẾT NỐI ĐÚNG DATABASE THẬT & STORAGE (\`src/firebase.ts\`)
+\`\`\`ts
+import { initializeApp } from 'firebase/app';
+import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getFirestore, enableNetwork } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
+import firebaseConfig from '../firebase-applet-config.json';
+
+export const app = initializeApp(firebaseConfig);
+export const REAL_DATABASE_ID =
+  firebaseConfig.firestoreDatabaseId || '${REAL_DATABASE_ID}';
+
+export const db = getFirestore(app, REAL_DATABASE_ID);
+export const auth = getAuth(app);
+export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+export const STORAGE_BUCKET_NAME = '${FIREBASE_STORAGE_BUCKET}';
+export const storage = getStorage(app, \`gs://\${STORAGE_BUCKET_NAME}\`);
+export const storageAppspot = getStorage(app, 'gs://harrytoeicbackup.appspot.com');
+
+export const APP_SITE_ID = '${APP_SITE_ID}';
+export const STORAGE_AUDIO_FOLDER = '${STORAGE_AUDIO_FOLDER}';
+export const AUDIO_KEY_PREFIX = '${AUDIO_KEY_PREFIX}';
+
+try {
+  enableNetwork(db).catch(() => {});
+} catch {}
+\`\`\`
+
+### BƯỚC 3: ĐỌC ĐÚNG CẤU TRÚC CÁC COLLECTION DỮ LIỆU THẬT TRÊN FIRESTORE (VSTEP 75 CÂU - THANG 10)
+1. \`collection(db, 'users')\`: Hồ sơ học viên (\`uid\`, \`email\`, \`displayName\`, \`nickname\`, \`phone\`, \`birthDate\`, \`address\`, \`role\`, \`lastLoginAt\`, \`lastActiveAt\`, \`targetScores\`, \`leaderboardStats\`, \`vocabStats\`, \`recentAttempts\`, \`inProgressSummary\`).
+2. \`collection(db, 'users', uid, 'attempts')\`: Toàn bộ lịch sử bài thi VSTEP đã nộp (75 câu trắc nghiệm: Listening 35 câu + Reading 40 câu, \`vstepBandScore\` thang 10, \`writingSubmission\` Task 1 & 2, \`speakingSubmission\` Part 1, 2, 3).
+3. \`collection(db, 'users', uid, 'inProgress')\`: Bài thi đang làm dở theo thời gian thực (\`activeQuestionId\`, \`answers\`, \`elapsedSeconds\`, \`timeRemainingSeconds\`, \`writingDraft\`, \`speakingDraft\`).
+4. \`collection(db, 'user_target_scores')\` & \`collection(db, 'user_vocab_stats')\`: Mục tiêu điểm VSTEP thang 10 và thống kê từ vựng Anki SRS 6 cấp độ (\`lv0\` -> \`lv5\`, \`recentSessions\`).
+5. \`collection(db, 'tests')\`, \`collection(db, 'feedbacks')\`, \`collection(db, 'guest_submissions')\`: Kho đề thi gốc 75 câu (để đối chiếu \`correctAnswer\` và \`explanation\`), phản hồi và bài nộp khách.`;
+  }, []);
+
+  const handleCopyExportPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(realPromptExportText);
+      setCopiedPrompt(true);
+      showToast('Đã sao chép toàn bộ Prompt & Config thật vào bộ nhớ tạm!', 'success');
+      setTimeout(() => setCopiedPrompt(false), 3000);
+    } catch {
+      showToast('Không thể sao chép tự động, vui lòng bôi đen và copy.', 'error');
+    }
+  };
 
   const getVstepBandLevel = (score: number) => {
     if (score >= 8.5) return 'Bậc 5 (C1)';
@@ -278,20 +445,20 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
   return (
     <div className="space-y-6 pb-20">
       {/* Top Header Banner with Live Counter */}
-      <div className="rounded-3xl bg-gradient-to-r from-[#58CC02] via-[#4BB302] to-[#3C8C02] p-6 text-white shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="rounded-3xl bg-gradient-to-r from-[#58CC02] via-[#4BB302] to-[#3C8C02] p-6 text-white border-2 border-[#46A302] border-b-4 border-b-[#2B6600] shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 flex-wrap mb-2">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 text-white text-xs font-black uppercase tracking-wider backdrop-blur-xs">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 border border-white/30 text-white text-xs font-black uppercase tracking-wider backdrop-blur-xs">
               <Users className="h-3.5 w-3.5" />
               <span>Quản Lý Học Viên &amp; Phân Quyền 360°</span>
             </div>
 
-            {/* Live Firestore WebSocket status with Online counter */}
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/25 text-white text-xs font-bold backdrop-blur-xs">
+            {/* Live Firestore WebSocket status with Online, InProgress & Submitted counters */}
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/25 border border-white/20 text-white text-xs font-bold backdrop-blur-xs">
               <span className={`h-2.5 w-2.5 rounded-full ${isRealtimeConnected ? 'bg-lime-400 animate-pulse' : 'bg-amber-400'}`} />
               <span className="tabular-nums">
                 {isRealtimeConnected
-                  ? `Live Firestore: ${realStudents.length} học viên thật · ${onlineCount} đang Online`
+                  ? `Live Firestore: ${realStudents.length} học viên thật · ${onlineCount} đang Online · ${stats.inProgressCount} đang làm bài · ${stats.totalSubmittedAttempts} lượt đã nộp`
                   : 'Đang kết nối Firestore...'}
               </span>
             </div>
@@ -305,11 +472,21 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
           </p>
         </div>
 
-        <div className="flex items-center gap-2 self-start md:self-auto shrink-0 flex-wrap">
+        <div className="flex items-center gap-2.5 self-start md:self-auto shrink-0 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setShowExportPromptModal(true)}
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-emerald-950/60 hover:bg-emerald-950/80 text-lime-200 font-black text-xs backdrop-blur-xs transition-all cursor-pointer border-2 border-lime-300/40 border-b-4 border-b-emerald-950 active:border-b-0 active:translate-y-1"
+            title="Xuất Prompt kèm sẵn API Key & Database ID thật của hệ thống VSTEP"
+          >
+            <ClipboardList className="h-4 w-4 text-lime-300" />
+            <span>📋 Xuất Prompt &amp; Config Thật cho AI</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setShowDiagnosticModal(true)}
-            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-white/15 hover:bg-white/25 text-white font-bold text-xs backdrop-blur-xs transition-all cursor-pointer border border-white/20"
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-white/15 hover:bg-white/25 text-white font-black text-xs backdrop-blur-xs transition-all cursor-pointer border-2 border-white/30 border-b-4 border-b-black/25 active:border-b-0 active:translate-y-1"
             title="Xem hướng dẫn kết nối học viên từ trang web Vercel"
           >
             <HelpCircle className="h-4 w-4" />
@@ -320,7 +497,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
             type="button"
             onClick={handleManualRefresh}
             disabled={isLoading}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-white text-[#3C8C02] hover:bg-lime-50 font-black text-xs shadow-sm transition-all cursor-pointer"
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-white text-[#3C8C02] hover:bg-lime-50 font-black text-xs border-2 border-white border-b-4 border-b-[#D7FFB8] transition-all cursor-pointer active:border-b-0 active:translate-y-1"
           >
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             <span>Làm mới</span>
@@ -330,14 +507,14 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
 
       {/* 4 Summary Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <div className="rounded-2xl bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <div className="rounded-3xl bg-white dark:bg-slate-900 p-4 border-2 border-[#E5E5E5] dark:border-slate-800 border-b-4 border-b-[#CECECE] dark:border-b-slate-950">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Tổng tài khoản &amp; Online</span>
             <Users className="h-4 w-4 text-[#58CC02]" />
           </div>
           <div className="text-2xl font-black text-slate-900 dark:text-white mt-1 tabular-nums flex items-center gap-2">
             <span>{stats.total}</span>
-            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300">
+            <span className="text-xs font-black px-2 py-0.5 rounded-full bg-[#D7FFB8] dark:bg-emerald-950/80 text-[#2B6600] dark:text-emerald-300 border border-[#58CC02]">
               {onlineCount} Online
             </span>
           </div>
@@ -346,41 +523,41 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
           </span>
         </div>
 
-        <div className="rounded-2xl bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <div className="rounded-3xl bg-white dark:bg-slate-900 p-4 border-2 border-[#E5E5E5] dark:border-slate-800 border-b-4 border-b-[#CECECE] dark:border-b-slate-950">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Đã đặt mục tiêu VSTEP</span>
-            <Award className="h-4 w-4 text-emerald-500" />
+            <Award className="h-4 w-4 text-[#1CB0F6]" />
           </div>
           <div className="text-2xl font-black text-slate-900 dark:text-white mt-1 tabular-nums">
             {stats.withGoals}
           </div>
-          <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5 block">
+          <span className="text-[11px] font-bold text-[#1899D6] dark:text-sky-400 mt-0.5 block">
             Thang điểm 10 (L-R-W-S)
           </span>
         </div>
 
-        <div className="rounded-2xl bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <div className="rounded-3xl bg-white dark:bg-slate-900 p-4 border-2 border-[#E5E5E5] dark:border-slate-800 border-b-4 border-b-[#CECECE] dark:border-b-slate-950">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Đội ngũ giảng dạy</span>
-            <GraduationCap className="h-4 w-4 text-purple-500" />
+            <GraduationCap className="h-4 w-4 text-[#CE82FF]" />
           </div>
           <div className="text-2xl font-black text-slate-900 dark:text-white mt-1 tabular-nums">
             {stats.staff}
           </div>
-          <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 mt-0.5 block">
+          <span className="text-[11px] font-bold text-[#A560E8] dark:text-purple-400 mt-0.5 block">
             Giáo viên &amp; Trợ giảng
           </span>
         </div>
 
-        <div className="rounded-2xl bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <div className="rounded-3xl bg-white dark:bg-slate-900 p-4 border-2 border-[#E5E5E5] dark:border-slate-800 border-b-4 border-b-[#CECECE] dark:border-b-slate-950">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Tiêu chuẩn quy chiếu</span>
-            <Sparkles className="h-4 w-4 text-amber-500" />
+            <Sparkles className="h-4 w-4 text-[#FF9600]" />
           </div>
           <div className="text-sm font-black text-slate-900 dark:text-white mt-2">
             B1 ≥ 4.0 · B2 ≥ 6.0
           </div>
-          <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5 block">
+          <span className="text-[11px] font-bold text-[#E58700] dark:text-amber-400 mt-0.5 block">
             C1 ≥ 8.5 (Bộ GD&amp;ĐT)
           </span>
         </div>
@@ -389,23 +566,57 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
       {/* Notification Toast */}
       {toastMessage && (
         <div
-          className={`rounded-2xl border p-3.5 text-xs font-bold flex items-center gap-2 animate-in fade-in ${
+          className={`rounded-2xl border-2 border-b-4 p-3.5 text-xs font-black flex items-center gap-2 animate-in fade-in ${
             toastMessage.type === 'success'
-              ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
-              : 'bg-rose-50 dark:bg-rose-950/60 border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+              ? 'bg-[#D7FFB8] dark:bg-emerald-950/60 border-[#58CC02] border-b-[#46A302] text-[#2B6600] dark:text-emerald-300'
+              : 'bg-[#FFDFE0] dark:bg-rose-950/60 border-[#FF4B4B] border-b-[#EA2B2B] text-[#EA2B2B] dark:text-rose-300'
           }`}
         >
           {toastMessage.type === 'success' ? (
-            <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+            <CheckCircle2 className="h-4 w-4 text-[#46A302] shrink-0" />
           ) : (
-            <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+            <AlertCircle className="h-4 w-4 text-[#EA2B2B] shrink-0" />
           )}
           <span>{toastMessage.text}</span>
         </div>
       )}
 
+      {/* Primary Main Tabs */}
+      <div className="flex items-center gap-2.5 border-b-2 border-[#E5E5E5] dark:border-slate-800 pb-3 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setActiveMainTab('registered')}
+          className={`px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center gap-2 active:border-b-0 active:translate-y-1 ${
+            activeMainTab === 'registered'
+              ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-4 border-b-[#46A302]'
+              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border-2 border-[#E5E5E5] dark:border-slate-800 border-b-4 border-b-[#CECECE] dark:border-b-slate-950'
+          }`}
+        >
+          <Users className="h-4 w-4" />
+          <span>1. Học viên có tài khoản ({allStudents.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveMainTab('guest')}
+          className={`px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center gap-2 relative active:border-b-0 active:translate-y-1 ${
+            activeMainTab === 'guest'
+              ? 'bg-[#FF9600] text-white border-2 border-[#FF9600] border-b-4 border-b-[#E58700]'
+              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border-2 border-[#E5E5E5] dark:border-slate-800 border-b-4 border-b-[#CECECE] dark:border-b-slate-950'
+          }`}
+        >
+          <FileText className="h-4 w-4" />
+          <span>2. Bài nộp tự do &amp; Khách ({guestSubmissions.length})</span>
+          {guestSubmissions.length > 0 && (
+            <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded-full text-[10px] font-black bg-[#FF4B4B] text-white">
+              {guestSubmissions.length}
+            </span>
+          )}
+        </button>
+      </div>
+
       {/* Filter and Search Bar */}
-      <div className="rounded-3xl bg-white dark:bg-slate-900 p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+      <div className="rounded-3xl bg-white dark:bg-slate-900 p-4 sm:p-5 border-2 border-[#E5E5E5] dark:border-slate-800 border-b-4 border-b-[#CECECE] dark:border-b-slate-950 space-y-3">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
           {/* Search Input */}
           <div className="relative flex-1">
@@ -415,7 +626,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Tìm theo họ tên, email, biệt danh, hoặc số điện thoại..."
-              className="w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 pl-10 pr-4 py-2.5 text-xs sm:text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-900 focus:outline-none transition-colors"
+              className="w-full rounded-2xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 bg-slate-50 dark:bg-slate-800 pl-10 pr-4 py-2.5 text-xs sm:text-sm font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-900 focus:outline-none transition-colors"
             />
             {searchTerm && (
               <button
@@ -439,10 +650,10 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                 key={r}
                 type="button"
                 onClick={() => setRoleFilter(r)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap active:border-b-0 active:translate-y-0.5 ${
                   roleFilter === r
-                    ? 'bg-[#58CC02] text-white shadow-xs'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-3 border-b-[#46A302]'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-900 hover:bg-slate-200 dark:hover:bg-slate-700'
                 }`}
               >
                 {r === 'all'
@@ -457,9 +668,9 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
           </div>
         </div>
 
-        {/* Activity Filter Chips */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-1 border-t border-slate-100 dark:border-slate-800 text-xs">
-          <span className="text-slate-400 font-bold flex items-center gap-1 shrink-0">
+        {/* Activity Filter Chips (Duolingo 3D Tactile Pills) */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1.5 pt-2 border-t-2 border-[#F0F0F0] dark:border-slate-800 text-xs">
+          <span className="text-slate-400 font-black flex items-center gap-1 shrink-0">
             <Activity className="h-3.5 w-3.5" />
             <span>Hoạt động:</span>
           </span>
@@ -467,10 +678,10 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
           <button
             type="button"
             onClick={() => setActivityFilter('all')}
-            className={`px-3 py-1 rounded-xl font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`px-3.5 py-1.5 rounded-xl font-black border-2 border-b-4 transition-all cursor-pointer whitespace-nowrap active:border-b-0 active:translate-y-1 ${
               activityFilter === 'all'
-                ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                ? 'bg-[#58CC02] border-[#58CC02] border-b-[#46A302] text-white'
+                : 'bg-white dark:bg-slate-800 border-[#E5E5E5] dark:border-slate-700 border-b-[#CECECE] text-slate-600 dark:text-slate-300 hover:bg-slate-50'
             }`}
           >
             Tất cả hoạt động
@@ -479,23 +690,23 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
           <button
             type="button"
             onClick={() => setActivityFilter('online')}
-            className={`px-3 py-1 rounded-xl font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+            className={`px-3.5 py-1.5 rounded-xl font-black border-2 border-b-4 transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap active:border-b-0 active:translate-y-1 ${
               activityFilter === 'online'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100'
+                ? 'bg-[#58CC02] border-[#58CC02] border-b-[#46A302] text-white'
+                : 'bg-[#D7FFB8]/60 dark:bg-emerald-950/60 border-[#58CC02] border-b-[#46A302] text-[#46A302] dark:text-emerald-300 hover:bg-[#D7FFB8]'
             }`}
           >
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="h-2 w-2 rounded-full bg-[#FFC800] animate-pulse" />
             <span>Đang Online ({onlineCount})</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActivityFilter('in_progress')}
-            className={`px-3 py-1 rounded-xl font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+            className={`px-3.5 py-1.5 rounded-xl font-black border-2 border-b-4 transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap active:border-b-0 active:translate-y-1 ${
               activityFilter === 'in_progress'
-                ? 'bg-amber-600 text-white'
-                : 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 hover:bg-amber-100'
+                ? 'bg-[#FF9600] border-[#FF9600] border-b-[#E58700] text-white'
+                : 'bg-[#FFF5D6] dark:bg-amber-950/60 border-[#FFC800] border-b-[#E5B400] text-[#FF9600] dark:text-amber-300 hover:bg-[#FFF5D6]/80'
             }`}
           >
             <Clock className="h-3 w-3" />
@@ -505,10 +716,10 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
           <button
             type="button"
             onClick={() => setActivityFilter('submitted')}
-            className={`px-3 py-1 rounded-xl font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+            className={`px-3.5 py-1.5 rounded-xl font-black border-2 border-b-4 transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap active:border-b-0 active:translate-y-1 ${
               activityFilter === 'submitted'
-                ? 'bg-sky-600 text-white'
-                : 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 hover:bg-sky-100'
+                ? 'bg-[#1CB0F6] border-[#1CB0F6] border-b-[#1899D6] text-white'
+                : 'bg-[#DDF4FF] dark:bg-sky-950/60 border-[#1CB0F6] border-b-[#1899D6] text-[#1899D6] dark:text-sky-300 hover:bg-[#DDF4FF]/80'
             }`}
           >
             <FileText className="h-3 w-3" />
@@ -518,10 +729,10 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
           <button
             type="button"
             onClick={() => setActivityFilter('vocab')}
-            className={`px-3 py-1 rounded-xl font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+            className={`px-3.5 py-1.5 rounded-xl font-black border-2 border-b-4 transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap active:border-b-0 active:translate-y-1 ${
               activityFilter === 'vocab'
-                ? 'bg-purple-600 text-white'
-                : 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 hover:bg-purple-100'
+                ? 'bg-[#CE82FF] border-[#CE82FF] border-b-[#A560E8] text-white'
+                : 'bg-[#F3E5FF] dark:bg-purple-950/60 border-[#CE82FF] border-b-[#A560E8] text-[#A560E8] dark:text-purple-300 hover:bg-[#F3E5FF]/80'
             }`}
           >
             <Layers className="h-3 w-3" />
@@ -551,8 +762,167 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
         </div>
       </div>
 
-      {/* Student List Grid */}
-      {isLoading ? (
+      {activeMainTab === 'guest' ? (
+        /* Guest Submissions Section */
+        <div>
+          <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/40 p-4 border border-amber-200 dark:border-amber-800 mb-5 flex items-start gap-3">
+            <Sparkles className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
+              <strong className="block text-sm font-black mb-1">
+                Khu vực lưu trữ bài nộp của Học viên tự do &amp; Khách (Không bị mất dữ liệu)
+              </strong>
+              <span>
+                Khi học viên (như <strong>Uyên</strong> hoặc <strong>Hoàng Nam</strong>) làm bài thi mà chưa đăng nhập Google, hoặc làm bài trên trình duyệt ẩn danh, bài nộp của họ được ghi nhận và hiển thị tại đây theo thời gian thực từ Cloud Firestore. Giáo viên có thể bấm <strong>"Chi tiết &amp; Bài làm"</strong> để xem lại đầy đủ 75 câu trắc nghiệm, bài viết Essay và các file ghi âm Speaking.
+              </span>
+            </div>
+          </div>
+
+          {filteredGuestSubmissions.length === 0 ? (
+            <div className="rounded-3xl bg-white dark:bg-slate-900 p-8 sm:p-12 text-center border-2 border-dashed border-slate-200 dark:border-slate-800">
+              <div className="h-16 w-16 rounded-2xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 flex items-center justify-center mx-auto mb-4 shadow-xs">
+                <FileText className="h-8 w-8" />
+              </div>
+              <h4 className="text-lg font-black text-slate-900 dark:text-white mb-2">
+                Chưa ghi nhận bài nộp tự do nào
+              </h4>
+              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-lg mx-auto leading-relaxed mb-4">
+                Mỗi khi học viên nộp bài (kể cả chưa đăng nhập Google), hệ thống sẽ lưu vào Cloud Firestore và tự động hiển thị tại đây theo thời gian thực.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+              {filteredGuestSubmissions.map((sub) => {
+                const band = sub.attempt?.vstepBandScore || 0;
+                const rawScore = sub.attempt?.score || 0;
+                const totalQ = sub.attempt?.totalQuestions || 75;
+                const listeningScore = sub.attempt?.listeningScore;
+                const readingScore = sub.attempt?.readingScore;
+                const hasWriting = Boolean(
+                  sub.attempt?.writingSubmission?.task1Text || sub.attempt?.writingSubmission?.task2Text
+                );
+                const writingWords =
+                  (sub.attempt?.writingSubmission?.task1WordCount || 0) +
+                  (sub.attempt?.writingSubmission?.task2WordCount || 0);
+                const hasSpeaking = Boolean(sub.attempt?.speakingSubmission);
+
+                return (
+                  <div
+                    key={sub.id}
+                    className="rounded-3xl bg-white dark:bg-slate-900 p-5 border-2 border-[#FFC800] dark:border-amber-800/80 border-b-4 border-b-[#E5B400] hover:shadow-md transition-all flex flex-col justify-between"
+                  >
+                    <div>
+                      {/* Card Header */}
+                      <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="h-11 w-11 rounded-2xl bg-gradient-to-tr from-[#FF9600] to-[#FFC800] text-white flex items-center justify-center font-black text-lg shrink-0 border-2 border-[#E58700]">
+                            {(sub.studentName || 'H').trim().charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="text-sm font-black text-slate-900 dark:text-white truncate">
+                              {sub.studentName || 'Học viên tự do'}
+                            </h3>
+                            <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-semibold mt-0.5">
+                              <Clock className="h-3 w-3 shrink-0" />
+                              <span>{formatRelativeActiveTime(sub.submittedAt)}</span>
+                              <span>·</span>
+                              <span>{formatExactLoginTimestamp(sub.submittedAt)}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-[#FFF5D6] text-[#B36B00] dark:bg-amber-950/80 dark:text-amber-300 border border-[#FFC800] shrink-0">
+                          BÀI NỘP KHÁCH
+                        </span>
+                      </div>
+
+                      {/* Contact Info */}
+                      <div className="py-2.5 space-y-1 text-xs border-b border-slate-100 dark:border-slate-800">
+                        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                          <Mail className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                          <span className="truncate">{sub.studentEmail || 'Chưa cung cấp email'}</span>
+                        </div>
+                        {sub.studentPhone && (
+                          <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                            <Phone className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                            <span>{sub.studentPhone}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Test and Score Details */}
+                      <div className="py-3 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <FileText className="h-4 w-4 text-[#58CC02] shrink-0" />
+                          <span className="text-xs font-black text-slate-800 dark:text-slate-200 line-clamp-1">
+                            {sub.testTitle}
+                          </span>
+                        </div>
+
+                        <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 p-3 border border-slate-100 dark:border-slate-800">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-bold text-slate-500">Quy đổi VSTEP:</span>
+                            <span className="text-xs font-black text-[#3C8C02] dark:text-[#58CC02]">
+                              Overall{' '}
+                              {band > 0
+                                ? band.toFixed(1)
+                                : rawScore > 0
+                                ? ((rawScore / totalQ) * 10).toFixed(1)
+                                : '--'}
+                              /10 · {getVstepBandLevel(band || (rawScore / totalQ) * 10)}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-4 gap-1.5 text-center text-xs">
+                            <div className="p-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-700">
+                              <span className="text-[10px] text-slate-400 block font-semibold">Nghe</span>
+                              <span className="font-black text-[#1899D6]">
+                                {listeningScore !== undefined ? `${listeningScore}/35` : '--'}
+                              </span>
+                            </div>
+                            <div className="p-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-700">
+                              <span className="text-[10px] text-slate-400 block font-semibold">Đọc</span>
+                              <span className="font-black text-[#46A302]">
+                                {readingScore !== undefined ? `${readingScore}/40` : '--'}
+                              </span>
+                            </div>
+                            <div className="p-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-700">
+                              <span className="text-[10px] text-slate-400 block font-semibold">Viết</span>
+                              <span className="font-black text-[#A560E8]">
+                                {hasWriting ? `${writingWords} từ` : '--'}
+                              </span>
+                            </div>
+                            <div className="p-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-700">
+                              <span className="text-[10px] text-slate-400 block font-semibold">Nói</span>
+                              <span className="font-black text-[#EA2B2B]">{hasSpeaking ? 'Đã thu' : '--'}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Action Bar */}
+                    <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 mt-2">
+                      <span className="text-[11px] font-bold text-slate-400">
+                        {rawScore}/{totalQ} câu đúng
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenGuestSubmission(sub)}
+                        className="btn-duo-green inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl text-xs font-black cursor-pointer"
+                      >
+                        <BarChart2 className="h-3.5 w-3.5" />
+                        <span>Chi tiết &amp; Bài làm</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : (
+      /* Student List Grid */
+      isLoading ? (
         <div className="py-20 text-center">
           <RefreshCw className="h-8 w-8 text-[#58CC02] animate-spin mx-auto mb-3" />
           <p className="text-xs font-bold text-slate-500">Đang đồng bộ danh sách học viên từ Cloud Firestore...</p>
@@ -576,7 +946,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
             <button
               type="button"
               onClick={() => setShowDiagnosticModal(true)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-[#58CC02] text-white text-xs font-black shadow-xs hover:bg-[#46a302] cursor-pointer"
+              className="btn-duo-green inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black cursor-pointer"
             >
               <HelpCircle className="h-4 w-4" />
               <span>Xem hướng dẫn kết nối Vercel &amp; Firebase</span>
@@ -585,9 +955,9 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
               <button
                 type="button"
                 onClick={() => setShowDemoStudents(true)}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-black hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                className="btn-duo-white inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black cursor-pointer"
               >
-                <Sparkles className="h-4 w-4 text-amber-500" />
+                <Sparkles className="h-4 w-4 text-[#FF9600]" />
                 <span>Bật 3 tài khoản mẫu demo</span>
               </button>
             )}
@@ -614,12 +984,12 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
             return (
               <div
                 key={st.uid}
-                className={`rounded-[28px] bg-white dark:bg-slate-900 border p-5 shadow-xs transition-all flex flex-col justify-between ${
+                className={`rounded-[28px] bg-white dark:bg-slate-900 border-2 border-b-4 p-5 transition-all flex flex-col justify-between ${
                   online
-                    ? 'border-emerald-300 dark:border-emerald-700/80 shadow-[0_8px_24px_rgba(16,185,129,0.08)]'
+                    ? 'border-[#58CC02] border-b-[#46A302] shadow-[0_8px_24px_rgba(88,204,2,0.12)]'
                     : isDemo
-                    ? 'border-amber-200/80 dark:border-amber-900/40 bg-amber-50/10 dark:bg-amber-950/10'
-                    : 'border-indigo-100/90 dark:border-slate-800 hover:border-[#58CC02] dark:hover:border-[#58CC02]'
+                    ? 'border-[#FFC800] border-b-[#E5B400] bg-amber-50/10 dark:bg-amber-950/10'
+                    : 'border-[#E5E5E5] dark:border-slate-800 border-b-[#CECECE] dark:border-b-slate-950 hover:border-[#58CC02] hover:border-b-[#46A302]'
                 }`}
               >
                 <div className="space-y-3">
@@ -631,10 +1001,10 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                           <img
                             src={st.photoURL}
                             alt={st.displayName || 'Avatar'}
-                            className="h-13 w-13 rounded-2xl object-cover shadow-xs border border-slate-200 dark:border-slate-700"
+                            className="h-13 w-13 rounded-2xl object-cover shadow-xs border-2 border-slate-200 dark:border-slate-700"
                           />
                         ) : (
-                          <div className="h-13 w-13 rounded-2xl bg-[#005A8D] text-white font-bold text-xl flex items-center justify-center shadow-xs">
+                          <div className="h-13 w-13 rounded-2xl bg-[#1CB0F6] border-2 border-[#1899D6] text-white font-black text-xl flex items-center justify-center shadow-xs">
                             {(st.displayName || st.email || 'H').charAt(0).toUpperCase()}
                           </div>
                         )}
@@ -645,8 +1015,8 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                             className="absolute -bottom-1 -right-1 flex h-4 w-4"
                             title="Học viên đang Online"
                           >
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                            <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500 border-2 border-white dark:border-slate-900" />
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#58CC02] opacity-75" />
+                            <span className="relative inline-flex rounded-full h-4 w-4 bg-[#58CC02] border-2 border-white dark:border-slate-900" />
                           </span>
                         ) : (
                           <span
@@ -662,7 +1032,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                             {st.displayName || 'Học viên VSTEP'}
                           </h3>
                           {isMe && (
-                            <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400">
+                            <span className="text-[10px] font-black text-[#1899D6] dark:text-sky-400">
                               (Bạn)
                             </span>
                           )}
@@ -674,7 +1044,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                         </div>
 
                         <p
-                          className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5"
+                          className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5 font-semibold"
                           title={st.email || ''}
                         >
                           {st.email || 'Chưa có email'}
@@ -691,8 +1061,8 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                   <div className="rounded-2xl bg-slate-50/90 dark:bg-slate-800/60 p-3 border border-slate-100 dark:border-slate-800 space-y-2">
                     <div>
                       {online ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
-                          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-extrabold bg-[#D7FFB8] text-[#2B6600] dark:bg-emerald-950/80 dark:text-emerald-300">
+                          <span className="h-2 w-2 rounded-full bg-[#58CC02] animate-pulse" />
                           <span>Đang Online</span>
                         </span>
                       ) : (
@@ -704,7 +1074,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                     </div>
 
                     <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
-                      <Clock className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                      <Clock className="h-3.5 w-3.5 text-[#1CB0F6] shrink-0" />
                       <span>Đăng nhập cuối:</span>
                       <strong className="font-black text-slate-800 dark:text-slate-100 tabular-nums">
                         {formatExactLoginTimestamp(lastLoginTime)}
@@ -715,12 +1085,12 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                   {/* 3. Phone & BirthDate Pill Row */}
                   <div className="rounded-2xl bg-slate-50/90 dark:bg-slate-800/60 px-3.5 py-2.5 border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
                     <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-bold truncate">
-                      <Phone className="h-3.5 w-3.5 text-sky-500 shrink-0" />
+                      <Phone className="h-3.5 w-3.5 text-[#1CB0F6] shrink-0" />
                       <span className="truncate">{st.phone || 'Chưa cập nhật'}</span>
                     </div>
 
                     <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-bold shrink-0 tabular-nums">
-                      <Calendar className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                      <Calendar className="h-3.5 w-3.5 text-[#FF9600] shrink-0" />
                       <span>{st.birthDate || 'Chưa cập nhật'}</span>
                     </div>
                   </div>
@@ -730,12 +1100,12 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                     {/* Row 1: Đang làm */}
                     <div className="flex items-center justify-between gap-2">
                       <span className="flex items-center gap-1.5 font-bold text-slate-600 dark:text-slate-300 shrink-0">
-                        <PlayCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                        <PlayCircle className="h-3.5 w-3.5 text-[#FF9600] shrink-0" />
                         <span>Đang làm:</span>
                       </span>
                       {activeDraft && activeDraft.testId ? (
                         <span
-                          className="font-extrabold text-amber-600 dark:text-amber-400 truncate text-right"
+                          className="font-extrabold text-[#E58700] dark:text-amber-400 truncate text-right"
                           title={resolveTestTitle(activeDraft.testId, activeDraft.testTitle)}
                         >
                           {resolveTestTitle(activeDraft.testId, activeDraft.testTitle)} (
@@ -751,11 +1121,11 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                     {/* Row 2: Đã nộp */}
                     <div className="flex items-center justify-between gap-2">
                       <span className="flex items-center gap-1.5 font-bold text-slate-600 dark:text-slate-300 shrink-0">
-                        <FileText className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                        <FileText className="h-3.5 w-3.5 text-[#1CB0F6] shrink-0" />
                         <span>Đã nộp:</span>
                       </span>
                       {attemptsCount > 0 ? (
-                        <span className="font-extrabold text-indigo-600 dark:text-indigo-400 truncate text-right tabular-nums">
+                        <span className="font-extrabold text-[#1899D6] dark:text-sky-400 truncate text-right tabular-nums">
                           {attemptsCount} đề · Cao nhất: {bestBand.toFixed(1)}/10
                         </span>
                       ) : (
@@ -768,11 +1138,11 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                     {/* Row 3: Từ vựng B1 */}
                     <div className="pt-2 border-t border-slate-200/70 dark:border-slate-700/70 flex items-center justify-between gap-2">
                       <span className="flex items-center gap-1.5 font-bold text-slate-600 dark:text-slate-300 shrink-0">
-                        <BookOpen className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                        <BookOpen className="h-3.5 w-3.5 text-[#58CC02] shrink-0" />
                         <span>Từ vựng B1:</span>
                       </span>
                       {hasVocabActivity && vocab ? (
-                        <span className="font-extrabold text-emerald-600 dark:text-emerald-400 truncate text-right tabular-nums">
+                        <span className="font-extrabold text-[#46A302] dark:text-[#58CC02] truncate text-right tabular-nums">
                           Thuộc {vocab.masteredCount} · Đang học {vocab.learningCount} từ
                         </span>
                       ) : (
@@ -786,12 +1156,12 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                   {/* 5. VSTEP 4-Skill Target Scores Box */}
                   <div className="rounded-2xl bg-slate-50/90 dark:bg-slate-800/60 p-3.5 border border-slate-100 dark:border-slate-800">
                     <div className="flex items-center justify-between gap-2 mb-2.5">
-                      <span className="text-xs font-black uppercase tracking-tight text-indigo-950 dark:text-slate-200 flex items-center gap-1.5">
+                      <span className="text-xs font-black uppercase tracking-tight text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                         <Target className="h-4 w-4 text-[#58CC02] shrink-0" />
                         <span>MỤC TIÊU ĐIỂM SỐ</span>
                       </span>
                       {hasGoals && goals ? (
-                        <span className="text-xs font-black text-[#2E7D32] dark:text-[#58CC02] tabular-nums">
+                        <span className="text-xs font-black text-[#46A302] dark:text-[#58CC02] tabular-nums">
                           Overall {goals.overall.toFixed(1)} ({getVstepBandLevel(goals.overall)})
                         </span>
                       ) : (
@@ -802,27 +1172,27 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                     </div>
 
                     <div className="grid grid-cols-4 gap-2 text-center tabular-nums">
-                      <div className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-slate-100 dark:border-slate-800 shadow-2xs">
+                      <div className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-slate-200/70 dark:border-slate-800">
                         <span className="block text-[10px] font-bold text-slate-400 mb-0.5">Nghe</span>
-                        <span className="font-black text-xs text-sky-600 dark:text-sky-400">
+                        <span className="font-black text-xs text-[#1899D6] dark:text-sky-400">
                           {hasGoals && goals ? goals.listening.toFixed(1) : '--'}
                         </span>
                       </div>
-                      <div className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-slate-100 dark:border-slate-800 shadow-2xs">
+                      <div className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-slate-200/70 dark:border-slate-800">
                         <span className="block text-[10px] font-bold text-slate-400 mb-0.5">Đọc</span>
-                        <span className="font-black text-xs text-amber-600 dark:text-amber-400">
+                        <span className="font-black text-xs text-[#46A302] dark:text-[#58CC02]">
                           {hasGoals && goals ? goals.reading.toFixed(1) : '--'}
                         </span>
                       </div>
-                      <div className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-slate-100 dark:border-slate-800 shadow-2xs">
+                      <div className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-slate-200/70 dark:border-slate-800">
                         <span className="block text-[10px] font-bold text-slate-400 mb-0.5">Viết</span>
-                        <span className="font-black text-xs text-emerald-600 dark:text-emerald-400">
+                        <span className="font-black text-xs text-[#A560E8] dark:text-purple-400">
                           {hasGoals && goals ? goals.writing.toFixed(1) : '--'}
                         </span>
                       </div>
-                      <div className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-slate-100 dark:border-slate-800 shadow-2xs">
+                      <div className="rounded-xl bg-white dark:bg-slate-900 p-2 border border-slate-200/70 dark:border-slate-800">
                         <span className="block text-[10px] font-bold text-slate-400 mb-0.5">Nói</span>
-                        <span className="font-black text-xs text-purple-600 dark:text-purple-400">
+                        <span className="font-black text-xs text-[#EA2B2B] dark:text-rose-400">
                           {hasGoals && goals ? (goals.speaking ?? 6.5).toFixed(1) : '--'}
                         </span>
                       </div>
@@ -837,7 +1207,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                     <select
                       value={st.role || 'student'}
                       onChange={(e) => handleRoleChange(st.uid, e.target.value as UserRole)}
-                      className="text-xs font-extrabold rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 px-3 py-2 focus:border-[#58CC02] focus:outline-none cursor-pointer"
+                      className="text-xs font-extrabold rounded-2xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 px-3 py-2 focus:border-[#58CC02] focus:outline-none cursor-pointer"
                     >
                       <option value="student">Vai trò: Học viên</option>
                       <option value="co_teacher">Vai trò: Trợ giảng</option>
@@ -857,7 +1227,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
                   <button
                     type="button"
                     onClick={() => setSelectedStudent(st)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-[#46B800] hover:bg-[#3da100] text-white text-xs font-black shadow-xs transition-colors cursor-pointer"
+                    className="btn-duo-green inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl text-xs font-black cursor-pointer"
                   >
                     <BarChart2 className="h-3.5 w-3.5" />
                     <span>Chi tiết &amp; Bài làm</span>
@@ -867,7 +1237,8 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
             );
           })}
         </div>
-      )}
+      )
+    )}
 
       {/* STUDENT 360° DETAIL MODAL */}
       {selectedStudent && (
@@ -879,7 +1250,91 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
           isCurrentAdmin={isAdmin}
           isSuperAdmin={isSuperAdmin}
           onRoleChange={handleRoleChange}
+          onStudentUpdated={(updated) => {
+            setRealStudents((prev) =>
+              prev.map((s) => (s.uid === updated.uid ? { ...s, ...updated } : s))
+            );
+            setSelectedStudent(updated);
+          }}
         />
+      )}
+
+      {/* Export Prompt & Real Config Modal for AI */}
+      {showExportPromptModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-xs animate-in fade-in"
+          onClick={() => setShowExportPromptModal(false)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-3xl bg-white dark:bg-slate-900 border-2 border-[#58CC02] shadow-2xl p-6 max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="h-10 w-10 rounded-2xl bg-lime-100 dark:bg-lime-950/70 text-[#3C8C02] dark:text-[#58CC02] flex items-center justify-center">
+                  <ClipboardList className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">
+                    📋 Xuất Prompt &amp; Config Thật VSTEP cho AI
+                  </h3>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Đã điền sẵn <code className="font-mono font-bold">apiKey</code>, <code className="font-mono font-bold">projectId: {firebaseConfig.projectId}</code> và <code className="font-mono font-bold">firestoreDatabaseId: {REAL_DATABASE_ID}</code>
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowExportPromptModal(false)}
+                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="py-3 flex-1 overflow-y-auto space-y-3">
+              <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-900 dark:text-emerald-200 flex items-center justify-between gap-3 flex-wrap">
+                <span>
+                  Bấm nút <strong>Sao chép toàn bộ Prompt</strong> bên dưới để lấy đầy đủ cấu hình Database VSTEP thật (<code className="font-mono font-bold">{REAL_DATABASE_ID}</code>) và Storage Bucket (<code className="font-mono font-bold">{FIREBASE_STORAGE_BUCKET}</code>).
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyExportPrompt}
+                  className="btn-duo-green inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl text-xs font-black cursor-pointer shrink-0"
+                >
+                  {copiedPrompt ? (
+                    <>
+                      <Check className="h-4 w-4" />
+                      <span>Đã sao chép!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4" />
+                      <span>Sao chép toàn bộ Prompt</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <pre className="w-full rounded-2xl bg-slate-950 text-lime-300 p-4 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed border border-slate-800 max-h-[52vh]">
+                {realPromptExportText}
+              </pre>
+            </div>
+
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between shrink-0">
+              <span className="text-[11px] text-slate-400">
+                Named Database VSTEP: <code className="font-mono font-bold text-slate-600 dark:text-slate-300">{REAL_DATABASE_ID}</code>
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowExportPromptModal(false)}
+                className="btn-duo-white px-5 py-2 rounded-2xl text-xs font-black cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Diagnostic & Integration Guide Modal */}
@@ -954,12 +1409,12 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
 
             <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between shrink-0">
               <span className="text-[11px] text-slate-400">
-                Cơ sở dữ liệu: <code className="font-mono font-bold text-slate-600 dark:text-slate-300">Cloud Firestore</code>
+                Cơ sở dữ liệu: <code className="font-mono font-bold text-slate-600 dark:text-slate-300">Cloud Firestore ({REAL_DATABASE_ID})</code>
               </span>
               <button
                 type="button"
                 onClick={() => setShowDiagnosticModal(false)}
-                className="px-5 py-2 rounded-xl bg-[#58CC02] text-white text-xs font-black hover:bg-[#46a302] cursor-pointer"
+                className="btn-duo-green px-5 py-2 rounded-2xl text-xs font-black cursor-pointer"
               >
                 Đã hiểu
               </button>

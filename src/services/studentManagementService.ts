@@ -17,8 +17,12 @@ import {
   UserVocabStats,
   UserActiveDraftSummary,
   InProgressAttempt,
+  GuestSubmission,
 } from '../types/studentManagement';
 import { TESTS_LIST } from '../data/testsList';
+import { TEST_1_QUESTIONS } from '../data/test1Data';
+import { Question } from '../types/exam';
+import { hydrateQuestionsFromStorage } from './examService';
 import { computeVocabStatsFromPartition } from './vocabCloudService';
 import { UserVocabDeck, UserVocabFolder } from '../types/vocab';
 import { generateDefault15TopicDecks } from '../data/b1Official15TopicsData';
@@ -138,18 +142,26 @@ export function formatRelativeActiveTime(timestamp?: number): string {
 const enrichedStudentUids = new Set<string>();
 const enrichedCacheByUid = new Map<string, Partial<UserProfile>>();
 
-async function enrichStudentsFromSubcollections(
+export async function enrichStudentsFromSubcollections(
   students: UserProfile[],
-  onEnriched: (updatedList: UserProfile[]) => void
+  onEnriched: (updatedList: UserProfile[]) => void,
+  forceRefresh: boolean = false
 ): Promise<void> {
+  if (forceRefresh) {
+    enrichedStudentUids.clear();
+    enrichedCacheByUid.clear();
+  }
+
   const candidates = students.filter(
     (s) =>
       s.uid &&
       !s.uid.startsWith('demo_') &&
-      !enrichedStudentUids.has(s.uid) &&
-      (s.totalExamAttempts === undefined ||
+      (forceRefresh || !enrichedStudentUids.has(s.uid)) &&
+      (forceRefresh ||
+        s.totalExamAttempts === undefined ||
+        s.totalExamAttempts === 0 ||
         s.activeDraftSummary === undefined ||
-        s.vocabStats === undefined)
+        !s.vocabStats)
   );
 
   if (candidates.length === 0) return;
@@ -162,8 +174,8 @@ async function enrichStudentsFromSubcollections(
       const patch: Partial<UserProfile> = {};
       const firestorePatch: Record<string, any> = {};
 
-      // 1. Check attempts subcollection if totalExamAttempts is missing
-      if (st.totalExamAttempts === undefined) {
+      // 1. Check attempts subcollection if totalExamAttempts is missing, 0, or forced
+      if (st.totalExamAttempts === undefined || st.totalExamAttempts === 0 || forceRefresh) {
         try {
           const attSnap = await getDocs(collection(db, 'users', st.uid, 'attempts'));
           if (attSnap.size > 0) {
@@ -202,13 +214,13 @@ async function enrichStudentsFromSubcollections(
           } else {
             patch.totalExamAttempts = 0;
           }
-        } catch {
-          // Ignore permission or network hiccup
+        } catch (err) {
+          console.warn(`Could not read attempts subcollection for ${st.uid}:`, err);
         }
       }
 
-      // 2. Check inProgress subcollection if activeDraftSummary is missing
-      if (st.activeDraftSummary === undefined) {
+      // 2. Check inProgress subcollection if activeDraftSummary is missing or forced
+      if (st.activeDraftSummary === undefined || forceRefresh) {
         try {
           const inProgSnap = await getDocs(collection(db, 'users', st.uid, 'inProgress'));
           if (inProgSnap.size > 0) {
@@ -262,8 +274,8 @@ async function enrichStudentsFromSubcollections(
         }
       }
 
-      // 3. Check vocab_state/main + vocab_decks if vocabStats is missing
-      if (!st.vocabStats) {
+      // 3. Check vocab_state/main + vocab_decks if vocabStats is missing or forced
+      if (!st.vocabStats || forceRefresh) {
         try {
           const [vocabSnap, personalDecksSnap] = await Promise.all([
             getDoc(doc(db, 'users', st.uid, 'vocab_state', 'main')),
@@ -318,7 +330,7 @@ async function enrichStudentsFromSubcollections(
     })
   );
 
-  if (anyChanged) {
+  if (anyChanged || forceRefresh) {
     const mergedList = students.map((s) => {
       const cached = enrichedCacheByUid.get(s.uid);
       return cached ? { ...s, ...cached } : s;
@@ -328,34 +340,162 @@ async function enrichStudentsFromSubcollections(
 }
 
 /**
- * Real-time subscription to the users collection with local storage backup & live subcollection enrichment
+ * Deep scan and force-refresh all students from Cloud Firestore,
+ * actively counting real attempts in users/{uid}/attempts and healing root summary stats.
+ */
+export async function forceRefreshAllStudentsFromCloud(): Promise<UserProfile[]> {
+  enrichedStudentUids.clear();
+  enrichedCacheByUid.clear();
+
+  const usersCol = collection(db, 'users');
+  const snap = await getDocs(usersCol);
+  const list: UserProfile[] = [];
+
+  snap.forEach((d) => {
+    list.push({ ...(d.data() as UserProfile), uid: d.id });
+  });
+
+  // Deep enrich every real user
+  await new Promise<void>((resolve) => {
+    enrichStudentsFromSubcollections(
+      list,
+      (updated) => {
+        list.length = 0;
+        list.push(...updated);
+        resolve();
+      },
+      true
+    ).then(() => resolve());
+  });
+
+  const sorted = list.sort((a, b) => {
+    if (a.email && SUPER_ADMIN_EMAILS.includes(a.email.toLowerCase())) return -1;
+    if (b.email && SUPER_ADMIN_EMAILS.includes(b.email.toLowerCase())) return 1;
+    return (b.lastActiveAt || b.createdAt || 0) - (a.lastActiveAt || a.createdAt || 0);
+  });
+
+  try {
+    localStorage.setItem(USER_DIRECTORY_BACKUP_KEY, JSON.stringify(sorted));
+  } catch {
+    // Ignore
+  }
+
+  return sorted;
+}
+
+/**
+ * Merges a raw user document with standalone user_target_scores, user_vocab_stats,
+ * and derives summary metrics from recentAttempts / leaderboardStats / inProgressSummary
+ */
+function normalizeStudentProfile(
+  uid: string,
+  rawData: UserProfile,
+  cachedEnrichment: Partial<UserProfile>,
+  externalGoals?: UserTargetScores,
+  externalVocab?: UserVocabStats
+): UserProfile {
+  const merged: UserProfile = {
+    ...cachedEnrichment,
+    ...rawData,
+    uid,
+  };
+
+  if (externalGoals && (!merged.targetScores || (externalGoals.updatedAt || 0) >= (merged.targetScores.updatedAt || 0))) {
+    merged.targetScores = externalGoals;
+  }
+
+  if (externalVocab && (!merged.vocabStats || (externalVocab.updatedAt || 0) >= (merged.vocabStats.updatedAt || 0))) {
+    merged.vocabStats = externalVocab;
+  }
+
+  // Derive totalExamAttempts & best scores from leaderboardStats or recentAttempts if not yet set
+  if (!merged.totalExamAttempts || merged.totalExamAttempts === 0) {
+    if (merged.leaderboardStats && merged.leaderboardStats.totalAttempts > 0) {
+      merged.totalExamAttempts = merged.leaderboardStats.totalAttempts;
+      if (!merged.bestRawScore && merged.leaderboardStats.bestRawScore) {
+        merged.bestRawScore = merged.leaderboardStats.bestRawScore;
+      }
+      if (!merged.bestVstepBandScore && merged.leaderboardStats.bestScale100Score) {
+        merged.bestVstepBandScore = Math.round((merged.leaderboardStats.bestScale100Score / 10) * 2) / 2;
+      }
+    } else if (Array.isArray(merged.recentAttempts) && merged.recentAttempts.length > 0) {
+      merged.totalExamAttempts = merged.recentAttempts.length;
+      let bestBand = 0;
+      let bestRaw = 0;
+      merged.recentAttempts.forEach((att) => {
+        const raw = Number(att.score) || 0;
+        const tot = Number(att.totalQuestions) || 75;
+        const band =
+          typeof att.vstepBandScore === 'number' && att.vstepBandScore > 0
+            ? att.vstepBandScore
+            : Math.round(((raw / Math.max(1, tot)) * 10) * 2) / 2;
+        if (band > bestBand) bestBand = band;
+        if (raw > bestRaw) bestRaw = raw;
+      });
+      merged.bestVstepBandScore = bestBand;
+      merged.bestRawScore = bestRaw;
+    }
+  }
+
+  // Derive activeDraftSummary from inProgressSummary if not set
+  if (!merged.activeDraftSummary && Array.isArray(merged.inProgressSummary) && merged.inProgressSummary.length > 0) {
+    const firstDraft = merged.inProgressSummary[0];
+    if (firstDraft && firstDraft.testId) {
+      const answeredCount = Object.values(firstDraft.answers || {}).filter(
+        (v) => v && String(v).trim().length > 0
+      ).length;
+      merged.activeDraftSummary = {
+        testId: firstDraft.testId,
+        testTitle: resolveTestTitle(firstDraft.testId, firstDraft.testTitle),
+        mode: firstDraft.mode || 'exam',
+        answeredCount,
+        totalQuestions: 75,
+        activeQuestionId: firstDraft.activeQuestionId,
+        elapsedSeconds: firstDraft.elapsedSeconds || 0,
+        timeRemainingSeconds: firstDraft.timeRemainingSeconds ?? firstDraft.remainingSeconds,
+        updatedAt: firstDraft.savedAt || firstDraft.lastUpdatedAt || Date.now(),
+      };
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Real-time subscription to users, user_target_scores, and user_vocab_stats collections
+ * with local storage backup & live subcollection enrichment
  */
 export function subscribeToStudentDirectory(
   onUpdate: (students: UserProfile[]) => void,
   onError?: (err: any) => void
 ): () => void {
   const usersCol = collection(db, 'users');
+  const targetScoresCol = collection(db, 'user_target_scores');
+  const vocabStatsCol = collection(db, 'user_vocab_stats');
 
-  const unsub = onSnapshot(
-    usersCol,
-    (snap) => {
-      const list: UserProfile[] = [];
-      snap.forEach((d) => {
-        const data = d.data() as UserProfile;
-        const cachedEnrichment = enrichedCacheByUid.get(d.id) || {};
-        list.push({ ...cachedEnrichment, ...data, uid: d.id });
-      });
+  let latestRawUsers = new Map<string, UserProfile>();
+  const latestGoalsMap = new Map<string, UserTargetScores>();
+  const latestVocabMap = new Map<string, UserVocabStats>();
 
-      // Save to local backup
-      try {
-        localStorage.setItem(USER_DIRECTORY_BACKUP_KEY, JSON.stringify(list));
-      } catch {
-        // ignore storage errors
-      }
+  const emitMergedDirectory = (triggerEnrichment: boolean = false) => {
+    if (latestRawUsers.size === 0) return;
+    const list: UserProfile[] = [];
+    latestRawUsers.forEach((data, uid) => {
+      const cachedEnrichment = enrichedCacheByUid.get(uid) || {};
+      const externalGoals = latestGoalsMap.get(uid);
+      const externalVocab = latestVocabMap.get(uid);
+      list.push(normalizeStudentProfile(uid, data, cachedEnrichment, externalGoals, externalVocab));
+    });
 
-      onUpdate(list);
+    try {
+      localStorage.setItem(USER_DIRECTORY_BACKUP_KEY, JSON.stringify(list));
+    } catch {
+      // ignore storage errors
+    }
 
-      // Enrich any student missing top-level summary fields from their subcollections
+    onUpdate(list);
+
+    if (triggerEnrichment) {
       enrichStudentsFromSubcollections(list, (enrichedList) => {
         try {
           localStorage.setItem(USER_DIRECTORY_BACKUP_KEY, JSON.stringify(enrichedList));
@@ -364,6 +504,57 @@ export function subscribeToStudentDirectory(
         }
         onUpdate(enrichedList);
       }).catch(() => {});
+    }
+  };
+
+  const unsubGoals = onSnapshot(
+    targetScoresCol,
+    (snap) => {
+      snap.forEach((d) => {
+        const data = d.data() as any;
+        const scores: UserTargetScores = data.targetScores || {
+          overall: Number(data.overall) || 6.5,
+          listening: Number(data.listening) || 6.5,
+          reading: Number(data.reading) || 6.5,
+          writing: Number(data.writing) || 6.5,
+          speaking: Number(data.speaking) || 6.5,
+          updatedAt: data.updatedAt || Date.now(),
+        };
+        latestGoalsMap.set(d.id, scores);
+      });
+      emitMergedDirectory(false);
+    },
+    () => {
+      // Ignore optional collection notice
+    }
+  );
+
+  const unsubVocab = onSnapshot(
+    vocabStatsCol,
+    (snap) => {
+      snap.forEach((d) => {
+        const data = d.data() as any;
+        const stats: UserVocabStats = data.vocabStats || (data as UserVocabStats);
+        if (stats && typeof stats.masteredCount === 'number') {
+          latestVocabMap.set(d.id, stats);
+        }
+      });
+      emitMergedDirectory(false);
+    },
+    () => {
+      // Ignore optional collection notice
+    }
+  );
+
+  const unsubUsers = onSnapshot(
+    usersCol,
+    (snap) => {
+      const nextMap = new Map<string, UserProfile>();
+      snap.forEach((d) => {
+        nextMap.set(d.id, d.data() as UserProfile);
+      });
+      latestRawUsers = nextMap;
+      emitMergedDirectory(true);
     },
     async (err) => {
       console.warn('Real-time student snapshot listener error, trying fallback:', err);
@@ -372,20 +563,13 @@ export function subscribeToStudentDirectory(
       // Attempt single fetch fallback
       try {
         const snap = await getDocs(usersCol);
-        const list: UserProfile[] = [];
+        const nextMap = new Map<string, UserProfile>();
         snap.forEach((d) => {
-          const data = d.data() as UserProfile;
-          const cachedEnrichment = enrichedCacheByUid.get(d.id) || {};
-          list.push({ ...cachedEnrichment, ...data, uid: d.id });
+          nextMap.set(d.id, d.data() as UserProfile);
         });
-        if (list.length > 0) {
-          try {
-            localStorage.setItem(USER_DIRECTORY_BACKUP_KEY, JSON.stringify(list));
-          } catch {
-            // Ignore
-          }
-          onUpdate(list);
-          enrichStudentsFromSubcollections(list, onUpdate).catch(() => {});
+        if (nextMap.size > 0) {
+          latestRawUsers = nextMap;
+          emitMergedDirectory(true);
           return;
         }
       } catch (fetchErr) {
@@ -407,7 +591,11 @@ export function subscribeToStudentDirectory(
     }
   );
 
-  return unsub;
+  return () => {
+    unsubUsers();
+    unsubGoals();
+    unsubVocab();
+  };
 }
 
 /**
@@ -432,28 +620,80 @@ export function subscribeToStudentAttempts(
     // Ignore
   }
 
-  const attemptsCol = collection(db, 'users', uid, 'attempts');
-  const q = query(attemptsCol, orderBy('completedAt', 'desc'));
+  // If this is a guest submission ID, read directly from guest_submissions or local cache
+  if (uid.startsWith('guest_') || uid.startsWith('guest-')) {
+    getDoc(doc(db, 'guest_submissions', uid)).then((snap) => {
+      if (snap.exists()) {
+        const data = snap.data() as GuestSubmission;
+        if (data.attempt) {
+          onUpdate([data.attempt]);
+        }
+      }
+    }).catch(() => {});
+    return () => {};
+  }
 
-  const unsub = onSnapshot(
-    q,
-    (snap) => {
-      const list: UserExamAttempt[] = [];
-      snap.forEach((d) => {
-        list.push({ ...(d.data() as UserExamAttempt), attemptId: d.id });
+  const attemptsCol = collection(db, 'users', uid, 'attempts');
+
+  const processAttemptsSnap = (snap: any) => {
+    const list: UserExamAttempt[] = [];
+    snap.forEach((d: any) => {
+      const data = d.data() as UserExamAttempt;
+      list.push({ ...data, attemptId: d.id });
+    });
+
+    list.sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
+
+    try {
+      localStorage.setItem(localCacheKey, JSON.stringify(list.slice(0, 100)));
+    } catch {
+      // Ignore
+    }
+
+    onUpdate(list);
+
+    // Auto-heal root document in Firestore if attempts exist
+    if (list.length > 0 && canWriteToFirestore()) {
+      let bestBand = 0;
+      let bestRaw = 0;
+      list.forEach((att) => {
+        const raw = Number(att.score) || 0;
+        const tot = Number(att.totalQuestions) || 75;
+        const band =
+          typeof att.vstepBandScore === 'number' && att.vstepBandScore > 0
+            ? att.vstepBandScore
+            : Math.round(((raw / Math.max(1, tot)) * 10) * 2) / 2;
+        if (band > bestBand) bestBand = band;
+        if (raw > bestRaw) bestRaw = raw;
       });
 
-      try {
-        localStorage.setItem(localCacheKey, JSON.stringify(list.slice(0, 100)));
-      } catch {
-        // Ignore
-      }
+      safeSetDoc(
+        doc(db, 'users', uid),
+        {
+          totalExamAttempts: list.length,
+          bestVstepBandScore: bestBand,
+          bestRawScore: bestRaw,
+          lastAttemptAt: list[0]?.completedAt || Date.now(),
+          lastTestTitle: resolveTestTitle(list[0]?.testId, list[0]?.testTitle),
+        },
+        { merge: true }
+      ).catch(() => {});
+    }
+  };
 
-      onUpdate(list);
+  const unsub = onSnapshot(
+    attemptsCol,
+    (snap) => {
+      processAttemptsSnap(snap);
     },
-    (err) => {
-      console.warn(`Real-time attempts error for ${uid}:`, err);
-      if (onError) onError(err);
+    async (err) => {
+      console.warn(`Real-time attempts listener error for ${uid}, falling back to direct getDocs:`, err);
+      try {
+        const snap = await getDocs(attemptsCol);
+        processAttemptsSnap(snap);
+      } catch (fallbackErr) {
+        if (onError) onError(fallbackErr);
+      }
     }
   );
 
@@ -549,23 +789,126 @@ export async function updateStudentRole(
 }
 
 /**
- * Updates target scores for a student
+ * Updates target scores for a student in both users/{uid} and user_target_scores/{uid}
  */
 export async function updateStudentTargetScores(
   uid: string,
   targetScores: UserTargetScores
 ): Promise<void> {
+  const stampedScores: UserTargetScores = {
+    ...targetScores,
+    updatedAt: Date.now(),
+  };
   const userRef = doc(db, 'users', uid);
-  await safeSetDoc(
-    userRef,
-    sanitizeFirestoreData({
-      targetScores: {
-        ...targetScores,
-        updatedAt: Date.now(),
-      },
-    }),
-    { merge: true }
-  );
+  const targetScoresRef = doc(db, 'user_target_scores', uid);
+
+  await Promise.all([
+    safeSetDoc(
+      userRef,
+      sanitizeFirestoreData({
+        targetScores: stampedScores,
+      }),
+      { merge: true }
+    ),
+    safeSetDoc(
+      targetScoresRef,
+      sanitizeFirestoreData({
+        uid,
+        ...stampedScores,
+        targetScores: stampedScores,
+      }),
+      { merge: true }
+    ),
+  ]);
+}
+
+/**
+ * Updates a student's personal profile info and VSTEP target scores directly (Teacher/Admin 2-way sync)
+ */
+export async function updateStudentProfileAndGoals(
+  uid: string,
+  profilePatch: {
+    displayName?: string;
+    nickname?: string;
+    phone?: string;
+    birthDate?: string;
+    address?: string;
+  },
+  targetScores: UserTargetScores
+): Promise<void> {
+  const now = Date.now();
+  const stampedScores: UserTargetScores = {
+    ...targetScores,
+    updatedAt: now,
+  };
+
+  if (uid.startsWith('demo_')) {
+    return;
+  }
+
+  const userRef = doc(db, 'users', uid);
+  const targetScoresRef = doc(db, 'user_target_scores', uid);
+
+  await Promise.all([
+    safeSetDoc(
+      userRef,
+      sanitizeFirestoreData({
+        ...profilePatch,
+        targetScores: stampedScores,
+        updatedAt: now,
+      }),
+      { merge: true }
+    ),
+    safeSetDoc(
+      targetScoresRef,
+      sanitizeFirestoreData({
+        uid,
+        ...stampedScores,
+        targetScores: stampedScores,
+      }),
+      { merge: true }
+    ),
+  ]);
+}
+
+/**
+ * Fetches and caches the 75-question map for a test (from Firestore tests/{testId} or TEST_1_QUESTIONS)
+ * so the Teacher 360 modal can compare student answers against official correctAnswer and explanation.
+ */
+const testQuestionsCache = new Map<string, Record<number, Question>>();
+
+export async function fetchTestQuestionsMapForReview(
+  testId?: string
+): Promise<Record<number, Question>> {
+  const key = testId || 'vstep_test_1';
+  if (testQuestionsCache.has(key)) {
+    return testQuestionsCache.get(key)!;
+  }
+
+  let questionsList: Question[] = TEST_1_QUESTIONS;
+
+  if (key && key !== 'vstep_test_1' && key !== 'test-1') {
+    try {
+      const snap = await getDoc(doc(db, 'tests', key));
+      if (snap.exists()) {
+        const data = snap.data() as any;
+        if (Array.isArray(data.questions) && data.questions.length > 0) {
+          questionsList = hydrateQuestionsFromStorage(data.questions);
+        }
+      }
+    } catch {
+      // Fallback to TEST_1_QUESTIONS
+    }
+  }
+
+  const map: Record<number, Question> = {};
+  questionsList.forEach((q, idx) => {
+    const qNum = Number(q.id) || idx + 1;
+    map[qNum] = q;
+  });
+
+  testQuestionsCache.set(key, map);
+  return map;
 }
 
 /**
@@ -1008,4 +1351,30 @@ export const DEMO_PERSONAL_VOCAB: Record<
     ],
   },
 };
+
+/**
+ * Real-time subscription to unauthenticated guest submissions (e.g. Uyên or Nam submitting before login)
+ */
+export function subscribeToGuestSubmissions(
+  onUpdate: (submissions: GuestSubmission[]) => void,
+  onError?: (err: any) => void
+): () => void {
+  const colRef = collection(db, 'guest_submissions');
+  const unsub = onSnapshot(
+    colRef,
+    (snap) => {
+      const list: GuestSubmission[] = [];
+      snap.forEach((d) => {
+        list.push({ ...(d.data() as GuestSubmission), submissionId: d.id });
+      });
+      list.sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
+      onUpdate(list);
+    },
+    (err) => {
+      console.warn('Real-time guest submissions listener notice:', err);
+      if (onError) onError(err);
+    }
+  );
+  return unsub;
+}
 

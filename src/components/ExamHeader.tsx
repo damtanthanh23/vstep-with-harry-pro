@@ -182,7 +182,7 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
             <button
               type="button"
               onClick={onOpenTranscript}
-              className="hidden sm:inline-flex items-center gap-1.5 rounded-xl bg-white text-[#58CC02] hover:bg-lime-50 px-3 py-1.5 text-xs font-black shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-xl bg-white text-[#46A302] hover:bg-lime-50 px-3 py-1.5 text-xs font-black shadow-xs border-2 border-lime-200 border-b-4 border-b-lime-400 active:border-b-0 active:translate-y-1 transition-all cursor-pointer whitespace-nowrap"
             >
               <BookOpen className="h-3.5 w-3.5" />
               <span>Xem Script & Dịch (Cột trái)</span>
@@ -193,7 +193,7 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
         {/* Center: Timer + Pause Button (with compact 'Saved HH:MM:SS' stacked directly underneath) */}
         <div className="flex items-center gap-2">
           <div
-            className="flex items-center gap-2 font-mono text-sm sm:text-base font-black tabular-nums tracking-wide text-white bg-black/15 px-3 py-1.5 rounded-xl"
+            className="flex items-center gap-2 font-mono text-sm sm:text-base font-black tabular-nums tracking-wide text-white bg-black/20 border-b-2 border-black/25 px-3 py-1.5 rounded-xl"
             title={
               mode === 'exam'
                 ? 'Thời gian làm bài còn lại'
@@ -211,7 +211,7 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
               <button
                 type="button"
                 onClick={onPauseClick}
-                className={`flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 px-2.5 sm:px-3 text-xs font-black text-white transition-colors cursor-pointer whitespace-nowrap ${
+                className={`flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 border border-white/25 border-b-3 border-b-black/25 active:border-b-0 active:translate-y-0.5 px-2.5 sm:px-3 text-xs font-black text-white transition-all cursor-pointer whitespace-nowrap ${
                   hasRealBackup || !isOnline ? 'py-1' : 'py-1.5'
                 }`}
                 title="Tạm dừng bài làm"
@@ -254,7 +254,7 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
           <button
             type="button"
             onClick={toggleTheme}
-            className="flex items-center justify-center rounded-xl bg-white/20 hover:bg-white/30 p-2 text-white transition-colors cursor-pointer shrink-0"
+            className="flex items-center justify-center rounded-xl bg-white/20 hover:bg-white/30 border border-white/25 border-b-3 border-b-black/25 active:border-b-0 active:translate-y-0.5 p-2 text-white transition-all cursor-pointer shrink-0"
             title={
               theme === 'dark'
                 ? 'Đang ở chế độ Tối · Nhấn để chuyển sang Giao diện Sáng'
@@ -274,7 +274,7 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
             <button
               type="button"
               onClick={onReportIssueClick}
-              className="flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 px-2.5 sm:px-3 py-1.5 text-xs font-black text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 border border-white/25 border-b-3 border-b-black/25 active:border-b-0 active:translate-y-0.5 px-2.5 sm:px-3 py-1.5 text-xs font-black text-white transition-all cursor-pointer whitespace-nowrap shrink-0"
               title="Báo lỗi câu hỏi này hoặc góp ý cho Mr.Harry"
             >
               <MessageSquareWarning className="h-3.5 w-3.5 shrink-0" />
@@ -287,10 +287,10 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
             <button
               type="button"
               onClick={onToggleMode}
-              className={`flex items-center gap-1 rounded-xl px-2.5 sm:px-3 py-1.5 text-xs font-black transition-all cursor-pointer whitespace-nowrap ${
+              className={`flex items-center gap-1 rounded-xl px-2.5 sm:px-3 py-1.5 text-xs font-black transition-all active:border-b-0 active:translate-y-0.5 cursor-pointer whitespace-nowrap ${
                 mode === 'practice'
-                  ? 'bg-amber-400 text-amber-950 border-b-2 border-amber-600 shadow-sm'
-                  : 'bg-white/20 text-white hover:bg-white/30'
+                  ? 'bg-[#FFC800] text-amber-950 border-2 border-[#FF9600] border-b-4 border-b-[#E58700] shadow-sm'
+                  : 'bg-white/20 text-white hover:bg-white/30 border border-white/25 border-b-3 border-b-black/25'
               }`}
               title="[Chế độ Giáo viên/Admin] Chuyển đổi linh hoạt giữa Luyện tập & Thi thử"
             >
@@ -305,7 +305,7 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
           <button
             type="button"
             onClick={onSubmitClick}
-            className="flex items-center gap-1.5 rounded-xl bg-white text-[#58CC02] hover:bg-lime-50 px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-black shadow-md border-b-3 border-slate-200 active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer whitespace-nowrap shrink-0"
+            className="flex items-center gap-1.5 rounded-xl bg-white text-[#46A302] hover:bg-lime-50 px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-black shadow-md border-2 border-lime-200 border-b-4 border-b-lime-400 active:border-b-0 active:translate-y-1 transition-all cursor-pointer whitespace-nowrap shrink-0"
           >
             <Check className="h-4 w-4 stroke-[3]" />
             <span>Nộp bài</span>

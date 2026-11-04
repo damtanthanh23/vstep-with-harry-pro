@@ -173,10 +173,10 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
 
             {/* Category Selector */}
             <div>
-              <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-600 mb-2">
+              <label className="block text-xs font-black uppercase tracking-wider text-slate-600 mb-2">
                 1. Phân loại vấn đề
               </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {(Object.keys(FEEDBACK_CATEGORY_LABELS) as FeedbackCategory[]).map((catKey) => {
                   const selected = category === catKey;
                   return (
@@ -184,10 +184,10 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                       key={catKey}
                       type="button"
                       onClick={() => setCategory(catKey)}
-                      className={`text-left px-3 py-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      className={`text-left px-3.5 py-2.5 rounded-xl border-2 border-b-4 text-xs font-black transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                         selected
-                          ? 'border-[#58CC02] bg-[#E5F9D6]/70 text-[#2B6601] ring-2 ring-[#58CC02]/25'
-                          : 'border-slate-200 bg-slate-50/70 text-slate-700 hover:bg-slate-100'
+                          ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/65 text-[#2B6600]'
+                          : 'border-[#E5E5E5] border-b-[#CECECE] bg-white text-[#4B4B4B] hover:border-[#58CC02]'
                       }`}
                     >
                       {FEEDBACK_CATEGORY_LABELS[catKey]}
@@ -210,7 +210,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                     value={userName}
                     onChange={(e) => setUserName(e.target.value)}
                     placeholder="VD: Minh Anh (Lớp B1)"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-8 pr-3 py-2 text-xs font-semibold text-slate-900 placeholder:text-slate-400 focus:border-[#58CC02] focus:bg-white focus:outline-none"
+                    className="w-full rounded-xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] bg-slate-50 pl-8 pr-3 py-2 text-xs font-semibold text-slate-900 placeholder:text-slate-400 focus:border-[#58CC02] focus:bg-white focus:outline-none"
                   />
                 </div>
               </div>
@@ -224,7 +224,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                   value={userEmail}
                   onChange={(e) => setUserEmail(e.target.value)}
                   placeholder="Để nhận phản hồi khi sửa xong"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-900 placeholder:text-slate-400 focus:border-[#58CC02] focus:bg-white focus:outline-none"
+                  className="w-full rounded-xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-900 placeholder:text-slate-400 focus:border-[#58CC02] focus:bg-white focus:outline-none"
                 />
               </div>
             </div>
@@ -239,7 +239,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Mô tả cụ thể lỗi bạn gặp phải (ví dụ: Câu 3 Part 2 đáp án đúng phải là B, hoặc file nghe bị nhỏ, hoặc đề xuất thêm tính năng mới...)"
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-3.5 text-xs sm:text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-[#58CC02] focus:bg-white focus:outline-none leading-relaxed"
+                className="w-full rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] bg-slate-50 p-3.5 text-xs sm:text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-[#58CC02] focus:bg-white focus:outline-none leading-relaxed"
               />
             </div>
 
@@ -251,8 +251,8 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
             )}
 
             {/* Footer Actions */}
-            <div className="pt-2 flex items-center justify-between gap-3 border-t border-slate-100">
-              <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
+            <div className="pt-3 flex items-center justify-between gap-3 border-t-2 border-[#F0F0F0]">
+              <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1">
                 <Sparkles className="h-3.5 w-3.5 text-[#58CC02]" />
                 <span>Phản hồi tức thì tới Admin</span>
               </span>
@@ -261,14 +261,14 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="rounded-xl px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                  className="btn-duo-white rounded-xl px-4 py-2.5 text-xs font-black cursor-pointer"
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-[#58CC02] hover:bg-[#46A302] disabled:opacity-50 px-6 py-2.5 text-xs sm:text-sm font-black text-white shadow-md border-b-4 border-[#3C8C02] active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer"
+                  className="btn-duo-green inline-flex items-center gap-2 rounded-2xl disabled:opacity-50 px-6 py-2.5 text-xs sm:text-sm font-black cursor-pointer"
                 >
                   <Send className="h-3.5 w-3.5" />
                   <span>{isSubmitting ? 'Đang gửi...' : 'Gửi Báo Lỗi / Góp Ý'}</span>

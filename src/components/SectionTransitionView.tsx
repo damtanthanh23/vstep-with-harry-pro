@@ -42,47 +42,77 @@ export const SectionTransitionView: React.FC<SectionTransitionViewProps> = ({
     return 'Bắt đầu phần thi Đọc (Reading)';
   };
 
+  const outerRingClass = isListening
+    ? 'bg-[#DDF4FF] ring-[#1CB0F6]/25'
+    : isWriting
+    ? 'bg-[#F3E5FF] ring-[#CE82FF]/25'
+    : isSpeaking
+    ? 'bg-[#FFDFE0] ring-[#FF4B4B]/25'
+    : 'bg-[#D7FFB8] ring-[#58CC02]/25';
+
+  const innerCircleClass = isListening
+    ? 'bg-[#1CB0F6] border-2 border-[#1899D6] border-b-6 border-b-[#0E74A5]'
+    : isWriting
+    ? 'bg-[#CE82FF] border-2 border-[#A560E8] border-b-6 border-b-[#8438C8]'
+    : isSpeaking
+    ? 'bg-[#FF4B4B] border-2 border-[#EA2B2B] border-b-6 border-b-[#C91D1D]'
+    : 'bg-[#58CC02] border-2 border-[#46A302] border-b-6 border-b-[#2B6600]';
+
+  const btnClass = isListening
+    ? 'btn-duo-blue'
+    : isWriting
+    ? 'btn-duo-purple'
+    : isSpeaking
+    ? 'btn-duo-red'
+    : 'btn-duo-green';
+
   return (
-    <div className="flex min-h-[calc(100vh-140px)] flex-col items-center justify-center bg-white dark:bg-slate-950 px-6 py-12 text-center animate-in fade-in duration-300">
-      <div className="mb-6 flex h-36 w-36 items-center justify-center rounded-full bg-lime-50/90 dark:bg-lime-950/60 ring-12 ring-lime-100/80 dark:ring-lime-900/40 shadow-sm">
-        <div className="flex h-24 w-24 items-center justify-center rounded-full bg-[#58CC02] text-white shadow-lg">
-          {isListening ? (
-            <Headphones className="h-12 w-12 stroke-[2]" />
-          ) : isWriting ? (
-            <PenTool className="h-12 w-12 stroke-[2]" />
-          ) : isSpeaking ? (
-            <Mic className="h-12 w-12 stroke-[2]" />
-          ) : (
-            <FileText className="h-12 w-12 stroke-[2]" />
-          )}
+    <div className="flex min-h-[calc(100vh-140px)] flex-col items-center justify-center bg-[#F7F9FA] dark:bg-slate-950 px-6 py-12 text-center animate-in fade-in duration-300">
+      <div className="card-duo max-w-2xl w-full p-8 sm:p-10 bg-white dark:bg-slate-900 flex flex-col items-center">
+        <div
+          className={`mb-6 flex h-36 w-36 items-center justify-center rounded-full ring-12 shadow-xs ${outerRingClass}`}
+        >
+          <div
+            className={`flex h-24 w-24 items-center justify-center rounded-3xl text-white shadow-md ${innerCircleClass}`}
+          >
+            {isListening ? (
+              <Headphones className="h-12 w-12 stroke-[2.2]" />
+            ) : isWriting ? (
+              <PenTool className="h-12 w-12 stroke-[2.2]" />
+            ) : isSpeaking ? (
+              <Mic className="h-12 w-12 stroke-[2.2]" />
+            ) : (
+              <FileText className="h-12 w-12 stroke-[2.2]" />
+            )}
+          </div>
         </div>
+
+        <span className="mb-3 inline-flex items-center rounded-xl bg-[#D7FFB8] dark:bg-lime-900/50 border-2 border-[#58CC02] border-b-3 border-b-[#46A302] px-3.5 py-1 text-xs font-black uppercase tracking-wider text-[#2B6600] dark:text-lime-300">
+          VSTEP B1 - B2 - C1 Computer-Based Test
+        </span>
+
+        <h2 className="mb-3 text-2xl sm:text-3xl font-black tracking-tight text-[#3C3C3C] dark:text-white">
+          {getSectionTitle()}
+        </h2>
+
+        <p className="mb-3 max-w-xl text-sm sm:text-base font-bold text-[#4B4B4B] dark:text-slate-300">
+          {getSectionSubtitle()}
+        </p>
+
+        <p className="mb-8 text-xs sm:text-sm font-bold text-[#777777] dark:text-slate-400">
+          Nhấn nút 3D bên dưới hoặc mũi tên{' '}
+          <span className="font-black text-[#3C3C3C] dark:text-white">Tiếp theo (&rarr;)</span> ở góc dưới bên phải để bắt đầu làm bài.
+        </p>
+
+        <button
+          type="button"
+          onClick={onProceed}
+          className={`${btnClass} inline-flex items-center gap-2.5 rounded-2xl px-8 py-4 text-sm sm:text-base font-black cursor-pointer`}
+        >
+          <span>{getButtonText()}</span>
+          <ArrowRight className="h-5 w-5" />
+        </button>
       </div>
-
-      <span className="mb-2 inline-flex items-center rounded-full bg-lime-100 dark:bg-lime-900/50 px-3.5 py-1 text-xs font-black uppercase tracking-wider text-lime-800 dark:text-lime-300">
-        VSTEP B1 - B2 - C1 Computer-Based Test
-      </span>
-
-      <h2 className="mb-3 text-2xl sm:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-        {getSectionTitle()}
-      </h2>
-
-      <p className="mb-3 max-w-2xl text-sm sm:text-base font-bold text-slate-600 dark:text-slate-300">
-        {getSectionSubtitle()}
-      </p>
-
-      <p className="mb-8 text-sm font-medium text-slate-500 dark:text-slate-400">
-        Nhấn nút bên dưới hoặc mũi tên <span className="font-bold text-slate-800 dark:text-white">Tiếp theo (&rarr;)</span> ở góc dưới bên phải để bắt đầu làm bài.
-      </p>
-
-      <button
-        type="button"
-        onClick={onProceed}
-        className="inline-flex items-center gap-2.5 rounded-2xl bg-[#58CC02] hover:bg-[#46a302] px-8 py-4 text-sm sm:text-base font-black text-white shadow-md border-b-4 border-[#3c8c02] active:border-b-0 active:translate-y-1 transition-all cursor-pointer"
-      >
-        <span>{getButtonText()}</span>
-        <ArrowRight className="h-5 w-5" />
-      </button>
     </div>
   );
 };
-

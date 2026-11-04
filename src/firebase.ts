@@ -2,13 +2,13 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import {
   getFirestore,
+  enableNetwork,
   doc,
   setDoc,
   deleteDoc,
   DocumentReference,
   SetOptions,
   setLogLevel,
-  disableNetwork,
 } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -17,6 +17,7 @@ export const APP_SITE_ID = 'vstep';
 export const STORAGE_AUDIO_FOLDER = 'vstep/exam_audio';
 export const AUDIO_KEY_PREFIX = 'vstep_';
 export const FIREBASE_STORAGE_BUCKET = 'harrytoeicbackup.firebasestorage.app';
+export const STORAGE_BUCKET_NAME = 'harrytoeicbackup.firebasestorage.app';
 
 // Silence internal @firebase/firestore SDK backoff/quota console spam so resilient local fallbacks run cleanly
 try {
@@ -25,15 +26,28 @@ try {
   // Ignore
 }
 
-const app = initializeApp({
+export const app = initializeApp({
   ...firebaseConfig,
   storageBucket: firebaseConfig.storageBucket || FIREBASE_STORAGE_BUCKET,
 });
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+// QUAN TRỌNG NHẤT: Trỏ đúng vào Database ID thật của hệ thống VSTEP
+export const REAL_DATABASE_ID =
+  firebaseConfig.firestoreDatabaseId ||
+  'ai-studio-vsteptutor-6c9f7e6d-6d42-4864-9991-780c76d9f4dc';
+
+export const db = getFirestore(app, REAL_DATABASE_ID);
 export const storage = getStorage(app, `gs://${FIREBASE_STORAGE_BUCKET}`);
+export const storageAppspot = getStorage(app, 'gs://harrytoeicbackup.appspot.com');
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+try {
+  enableNetwork(db).catch(() => {});
+} catch {
+  // Ignore
+}
 
 const QUOTA_TRIPPED_DATE_KEY = 'langcert_fs_quota_exhausted_utc_date_v2';
 

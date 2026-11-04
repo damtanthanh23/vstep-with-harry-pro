@@ -76,6 +76,8 @@ import {
   fetchUserInProgressMap,
   clearInProgressAttemptFromFirestore,
   hydrateQuestionsFromStorage,
+  savePracticeAnswerImmediately,
+  fetchPracticeAuditLogs,
 } from './services/examService';
 import { getPartRelativeNumber } from './types/exam';
 import { FeedbackModal, FeedbackContextData } from './components/FeedbackModal';
@@ -1555,6 +1557,44 @@ export default function App() {
   };
 
   const handleAnswerChange = (qId: number, value: string) => {
+    // In Practice Mode: Anti-cheat protection locks the student's first selected answer
+    if (examMode === 'practice') {
+      const existing = answers[qId];
+      if (existing && existing.trim().length > 0) {
+        // Locked: First choice is permanent to prevent viewing solution and guessing alternatives
+        return;
+      }
+
+      // Check correctness against question key
+      const qObj = activeExamQuestions.find((q) => q.id === qId);
+      let isCorrect = false;
+      if (qObj) {
+        const valTrimmed = value.trim().toLowerCase();
+        if (Array.isArray(qObj.correctAnswer)) {
+          isCorrect = qObj.correctAnswer.some((ans) => valTrimmed === ans.trim().toLowerCase());
+        } else {
+          isCorrect = valTrimmed === String(qObj.correctAnswer).trim().toLowerCase();
+        }
+      }
+
+      // Save answer state locally
+      setAnswers((prev) => ({
+        ...prev,
+        [qId]: value,
+      }));
+
+      // Immediately and silently save to Cloud Firestore and localStorage (no UI interruption)
+      savePracticeAnswerImmediately(
+        currentUser?.uid || 'guest',
+        selectedTestId,
+        qId,
+        value,
+        isCorrect
+      ).catch(() => {});
+      return;
+    }
+
+    // Standard Mock Exam Mode: regular answer selection
     setAnswers((prev) => ({
       ...prev,
       [qId]: value,
@@ -1621,7 +1661,7 @@ export default function App() {
   };
 
   // Submit and save attempt to Firestore
-  const submitExamAndSave = () => {
+  const submitExamAndSave = (guestInfo?: { name?: string; email?: string }) => {
     examAudioManager.pause();
     setIsSubmitModalOpen(false);
     setIsTimeUpModalOpen(false);
@@ -1677,6 +1717,16 @@ export default function App() {
     setActiveWritingAiEval(undefined);
     setActiveAiDiagnostic(null);
 
+    // Load any existing practice audit logs for this test to store cross-reference log
+    const localPracticeAuditKey = `langcert_practice_audit_${currentUser?.uid || 'guest'}_${selectedTestId}`;
+    let auditLogs: any[] = [];
+    try {
+      const rawAudit = localStorage.getItem(localPracticeAuditKey);
+      if (rawAudit) auditLogs = JSON.parse(rawAudit);
+    } catch {
+      // Ignore
+    }
+
     const attempt: UserExamAttempt = {
       attemptId: newAttemptId,
       testId: selectedTestId,
@@ -1698,9 +1748,11 @@ export default function App() {
       writingSubmission: { ...writingSubmission },
       speakingSubmission: { ...speakingSubmission },
       selectedParts: [...selectedPartsForSession],
+      practiceAuditLogs: auditLogs.length > 0 ? auditLogs : undefined,
+      practicedQuestionsCount: auditLogs.length > 0 ? auditLogs.length : undefined,
     };
 
-    recordUserAttempt(currentUser?.uid || 'guest', attempt).catch((err) => {
+    recordUserAttempt(currentUser?.uid || 'guest', attempt, guestInfo).catch((err) => {
       console.warn('Could not record attempt to Firestore:', err);
     });
     recordStudyActivity(`Hoàn thành đề: ${activeTestMetadata.title}`, currentUser?.uid);
@@ -1737,8 +1789,8 @@ export default function App() {
     clearSessionLocalAudioOverrides();
   };
 
-  const handleConfirmSubmit = () => {
-    submitExamAndSave();
+  const handleConfirmSubmit = (guestInfo?: { name?: string; email?: string }) => {
+    submitExamAndSave(guestInfo);
   };
 
   // Temporary local audio upload for the active Listening Part ONLY (never modifies database audio; resets after exam)
@@ -2043,6 +2095,7 @@ export default function App() {
             openFeedbackWithContext({ contextScreen: 'selection' })
           }
           onOpenAdminFeedback={() => setIsAdminFeedbackModalOpen(true)}
+          isAdminFeedbackOpen={isAdminFeedbackModalOpen}
           unreadFeedbackCount={unreadFeedbackCount}
           onDeleteCustomTest={handleDeleteAnyTest}
           inProgressMap={inProgressMap}
@@ -2052,21 +2105,22 @@ export default function App() {
         {/* Pre-Start Part & Timer Configuration Modal (Item 15 & 16) */}
         {preStartModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
-            <div className="w-full max-w-2xl rounded-3xl bg-white dark:bg-slate-900 p-6 sm:p-7 shadow-2xl border border-slate-200 dark:border-slate-800 my-8">
-              <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
+            <div className="w-full max-w-2xl rounded-3xl bg-white dark:bg-slate-900 p-6 sm:p-7 shadow-2xl border-2 border-[#E5E5E5] border-b-8 border-b-[#CECECE] dark:border-slate-700 dark:border-b-slate-950 my-8">
+              <div className="flex items-start justify-between gap-3 pb-4 border-b-2 border-[#F0F0F0] dark:border-slate-800">
                 <div>
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-lime-100 dark:bg-emerald-950 text-[#2E7D32] dark:text-lime-300 text-[11px] font-black mb-1">
-                    <Sparkles className="h-3 w-3" />
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[#D7FFB8] dark:bg-emerald-950 text-[#46A302] dark:text-lime-300 border-2 border-[#58CC02] border-b-3 border-b-[#46A302] text-[11px] font-black mb-1.5">
+                    <Sparkles className="h-3.5 w-3.5" />
                     THIẾT LẬP PHÒNG THI VSTEP 4 KỸ NĂNG
                   </span>
-                  <h3 className="text-xl font-black text-slate-900 dark:text-white">
+                  <h3 className="text-xl sm:text-2xl font-black text-[#3C3C3C] dark:text-white">
                     {pendingTestObj.title}
                   </h3>
                 </div>
                 <button
                   type="button"
                   onClick={() => setPreStartModalOpen(false)}
-                  className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  className="btn-duo-white p-2 rounded-xl text-slate-500 hover:text-slate-800 cursor-pointer"
+                  title="Đóng"
                 >
                   <X className="h-5 w-5" />
                 </button>
@@ -2074,13 +2128,13 @@ export default function App() {
 
               {/* Resume Banner if an in-progress attempt exists */}
               {existingInProgressForPending && (
-                <div className="mt-4 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="mt-4 p-4 rounded-2xl bg-[#FFF4E5] dark:bg-amber-950/50 border-2 border-[#FF9600] border-b-4 border-b-[#E58700] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <div className="text-xs font-black text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
-                      <Clock className="h-4 w-4 text-amber-600" />
+                      <Clock className="h-4 w-4 text-[#FF9600]" />
                       <span>Bạn đang có bài làm dở ở bộ đề này!</span>
                     </div>
-                    <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-0.5">
+                    <p className="text-[11px] font-bold text-amber-800 dark:text-amber-300 mt-0.5">
                       Đã trả lời{' '}
                       {
                         Object.values(existingInProgressForPending.answers || {}).filter(
@@ -2094,7 +2148,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => handleResumeInProgressTest(pendingStartTestId)}
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-black shadow-xs transition-colors shrink-0 cursor-pointer"
+                    className="btn-duo-orange px-4 py-2.5 rounded-xl text-xs font-black shrink-0 cursor-pointer"
                   >
                     Làm tiếp bài đang dở →
                   </button>
@@ -2103,46 +2157,54 @@ export default function App() {
 
               {/* Mode Switcher */}
               <div className="mt-5">
-                <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+                <label className="block text-xs font-black uppercase tracking-wider text-[#777777] dark:text-slate-400 mb-2.5">
                   1. Chọn chế độ làm bài
                 </label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <button
                     type="button"
                     onClick={() => setExamMode('exam')}
-                    className={`p-3.5 rounded-2xl border-2 text-left transition-all cursor-pointer ${
+                    className={`p-4 rounded-2xl border-2 border-b-4 text-left transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                       examMode === 'exam'
-                        ? 'border-purple-600 bg-purple-50/70 dark:bg-purple-950/40'
-                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                        ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/45 dark:bg-emerald-950/40'
+                        : 'border-[#E5E5E5] border-b-[#CECECE] bg-white dark:bg-slate-800 dark:border-slate-700 hover:border-[#58CC02]'
                     }`}
                   >
-                    <div className="font-black text-sm text-slate-900 dark:text-white flex items-center justify-between">
+                    <div className="font-black text-sm text-[#3C3C3C] dark:text-white flex items-center justify-between">
                       <span>Thi thử (Mock Exam)</span>
-                      {examMode === 'exam' && (
-                        <span className="h-2.5 w-2.5 rounded-full bg-purple-600" />
-                      )}
+                      <span
+                        className={`h-3.5 w-3.5 rounded-full border-2 ${
+                          examMode === 'exam'
+                            ? 'bg-[#58CC02] border-[#46A302]'
+                            : 'bg-white border-[#CECECE]'
+                        }`}
+                      />
                     </div>
-                    <p className="text-[11px] text-slate-500 mt-1">
-                      Chọn trọn bộ 4 kỹ năng (Listening, Reading, Writing, Speaking), bấm giờ chuẩn VSTEP & tự động nộp khi hết giờ.
+                    <p className="text-[11px] font-bold text-[#777777] dark:text-slate-400 mt-1.5 leading-relaxed">
+                      Chọn trọn bộ 4 kỹ năng (Listening, Reading, Writing, Speaking), bấm giờ chuẩn VSTEP &amp; tự động nộp khi hết giờ.
                     </p>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setExamMode('practice')}
-                    className={`p-3.5 rounded-2xl border-2 text-left transition-all cursor-pointer ${
+                    className={`p-4 rounded-2xl border-2 border-b-4 text-left transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                       examMode === 'practice'
-                        ? 'border-[#58CC02] bg-lime-50/70 dark:bg-emerald-950/40'
-                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                        ? 'border-[#1CB0F6] border-b-[#1899D6] bg-[#DDF4FF]/55 dark:bg-sky-950/40'
+                        : 'border-[#E5E5E5] border-b-[#CECECE] bg-white dark:bg-slate-800 dark:border-slate-700 hover:border-[#1CB0F6]'
                     }`}
                   >
-                    <div className="font-black text-sm text-slate-900 dark:text-white flex items-center justify-between">
+                    <div className="font-black text-sm text-[#3C3C3C] dark:text-white flex items-center justify-between">
                       <span>Luyện tập (Practice)</span>
-                      {examMode === 'practice' && (
-                        <span className="h-2.5 w-2.5 rounded-full bg-[#58CC02]" />
-                      )}
+                      <span
+                        className={`h-3.5 w-3.5 rounded-full border-2 ${
+                          examMode === 'practice'
+                            ? 'bg-[#1CB0F6] border-[#1899D6]'
+                            : 'bg-white border-[#CECECE]'
+                        }`}
+                      />
                     </div>
-                    <p className="text-[11px] text-slate-500 mt-1">
+                    <p className="text-[11px] font-bold text-[#777777] dark:text-slate-400 mt-1.5 leading-relaxed">
                       Chọn từng Part lẻ tùy thích (gồm cả Speaking Part 1, 2, 3), tùy chỉnh thời gian hoặc không giới hạn giờ.
                     </p>
                   </button>
@@ -2152,32 +2214,34 @@ export default function App() {
               {/* Section / Part Selection */}
               {examMode === 'exam' ? (
                 <div className="mt-5">
-                  <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+                  <label className="block text-xs font-black uppercase tracking-wider text-[#777777] dark:text-slate-400 mb-2.5">
                     2. Chọn Kỹ năng Thi thử VSTEP (4 Kỹ năng L - R - W - S)
                   </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                     <button
                       type="button"
                       onClick={() =>
                         setExamSkillsSelected((prev) => ({ ...prev, listening: !prev.listening }))
                       }
-                      className={`p-3.5 rounded-2xl border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
+                      className={`p-3.5 rounded-2xl border-2 border-b-4 text-left flex items-start gap-3 transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                         examSkillsSelected.listening
-                          ? 'border-purple-600 bg-purple-50/50 dark:bg-purple-950/40'
-                          : 'border-slate-200 dark:border-slate-700 opacity-70'
+                          ? 'border-[#1CB0F6] border-b-[#1899D6] bg-[#DDF4FF]/55 dark:bg-sky-950/40'
+                          : 'border-[#E5E5E5] border-b-[#CECECE] bg-white dark:bg-slate-800 dark:border-slate-700 opacity-75 hover:border-[#1CB0F6]'
                       }`}
                     >
                       {examSkillsSelected.listening ? (
-                        <CheckSquare className="h-4 w-4 text-purple-600 shrink-0 mt-0.5" />
+                        <CheckSquare className="h-5 w-5 text-[#1CB0F6] shrink-0 mt-0.5" />
                       ) : (
-                        <Square className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+                        <Square className="h-5 w-5 text-slate-400 shrink-0 mt-0.5" />
                       )}
                       <div>
-                        <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1">
-                          <Headphones className="h-3.5 w-3.5 text-purple-600" />
+                        <div className="text-xs sm:text-sm font-black text-[#3C3C3C] dark:text-white flex items-center gap-1.5">
+                          <Headphones className="h-4 w-4 text-[#1CB0F6]" />
                           <span>1. Full Listening</span>
                         </div>
-                        <p className="text-[11px] text-slate-500 mt-0.5">Part 1–3 (35 câu · 40 phút)</p>
+                        <p className="text-[11px] font-bold text-[#777777] dark:text-slate-400 mt-0.5">
+                          Part 1–3 (35 câu · 40 phút)
+                        </p>
                       </div>
                     </button>
 
@@ -2186,23 +2250,25 @@ export default function App() {
                       onClick={() =>
                         setExamSkillsSelected((prev) => ({ ...prev, reading: !prev.reading }))
                       }
-                      className={`p-3.5 rounded-2xl border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
+                      className={`p-3.5 rounded-2xl border-2 border-b-4 text-left flex items-start gap-3 transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                         examSkillsSelected.reading
-                          ? 'border-purple-600 bg-purple-50/50 dark:bg-purple-950/40'
-                          : 'border-slate-200 dark:border-slate-700 opacity-70'
+                          ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/45 dark:bg-emerald-950/40'
+                          : 'border-[#E5E5E5] border-b-[#CECECE] bg-white dark:bg-slate-800 dark:border-slate-700 opacity-75 hover:border-[#58CC02]'
                       }`}
                     >
                       {examSkillsSelected.reading ? (
-                        <CheckSquare className="h-4 w-4 text-purple-600 shrink-0 mt-0.5" />
+                        <CheckSquare className="h-5 w-5 text-[#58CC02] shrink-0 mt-0.5" />
                       ) : (
-                        <Square className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+                        <Square className="h-5 w-5 text-slate-400 shrink-0 mt-0.5" />
                       )}
                       <div>
-                        <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1">
-                          <BookOpen className="h-3.5 w-3.5 text-purple-600" />
+                        <div className="text-xs sm:text-sm font-black text-[#3C3C3C] dark:text-white flex items-center gap-1.5">
+                          <BookOpen className="h-4 w-4 text-[#58CC02]" />
                           <span>2. Full Reading</span>
                         </div>
-                        <p className="text-[11px] text-slate-500 mt-0.5">Passage 1–4 (40 câu · 60 phút)</p>
+                        <p className="text-[11px] font-bold text-[#777777] dark:text-slate-400 mt-0.5">
+                          Passage 1–4 (40 câu · 60 phút)
+                        </p>
                       </div>
                     </button>
 
@@ -2211,23 +2277,25 @@ export default function App() {
                       onClick={() =>
                         setExamSkillsSelected((prev) => ({ ...prev, writing: !prev.writing }))
                       }
-                      className={`p-3.5 rounded-2xl border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
+                      className={`p-3.5 rounded-2xl border-2 border-b-4 text-left flex items-start gap-3 transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                         examSkillsSelected.writing
-                          ? 'border-purple-600 bg-purple-50/50 dark:bg-purple-950/40'
-                          : 'border-slate-200 dark:border-slate-700 opacity-70'
+                          ? 'border-[#CE82FF] border-b-[#A560E8] bg-[#F3E5FF]/55 dark:bg-purple-950/40'
+                          : 'border-[#E5E5E5] border-b-[#CECECE] bg-white dark:bg-slate-800 dark:border-slate-700 opacity-75 hover:border-[#CE82FF]'
                       }`}
                     >
                       {examSkillsSelected.writing ? (
-                        <CheckSquare className="h-4 w-4 text-purple-600 shrink-0 mt-0.5" />
+                        <CheckSquare className="h-5 w-5 text-[#A560E8] shrink-0 mt-0.5" />
                       ) : (
-                        <Square className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+                        <Square className="h-5 w-5 text-slate-400 shrink-0 mt-0.5" />
                       )}
                       <div>
-                        <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1">
-                          <PenTool className="h-3.5 w-3.5 text-purple-600" />
+                        <div className="text-xs sm:text-sm font-black text-[#3C3C3C] dark:text-white flex items-center gap-1.5">
+                          <PenTool className="h-4 w-4 text-[#A560E8]" />
                           <span>3. Full Writing</span>
                         </div>
-                        <p className="text-[11px] text-slate-500 mt-0.5">Task 1 &amp; Task 2 (60 phút)</p>
+                        <p className="text-[11px] font-bold text-[#777777] dark:text-slate-400 mt-0.5">
+                          Task 1 &amp; Task 2 (60 phút)
+                        </p>
                       </div>
                     </button>
 
@@ -2236,23 +2304,25 @@ export default function App() {
                       onClick={() =>
                         setExamSkillsSelected((prev) => ({ ...prev, speaking: !prev.speaking }))
                       }
-                      className={`p-3.5 rounded-2xl border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
+                      className={`p-3.5 rounded-2xl border-2 border-b-4 text-left flex items-start gap-3 transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                         examSkillsSelected.speaking
-                          ? 'border-teal-600 bg-teal-50/50 dark:bg-teal-950/40'
-                          : 'border-slate-200 dark:border-slate-700 opacity-70'
+                          ? 'border-[#FF4B4B] border-b-[#EA2B2B] bg-[#FFDFE0]/55 dark:bg-rose-950/40'
+                          : 'border-[#E5E5E5] border-b-[#CECECE] bg-white dark:bg-slate-800 dark:border-slate-700 opacity-75 hover:border-[#FF4B4B]'
                       }`}
                     >
                       {examSkillsSelected.speaking ? (
-                        <CheckSquare className="h-4 w-4 text-teal-600 shrink-0 mt-0.5" />
+                        <CheckSquare className="h-5 w-5 text-[#FF4B4B] shrink-0 mt-0.5" />
                       ) : (
-                        <Square className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+                        <Square className="h-5 w-5 text-slate-400 shrink-0 mt-0.5" />
                       )}
                       <div>
-                        <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1">
-                          <Mic className="h-3.5 w-3.5 text-teal-600" />
+                        <div className="text-xs sm:text-sm font-black text-[#3C3C3C] dark:text-white flex items-center gap-1.5">
+                          <Mic className="h-4 w-4 text-[#FF4B4B]" />
                           <span>4. Full Speaking</span>
                         </div>
-                        <p className="text-[11px] text-slate-500 mt-0.5">Part 1, 2 &amp; 3 Mind-map (12 phút)</p>
+                        <p className="text-[11px] font-bold text-[#777777] dark:text-slate-400 mt-0.5">
+                          Part 1, 2 &amp; 3 Mind-map (12 phút)
+                        </p>
                       </div>
                     </button>
                   </div>
@@ -2261,32 +2331,49 @@ export default function App() {
                 <>
                   {/* Practice Mode: Granular Part Picker */}
                   <div className="mt-5">
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+                    <div className="flex items-center justify-between mb-2.5">
+                      <label className="text-xs font-black uppercase tracking-wider text-[#777777] dark:text-slate-400">
                         2. Chọn các Part muốn luyện tập ({selectedPartsForSession.length}/{ALL_PRACTICE_PARTS.length} Part)
                       </label>
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
                           onClick={() => setSelectedPartsForSession(ALL_PRACTICE_PARTS)}
-                          className="text-[11px] font-bold text-[#2E7D32] hover:underline cursor-pointer"
+                          className="btn-duo-white px-2.5 py-1 rounded-xl text-[11px] font-black text-[#46A302] cursor-pointer"
                         >
                           Chọn tất cả
                         </button>
-                        <span className="text-slate-300">|</span>
                         <button
                           type="button"
                           onClick={() => setSelectedPartsForSession(['L1'])}
-                          className="text-[11px] font-bold text-slate-500 hover:underline cursor-pointer"
+                          className="btn-duo-white px-2.5 py-1 rounded-xl text-[11px] font-black text-slate-500 cursor-pointer"
                         >
                           Bỏ chọn
                         </button>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto p-1">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-56 overflow-y-auto p-1">
                       {PART_METADATA.map((part) => {
                         const checked = selectedPartsForSession.includes(part.key);
+                        const isL = part.key.startsWith('L');
+                        const isR = part.key.startsWith('R');
+                        const isW = part.key.startsWith('W');
+                        const checkedStyle = isL
+                          ? 'border-[#1CB0F6] border-b-[#1899D6] bg-[#DDF4FF]/55 text-[#3C3C3C] dark:text-white'
+                          : isR
+                          ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/45 text-[#3C3C3C] dark:text-white'
+                          : isW
+                          ? 'border-[#CE82FF] border-b-[#A560E8] bg-[#F3E5FF]/55 text-[#3C3C3C] dark:text-white'
+                          : 'border-[#FF4B4B] border-b-[#EA2B2B] bg-[#FFDFE0]/55 text-[#3C3C3C] dark:text-white';
+                        const iconColor = isL
+                          ? 'text-[#1CB0F6]'
+                          : isR
+                          ? 'text-[#58CC02]'
+                          : isW
+                          ? 'text-[#A560E8]'
+                          : 'text-[#FF4B4B]';
+
                         return (
                           <button
                             key={part.key}
@@ -2300,20 +2387,20 @@ export default function App() {
                                   : [...prev, part.key]
                               );
                             }}
-                            className={`p-2.5 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer ${
+                            className={`p-2.5 rounded-xl border-2 border-b-4 text-left flex items-center gap-2 transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                               checked
-                                ? 'border-[#58CC02] bg-lime-50/70 dark:bg-emerald-950/50 text-slate-900 dark:text-white'
-                                : 'border-slate-200 dark:border-slate-700 text-slate-500'
+                                ? checkedStyle
+                                : 'border-[#E5E5E5] border-b-[#CECECE] bg-white dark:bg-slate-800 text-slate-500'
                             }`}
                           >
                             {checked ? (
-                              <CheckSquare className="h-4 w-4 text-[#58CC02] shrink-0" />
+                              <CheckSquare className={`h-4 w-4 ${iconColor} shrink-0`} />
                             ) : (
                               <Square className="h-4 w-4 text-slate-400 shrink-0" />
                             )}
                             <div className="truncate">
-                              <div className="text-xs font-extrabold truncate">{part.label}</div>
-                              <div className="text-[10px] text-slate-400">
+                              <div className="text-xs font-black truncate">{part.label}</div>
+                              <div className="text-[10px] font-bold text-slate-400">
                                 Đề xuất: {part.suggestedMinutes} phút
                               </div>
                             </div>
@@ -2325,23 +2412,23 @@ export default function App() {
 
                   {/* Practice Mode Timer Selector */}
                   <div className="mt-5">
-                    <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+                    <label className="block text-xs font-black uppercase tracking-wider text-[#777777] dark:text-slate-400 mb-2.5">
                       3. Thời gian làm bài Luyện tập
                     </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <button
                         type="button"
                         onClick={() => setPracticeTimerType('suggested')}
-                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                        className={`p-3 rounded-2xl border-2 border-b-4 text-left transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                           practiceTimerType === 'suggested'
-                            ? 'border-[#58CC02] bg-lime-50/70 dark:bg-emerald-950/40'
-                            : 'border-slate-200 dark:border-slate-700'
+                            ? 'border-[#1CB0F6] border-b-[#1899D6] bg-[#DDF4FF]/50 dark:bg-sky-950/40'
+                            : 'border-[#E5E5E5] border-b-[#CECECE] bg-white dark:bg-slate-800'
                         }`}
                       >
-                        <div className="text-xs font-black text-slate-900 dark:text-white">
+                        <div className="text-xs font-black text-[#3C3C3C] dark:text-white">
                           Hệ thống đề xuất ({suggestedPracticeMinutes} phút)
                         </div>
-                        <p className="text-[10px] text-slate-500 mt-0.5">
+                        <p className="text-[10px] font-bold text-slate-500 mt-0.5">
                           Tự động tính theo số Part đã chọn
                         </p>
                       </button>
@@ -2349,13 +2436,13 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setPracticeTimerType('custom')}
-                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                        className={`p-3 rounded-2xl border-2 border-b-4 text-left transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                           practiceTimerType === 'custom'
-                            ? 'border-[#58CC02] bg-lime-50/70 dark:bg-emerald-950/40'
-                            : 'border-slate-200 dark:border-slate-700'
+                            ? 'border-[#1CB0F6] border-b-[#1899D6] bg-[#DDF4FF]/50 dark:bg-sky-950/40'
+                            : 'border-[#E5E5E5] border-b-[#CECECE] bg-white dark:bg-slate-800'
                         }`}
                       >
-                        <div className="text-xs font-black text-slate-900 dark:text-white flex items-center justify-between gap-2">
+                        <div className="text-xs font-black text-[#3C3C3C] dark:text-white flex items-center justify-between gap-2">
                           <span>Tự chọn số phút:</span>
                           <input
                             type="number"
@@ -2366,10 +2453,10 @@ export default function App() {
                             onChange={(e) =>
                               setCustomMinutesInput(Math.max(1, Number(e.target.value) || 15))
                             }
-                            className="w-16 px-2 py-0.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs font-black text-center"
+                            className="w-16 px-2 py-0.5 rounded-lg border-2 border-[#1CB0F6] bg-white dark:bg-slate-900 text-xs font-black text-center"
                           />
                         </div>
-                        <p className="text-[10px] text-slate-500 mt-0.5">
+                        <p className="text-[10px] font-bold text-slate-500 mt-0.5">
                           Đếm ngược theo ý thích của bạn
                         </p>
                       </button>
@@ -2377,16 +2464,16 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setPracticeTimerType('untimed')}
-                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                        className={`p-3 rounded-2xl border-2 border-b-4 text-left transition-all active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                           practiceTimerType === 'untimed'
-                            ? 'border-[#58CC02] bg-lime-50/70 dark:bg-emerald-950/40'
-                            : 'border-slate-200 dark:border-slate-700'
+                            ? 'border-[#1CB0F6] border-b-[#1899D6] bg-[#DDF4FF]/50 dark:bg-sky-950/40'
+                            : 'border-[#E5E5E5] border-b-[#CECECE] bg-white dark:bg-slate-800'
                         }`}
                       >
-                        <div className="text-xs font-black text-slate-900 dark:text-white">
+                        <div className="text-xs font-black text-[#3C3C3C] dark:text-white">
                           Không giới hạn giờ
                         </div>
-                        <p className="text-[10px] text-slate-500 mt-0.5">
+                        <p className="text-[10px] font-bold text-slate-500 mt-0.5">
                           Đồng hồ đếm tiến để theo dõi thời gian học
                         </p>
                       </button>
@@ -2396,18 +2483,20 @@ export default function App() {
               )}
 
               {/* Modal Actions */}
-              <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3">
+              <div className="mt-6 pt-4 border-t-2 border-[#F0F0F0] dark:border-slate-800 flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setPreStartModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  className="btn-duo-white px-5 py-3 rounded-2xl text-xs sm:text-sm font-black cursor-pointer"
                 >
                   Đóng lại
                 </button>
                 <button
                   type="button"
                   onClick={handleConfirmLaunchFromPreStart}
-                  className="px-6 py-3 rounded-2xl bg-[#58CC02] hover:bg-[#46a302] text-white text-xs sm:text-sm font-black shadow-md border-b-2 border-[#3c8c02] flex items-center gap-2 transition-all cursor-pointer"
+                  className={`${
+                    examMode === 'exam' ? 'btn-duo-green' : 'btn-duo-blue'
+                  } px-6 py-3 rounded-2xl text-xs sm:text-sm font-black flex items-center gap-2 cursor-pointer`}
                 >
                   <Play className="h-4 w-4 fill-white" />
                   <span>
@@ -2748,41 +2837,41 @@ export default function App() {
       {/* PAUSE OVERLAY MODAL (Items 11 & 15) */}
       {isPaused && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-7 text-center shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
-            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 shadow-xs">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-7 text-center shadow-2xl border-2 border-[#E5E5E5] border-b-8 border-b-[#CECECE] animate-in fade-in zoom-in-95 duration-150">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFF4E5] text-[#FF9600] border-2 border-[#FF9600] border-b-4 border-b-[#E58700]">
               <Pause className="h-8 w-8" />
             </div>
 
-            <h3 className="text-2xl font-black text-slate-900">
+            <h3 className="text-2xl font-black text-[#3C3C3C]">
               {examMode === 'exam' ? 'Đang Tạm Dừng Phòng Thi Thử' : 'Đang Tạm Dừng Luyện Tập'}
             </h3>
-            <p className="mt-1 text-xs font-medium text-slate-500">
+            <p className="mt-1 text-xs font-bold text-[#777777]">
               Màn hình đề thi đã được làm mờ để đảm bảo tính minh bạch. Tiến trình làm bài của bạn đã được sao lưu tự động.
             </p>
 
             {examMode === 'exam' ? (
               /* Exam Mode: 2 Clocks (Frozen Remaining Time + Cumulative Break Clock) */
               <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div className="rounded-2xl bg-slate-100 p-4 border border-slate-200">
-                  <div className="text-[11px] font-black uppercase tracking-wider text-slate-500">
+                <div className="rounded-2xl bg-[#DDF4FF]/50 p-4 border-2 border-[#1CB0F6] border-b-4 border-b-[#1899D6]">
+                  <div className="text-[11px] font-black uppercase tracking-wider text-[#1899D6]">
                     Đồng hồ 1 · Thời gian còn lại
                   </div>
-                  <div className="mt-1.5 font-mono text-2xl font-black text-slate-900">
+                  <div className="mt-1.5 font-mono text-2xl font-black text-[#3C3C3C]">
                     {formatClock(timeRemainingSeconds)}
                   </div>
-                  <span className="mt-1 inline-block text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
+                  <span className="mt-1 inline-block text-[10px] font-black text-[#1899D6] bg-white px-2.5 py-0.5 rounded-lg border border-[#1CB0F6]">
                     Đang đóng băng
                   </span>
                 </div>
 
-                <div className="rounded-2xl bg-amber-50 p-4 border border-amber-200">
-                  <div className="text-[11px] font-black uppercase tracking-wider text-amber-700">
+                <div className="rounded-2xl bg-[#FFF4E5] p-4 border-2 border-[#FF9600] border-b-4 border-b-[#E58700]">
+                  <div className="text-[11px] font-black uppercase tracking-wider text-[#E58700]">
                     Đồng hồ 2 · Tổng thời gian nghỉ
                   </div>
-                  <div className="mt-1.5 font-mono text-2xl font-black text-amber-600">
+                  <div className="mt-1.5 font-mono text-2xl font-black text-[#FF9600]">
                     {formatClock(totalPausedSeconds)}
                   </div>
-                  <span className="mt-1 inline-block text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md">
+                  <span className="mt-1 inline-block text-[10px] font-black text-[#E58700] bg-white px-2.5 py-0.5 rounded-lg border border-[#FF9600]">
                     Đang đếm cộng dồn
                   </span>
                 </div>
@@ -2790,26 +2879,26 @@ export default function App() {
             ) : (
               /* Practice Mode: Elapsed Study Time Clock */
               <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div className="rounded-2xl bg-lime-50 p-4 border border-lime-200">
-                  <div className="text-[11px] font-black uppercase tracking-wider text-[#2E7D32]">
+                <div className="rounded-2xl bg-[#D7FFB8]/50 p-4 border-2 border-[#58CC02] border-b-4 border-b-[#46A302]">
+                  <div className="text-[11px] font-black uppercase tracking-wider text-[#46A302]">
                     Thời gian đã luyện tập
                   </div>
-                  <div className="mt-1.5 font-mono text-2xl font-black text-[#1B5E20]">
+                  <div className="mt-1.5 font-mono text-2xl font-black text-[#2B6600]">
                     {formatClock(elapsedSeconds)}
                   </div>
-                  <span className="mt-1 inline-block text-[10px] font-bold text-[#2E7D32]">
+                  <span className="mt-1 inline-block text-[10px] font-black text-[#46A302]">
                     Đã tạm dừng đếm giờ
                   </span>
                 </div>
 
-                <div className="rounded-2xl bg-amber-50 p-4 border border-amber-200">
-                  <div className="text-[11px] font-black uppercase tracking-wider text-amber-700">
+                <div className="rounded-2xl bg-[#FFF4E5] p-4 border-2 border-[#FF9600] border-b-4 border-b-[#E58700]">
+                  <div className="text-[11px] font-black uppercase tracking-wider text-[#E58700]">
                     Thời gian nghỉ giải lao
                   </div>
-                  <div className="mt-1.5 font-mono text-2xl font-black text-amber-600">
+                  <div className="mt-1.5 font-mono text-2xl font-black text-[#FF9600]">
                     {formatClock(totalPausedSeconds)}
                   </div>
-                  <span className="mt-1 inline-block text-[10px] font-bold text-amber-700">
+                  <span className="mt-1 inline-block text-[10px] font-black text-[#E58700]">
                     Đang cộng dồn
                   </span>
                 </div>
@@ -2820,7 +2909,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setIsPaused(false)}
-                className="w-full sm:flex-1 flex items-center justify-center gap-2 py-3 px-5 rounded-2xl bg-[#58CC02] hover:bg-[#46a302] text-white text-sm font-black shadow-md border-b-2 border-[#3c8c02] transition-all cursor-pointer"
+                className="btn-duo-green w-full sm:flex-1 flex items-center justify-center gap-2 py-3.5 px-5 rounded-2xl text-sm font-black cursor-pointer"
               >
                 <Play className="h-4 w-4 fill-white" />
                 <span>Tiếp tục làm bài</span>
@@ -2830,10 +2919,10 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleSaveAndExitPractice}
-                  className="w-full sm:flex-1 flex items-center justify-center gap-2 py-3 px-5 rounded-2xl border-2 border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-black transition-all cursor-pointer"
+                  className="btn-duo-white w-full sm:flex-1 flex items-center justify-center gap-2 py-3.5 px-5 rounded-2xl text-sm font-black cursor-pointer"
                 >
-                  <Save className="h-4 w-4 text-indigo-600" />
-                  <span>Lưu & Làm tiếp sau</span>
+                  <Save className="h-4 w-4 text-[#1CB0F6]" />
+                  <span>Lưu &amp; Làm tiếp sau</span>
                 </button>
               )}
             </div>
@@ -2844,20 +2933,20 @@ export default function App() {
       {/* TIME'S UP AUTO-SUBMIT MODAL (Item 15) */}
       {isTimeUpModalOpen && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl border border-rose-200">
-            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-rose-100 text-rose-600">
+          <div className="w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl border-2 border-[#FF4B4B] border-b-8 border-b-[#EA2B2B]">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFDFE0] text-[#FF4B4B] border-2 border-[#FF4B4B] border-b-4 border-b-[#EA2B2B]">
               <AlertTriangle className="h-9 w-9" />
             </div>
-            <h3 className="text-2xl font-black text-slate-900">Đã hết thời gian làm bài!</h3>
-            <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+            <h3 className="text-2xl font-black text-[#3C3C3C]">Đã hết thời gian làm bài!</h3>
+            <p className="mt-2 text-xs font-bold text-[#777777] leading-relaxed">
               Thời gian làm bài đã kết thúc. Hệ thống đã tự động ghi nhận toàn bộ câu trả lời của bạn để chấm điểm.
             </p>
             <button
               type="button"
-              onClick={submitExamAndSave}
-              className="mt-6 w-full py-3.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-black text-sm shadow-lg transition-all cursor-pointer"
+              onClick={() => submitExamAndSave()}
+              className="btn-duo-red mt-6 w-full py-3.5 rounded-2xl font-black text-sm cursor-pointer"
             >
-              Nộp bài & Xem Kết Quả Ngay
+              Nộp bài &amp; Xem Kết Quả Ngay
             </button>
           </div>
         </div>

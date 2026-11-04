@@ -135,12 +135,18 @@ export interface InProgressAttempt {
   flagged: Record<number, boolean>;
   writingSubmission: WritingSubmission;
   speakingSubmission?: SpeakingSubmission;
+  writingDraft?: WritingSubmission;
+  speakingDraft?: SpeakingSubmission;
   timeRemainingSeconds: number;
+  remainingSeconds?: number;
   elapsedSeconds: number;
   totalPausedSeconds: number;
   currentGroupIndex: number;
   activeQuestionId: number;
   savedAt: number;
+  lastUpdatedAt?: number;
+  practiceAuditLogs?: PracticeAuditEntry[];
+  practiceLockedAnswers?: Record<number, boolean>;
 }
 
 export interface ExamSessionState {
@@ -195,6 +201,13 @@ export interface UserProfile {
   lastActiveAt?: number;
 }
 
+export interface PracticeAuditEntry {
+  qId: number;
+  selectedAnswer: string;
+  isCorrect: boolean;
+  practicedAt: number;
+}
+
 export interface UserExamAttempt {
   attemptId: string;
   testId: string;
@@ -218,6 +231,8 @@ export interface UserExamAttempt {
   aiWritingEvaluation?: any;
   aiDiagnosticReport?: any;
   selectedParts?: string[];
+  practiceAuditLogs?: PracticeAuditEntry[];
+  practicedQuestionsCount?: number;
 }
 
 /**

@@ -342,6 +342,17 @@ export function computeVocabStatsFromPartition(
   const learningKeys = new Set<string>();
   let latestTimestamp = 0;
 
+  const levelBreakdown = {
+    lv0: 0,
+    lv1: 0,
+    lv2: 0,
+    lv3: 0,
+    lv4: 0,
+    lv5: 0,
+  };
+  let dueWordsCount = 0;
+  const now = Date.now();
+
   Object.values(knownMap).forEach((rec) => {
     if (!rec) return;
     if (rec.updatedAt && rec.updatedAt > latestTimestamp) {
@@ -358,6 +369,19 @@ export function computeVocabStatsFromPartition(
     if (revTime > latestTimestamp) {
       latestTimestamp = revTime;
     }
+    const lv = Math.max(0, Math.min(5, Math.floor(Number(rec.srsLevel) || 0)));
+    if (lv === 0) levelBreakdown.lv0++;
+    else if (lv === 1) levelBreakdown.lv1++;
+    else if (lv === 2) levelBreakdown.lv2++;
+    else if (lv === 3) levelBreakdown.lv3++;
+    else if (lv === 4) levelBreakdown.lv4++;
+    else levelBreakdown.lv5++;
+
+    const dueTimestamp = (rec as any).nextReviewAt || (rec as any).dueAt || 0;
+    if (dueTimestamp > 0 && dueTimestamp <= now) {
+      dueWordsCount++;
+    }
+
     if (rec.srsLevel >= 4) {
       masteredKeys.add(rec.wordKey);
       learningKeys.delete(rec.wordKey);
@@ -365,6 +389,12 @@ export function computeVocabStatsFromPartition(
       learningKeys.add(rec.wordKey);
     }
   });
+
+  // Ensure knownMap words not in srsMap are counted in lv5
+  const srsHighCount = levelBreakdown.lv4 + levelBreakdown.lv5;
+  if (masteredKeys.size > srsHighCount) {
+    levelBreakdown.lv5 += masteredKeys.size - srsHighCount;
+  }
 
   sessionHistory.forEach((sess) => {
     if (sess?.savedAt && sess.savedAt > latestTimestamp) {
@@ -378,6 +408,11 @@ export function computeVocabStatsFromPartition(
       });
     }
   });
+
+  const srsLowCount = levelBreakdown.lv1 + levelBreakdown.lv2 + levelBreakdown.lv3;
+  if (learningKeys.size > srsLowCount) {
+    levelBreakdown.lv1 += learningKeys.size - srsLowCount;
+  }
 
   const referenceDecks =
     allDecks && allDecks.length > 0 ? allDecks : generateDefault15TopicDecks();
@@ -454,14 +489,34 @@ export function computeVocabStatsFromPartition(
     (sum, d) => sum + (d.itemCount || (Array.isArray(d.items) ? d.items.length : 0)),
     0
   );
+  const effectiveTotalWords = totalWordsInCatalog > 0 ? totalWordsInCatalog : 850;
+  levelBreakdown.lv0 = Math.max(
+    levelBreakdown.lv0,
+    Math.max(0, effectiveTotalWords - masteredKeys.size - learningKeys.size)
+  );
+
+  const recentSessions = sessionHistory.slice(0, 12).map((s: any, idx: number) => ({
+    sessionId: s.sessionId || `sess_${idx}_${s.savedAt || now}`,
+    mode: s.mode || 'flashcard',
+    deckTitle: s.scopeTitle || lastStudiedDeckName || '15 Chủ đề chuẩn B1',
+    scoreEarned: Number(s.pointsEarned || s.scoreEarned || (s.correctCount || 0) * 10) || 0,
+    accuracy: Number(s.accuracy ?? (s.totalQuestions > 0 ? Math.round((s.correctCount / s.totalQuestions) * 100) : 100)) || 0,
+    totalWords: Number(s.totalQuestions || s.totalWords || (Array.isArray(s.attempts) ? s.attempts.length : 10)) || 10,
+    correctWords: Number(s.correctCount || s.correctWords || 0) || 0,
+    completedAt: Number(s.savedAt || s.completedAt || now),
+  }));
 
   return {
-    totalWords: totalWordsInCatalog > 0 ? totalWordsInCatalog : 850,
+    totalWords: effectiveTotalWords,
     masteredCount: masteredKeys.size,
     learningCount: learningKeys.size,
     totalDecks: referenceDecks.length || 15,
     lastStudiedDeckName: lastStudiedDeckName || undefined,
     lastStudiedAt: latestTimestamp > 0 ? latestTimestamp : undefined,
+    totalCoins: typeof state.pointsBalance === 'number' ? state.pointsBalance : undefined,
+    dueWordsCount,
+    levelBreakdown,
+    recentSessions,
     decks: decksSummary,
     updatedAt: Date.now(),
   };
@@ -483,14 +538,16 @@ export async function syncUserVocabStateToCloud(
       ? allDecks.filter((d) => d.isCustom || d.id.startsWith('deck_custom_') || d.id.startsWith('personal_')).length
       : undefined;
 
+    const fullVocabStats = {
+      ...vocabStats,
+      ...(personalDecksCount !== undefined ? { personalDecksCount } : {}),
+    };
+
     const userDocRef = doc(db, 'users', userId);
     await safeSetDoc(
       userDocRef,
       sanitizeForFirestore({
-        vocabStats: {
-          ...vocabStats,
-          ...(personalDecksCount !== undefined ? { personalDecksCount } : {}),
-        },
+        vocabStats: fullVocabStats,
         pointsBalance: state.pointsBalance,
         preferences: {
           audioVolumePercent:
@@ -498,6 +555,18 @@ export async function syncUserVocabStateToCloud(
           updatedAt: Date.now(),
         },
         lastActiveAt: Date.now(),
+      }),
+      { merge: true }
+    );
+
+    // Also sync to auxiliary collection user_vocab_stats/{userId}
+    const auxVocabRef = doc(db, 'user_vocab_stats', userId);
+    await safeSetDoc(
+      auxVocabRef,
+      sanitizeForFirestore({
+        uid: userId,
+        ...fullVocabStats,
+        updatedAt: Date.now(),
       }),
       { merge: true }
     );

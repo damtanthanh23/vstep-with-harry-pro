@@ -197,42 +197,42 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
     return (
       <div className="space-y-6">
         {/* Roadmap Detail Header */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+        <div className="bg-white border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-3xl p-5 sm:p-6 shadow-xs space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-1 max-w-2xl">
+            <div className="space-y-1.5 max-w-2xl">
               <button
                 type="button"
                 onClick={() => setActiveRoadmapId(null)}
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-800 mb-1"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 border-2 border-[#E5E5E5] border-b-3 border-b-[#CECECE] text-xs font-black text-slate-700 mb-1 cursor-pointer active:border-b-0 active:translate-y-0.5 transition-all"
               >
-                <ArrowLeft className="w-4 h-4" />
+                <ArrowLeft className="w-4 h-4 text-[#58CC02]" />
                 Quay lại danh sách lộ trình
               </button>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-extrabold">
+                <span className="px-3 py-0.5 rounded-xl bg-[#D7FFB8] text-[#46A302] border-2 border-[#58CC02] border-b-3 border-b-[#46A302] text-xs font-black">
                   {activeRoadmap.badgeText}
                 </span>
-                <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900">
+                <h2 className="text-xl sm:text-2xl font-black text-slate-900">
                   {activeRoadmap.title}
                 </h2>
               </div>
-              <p className="text-xs sm:text-sm text-slate-600">{activeRoadmap.description}</p>
+              <p className="text-xs sm:text-sm font-semibold text-slate-600">{activeRoadmap.description}</p>
             </div>
 
             {/* Action Buttons: Pin, BXH, Học ngắt quãng (SRS) */}
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2.5">
               <button
                 type="button"
                 onClick={() => handleTogglePin(activeRoadmap.id)}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition ${
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-1 ${
                   isPinned
-                    ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                    ? 'bg-[#FFF5D6] text-[#FF9600] border-2 border-[#FFC800] border-b-4 border-b-[#E5B400]'
+                    : 'btn-duo-white text-slate-700'
                 }`}
               >
                 {isPinned ? (
                   <>
-                    <PinOff className="w-4 h-4 text-amber-600" />
+                    <PinOff className="w-4 h-4 text-[#FF9600]" />
                     Bỏ ghim
                   </>
                 ) : (
@@ -246,9 +246,9 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
               <button
                 type="button"
                 onClick={() => setLeaderboardRoadmapId(activeRoadmap.id)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition"
+                className="btn-duo-white inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-slate-700 text-xs font-black cursor-pointer"
               >
-                <Trophy className="w-4 h-4 text-amber-500" />
+                <Trophy className="w-4 h-4 text-[#FF9600]" />
                 BXH
               </button>
 
@@ -262,7 +262,7 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
                     items: stats.dedupedItems,
                   })
                 }
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-bold shadow-xs transition"
+                className="btn-duo-green inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl text-xs sm:text-sm font-black cursor-pointer"
               >
                 <Layers className="w-4 h-4" />
                 Học ngắt quãng (SRS)
@@ -272,18 +272,18 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
 
           {/* Overall Roadmap Progress Bar */}
           <div className="pt-2 space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm font-bold">
               <span className="text-slate-600">
                 Tiến độ lộ trình ({stats.decks.length} bộ từ):{' '}
-                <strong className="text-emerald-700">
+                <strong className="text-[#46A302] font-black">
                   {stats.knownWords}/{stats.totalWords} từ đã thuộc
                 </strong>
               </span>
-              <span className="font-extrabold text-indigo-600">{stats.percent}%</span>
+              <span className="font-black text-[#46A302]">{stats.percent}%</span>
             </div>
-            <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden border border-slate-200/70">
+            <div className="w-full h-3.5 bg-slate-100 rounded-full overflow-hidden border-2 border-[#E5E5E5] p-0.5">
               <div
-                className="h-full bg-gradient-to-r from-indigo-600 to-emerald-500 transition-all duration-300"
+                className="h-full rounded-full bg-[#58CC02] transition-all duration-300"
                 style={{ width: `${stats.percent}%` }}
               />
             </div>
@@ -304,37 +304,37 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
             return (
               <div
                 key={deck.id}
-                className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs hover:shadow-md hover:border-indigo-300 transition flex flex-col justify-between gap-4"
+                className="bg-white border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] hover:border-[#58CC02] hover:border-b-[#46A302] rounded-3xl p-5 transition-all flex flex-col justify-between gap-4"
               >
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-extrabold">
+                    <span className="px-2.5 py-0.5 rounded-xl bg-slate-100 border-2 border-[#E5E5E5] border-b-3 border-b-[#CECECE] text-slate-700 text-xs font-black">
                       Chặng {idx + 1}
                     </span>
                     {dPercent === 100 && dTotal > 0 && (
-                      <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600">
+                      <span className="inline-flex items-center gap-1 text-xs font-black text-[#46A302]">
                         <CheckCircle2 className="w-4 h-4" />
                         Hoàn thành
                       </span>
                     )}
                   </div>
-                  <h3 className="text-base font-extrabold text-slate-900">{deck.title}</h3>
+                  <h3 className="text-base font-black text-slate-900">{deck.title}</h3>
                   {deck.description && (
-                    <p className="text-xs text-slate-500 line-clamp-2">{deck.description}</p>
+                    <p className="text-xs font-semibold text-slate-500 line-clamp-2">{deck.description}</p>
                   )}
                 </div>
 
                 <div className="space-y-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-600 font-medium">
-                        Đã thuộc: <strong className="text-slate-900">{dKnown}/{dTotal}</strong> từ
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span className="text-slate-600">
+                        Đã thuộc: <strong className="text-slate-900 font-black">{dKnown}/{dTotal}</strong> từ
                       </span>
-                      <span className="font-bold text-indigo-600">{dPercent}%</span>
+                      <span className="font-black text-[#46A302]">{dPercent}%</span>
                     </div>
-                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden border border-[#E5E5E5]">
                       <div
-                        className="h-full bg-emerald-500 transition-all duration-300"
+                        className="h-full bg-[#58CC02] rounded-full transition-all duration-300"
                         style={{ width: `${dPercent}%` }}
                       />
                     </div>
@@ -343,7 +343,7 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
                   <button
                     type="button"
                     onClick={() => onSelectDeck(deck.id)}
-                    className="w-full inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white font-bold text-xs sm:text-sm transition"
+                    className="btn-duo-green w-full inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-2xl font-black text-xs sm:text-sm cursor-pointer"
                   >
                     <span>Vào học bộ từ</span>
                     <ArrowRight className="w-4 h-4" />
@@ -390,8 +390,8 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
       {pinnedRoadmaps.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <Pin className="w-4 h-4 text-amber-500 fill-amber-500" />
-            <h2 className="text-sm sm:text-base font-extrabold text-slate-900">
+            <Pin className="w-4 h-4 text-[#FF9600] fill-[#FF9600]" />
+            <h2 className="text-sm sm:text-base font-black text-slate-900">
               Lộ trình đã ghim ({pinnedRoadmaps.length})
             </h2>
           </div>
@@ -402,53 +402,53 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
               return (
                 <div
                   key={rm.id}
-                  className="bg-gradient-to-br from-indigo-50/70 via-white to-amber-50/30 border-2 border-indigo-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between gap-4"
+                  className="bg-gradient-to-br from-[#D7FFB8]/40 via-white to-[#FFF5D6]/30 border-2 border-[#58CC02] border-b-4 border-b-[#46A302] rounded-3xl p-5 shadow-xs flex flex-col justify-between gap-4"
                 >
                   <div className="space-y-2">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="px-2.5 py-0.5 rounded-md bg-indigo-600 text-white text-xs font-bold">
+                      <span className="px-3 py-0.5 rounded-xl bg-[#58CC02] border-2 border-[#58CC02] border-b-3 border-b-[#46A302] text-white text-xs font-black">
                         {rm.badgeText}
                       </span>
                       <button
                         type="button"
                         onClick={() => handleTogglePin(rm.id)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-600 hover:text-rose-600"
+                        className="btn-duo-white inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-black text-slate-600 hover:text-[#EA2B2B] cursor-pointer"
                       >
                         <PinOff className="w-3.5 h-3.5" />
                         Bỏ ghim
                       </button>
                     </div>
-                    <h3 className="text-base sm:text-lg font-extrabold text-slate-900">
+                    <h3 className="text-base sm:text-lg font-black text-slate-900">
                       {rm.title}
                     </h3>
-                    <p className="text-xs text-slate-600 line-clamp-2">{rm.description}</p>
+                    <p className="text-xs font-semibold text-slate-600 line-clamp-2">{rm.description}</p>
                   </div>
 
                   <div className="space-y-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs font-bold">
                         <span className="text-slate-600">
                           {st.decks.length} bộ từ • Đã thuộc{' '}
-                          <strong className="text-slate-900">
+                          <strong className="text-slate-900 font-black">
                             {st.knownWords}/{st.totalWords}
                           </strong>{' '}
                           từ
                         </span>
-                        <span className="font-extrabold text-indigo-600">{st.percent}%</span>
+                        <span className="font-black text-[#46A302]">{st.percent}%</span>
                       </div>
-                      <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="w-full h-3 bg-white rounded-full overflow-hidden border-2 border-[#58CC02]">
                         <div
-                          className="h-full bg-indigo-600 transition-all duration-300"
+                          className="h-full bg-[#58CC02] transition-all duration-300"
                           style={{ width: `${st.percent}%` }}
                         />
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2.5">
                       <button
                         type="button"
                         onClick={() => setActiveRoadmapId(rm.id)}
-                        className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-bold shadow-2xs transition"
+                        className="btn-duo-green flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-2xl text-xs sm:text-sm font-black cursor-pointer"
                       >
                         <span>Mở lộ trình</span>
                         <ArrowRight className="w-4 h-4" />
@@ -463,7 +463,7 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
                             items: st.dedupedItems,
                           })
                         }
-                        className="px-3.5 py-2.5 rounded-xl border border-indigo-200 bg-white hover:bg-indigo-50 text-indigo-700 text-xs font-bold transition"
+                        className="btn-duo-blue px-3.5 py-2.5 rounded-2xl text-xs font-black cursor-pointer"
                       >
                         Ôn SRS
                       </button>
@@ -477,8 +477,8 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
       )}
 
       {/* Search & Category Filter Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200">
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-3xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE]">
+        <div className="flex flex-wrap items-center gap-2">
           {(
             [
               { id: 'all', label: 'Tất cả lộ trình' },
@@ -492,10 +492,10 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
               key={cat.id}
               type="button"
               onClick={() => setSelectedCategory(cat.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+              className={`px-3.5 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-1 ${
                 selectedCategory === cat.id
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-4 border-b-[#46A302]'
+                  : 'bg-slate-100 text-slate-600 border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] hover:bg-slate-200'
               }`}
             >
               {cat.label}
@@ -504,13 +504,13 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
         </div>
 
         <div className="relative w-full sm:w-64">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Tìm lộ trình học..."
-            className="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+            className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm font-bold border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-2xl bg-slate-50 focus:outline-hidden focus:border-[#58CC02]"
           />
         </div>
       </div>
@@ -524,55 +524,55 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
           return (
             <div
               key={rm.id}
-              className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs hover:shadow-md transition flex flex-col justify-between gap-4"
+              className="bg-white border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] hover:border-[#58CC02] hover:border-b-[#46A302] rounded-3xl p-5 transition-all flex flex-col justify-between gap-4"
             >
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-bold">
+                  <span className="px-3 py-0.5 rounded-xl bg-[#D7FFB8] text-[#46A302] border-2 border-[#58CC02] border-b-3 border-b-[#46A302] text-xs font-black">
                     {rm.badgeText}
                   </span>
                   <button
                     type="button"
                     onClick={() => handleTogglePin(rm.id)}
-                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-semibold transition ${
+                    className={`inline-flex items-center gap-1 px-3 py-1 rounded-xl border-2 border-b-3 text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-0.5 ${
                       isPinned
-                        ? 'bg-amber-50 text-amber-800 border-amber-200'
-                        : 'bg-white text-slate-500 border-slate-200 hover:text-slate-800'
+                        ? 'bg-[#FFF5D6] text-[#FF9600] border-[#FFC800] border-b-[#E5B400]'
+                        : 'bg-white text-slate-500 border-[#E5E5E5] border-b-[#CECECE] hover:text-slate-800'
                     }`}
                   >
                     <Pin className="w-3.5 h-3.5" />
                     {isPinned ? 'Đã ghim' : 'Ghim'}
                   </button>
                 </div>
-                <h3 className="text-base sm:text-lg font-extrabold text-slate-900">{rm.title}</h3>
-                <p className="text-xs text-slate-500">{rm.description}</p>
+                <h3 className="text-base sm:text-lg font-black text-slate-900">{rm.title}</h3>
+                <p className="text-xs font-semibold text-slate-500">{rm.description}</p>
               </div>
 
               <div className="space-y-3">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-xs">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-bold">
                     <span className="text-slate-600">
                       {st.decks.length} bộ từ •{' '}
-                      <strong className="text-slate-900">
+                      <strong className="text-slate-900 font-black">
                         {st.knownWords}/{st.totalWords}
                       </strong>{' '}
                       từ đã thuộc
                     </span>
-                    <span className="font-bold text-indigo-600">{st.percent}%</span>
+                    <span className="font-black text-[#46A302]">{st.percent}%</span>
                   </div>
-                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden border border-[#E5E5E5]">
                     <div
-                      className="h-full bg-emerald-500 transition-all duration-300"
+                      className="h-full bg-[#58CC02] rounded-full transition-all duration-300"
                       style={{ width: `${st.percent}%` }}
                     />
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2.5">
                   <button
                     type="button"
                     onClick={() => setActiveRoadmapId(rm.id)}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold transition"
+                    className="btn-duo-green flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-2xl text-xs sm:text-sm font-black cursor-pointer"
                   >
                     <span>Xem chi tiết {st.decks.length} bộ từ</span>
                     <ArrowRight className="w-4 h-4" />
@@ -580,10 +580,10 @@ export const VocabRoadmapsTab: React.FC<VocabRoadmapsTabProps> = ({
                   <button
                     type="button"
                     onClick={() => setLeaderboardRoadmapId(rm.id)}
-                    className="px-3 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold inline-flex items-center gap-1"
+                    className="btn-duo-white px-3.5 py-2.5 rounded-2xl text-slate-700 text-xs font-black inline-flex items-center gap-1.5 cursor-pointer"
                     title="Bảng xếp hạng lộ trình"
                   >
-                    <Trophy className="w-4 h-4 text-amber-500" />
+                    <Trophy className="w-4 h-4 text-[#FF9600]" />
                     BXH
                   </button>
                 </div>
@@ -634,35 +634,35 @@ const RoadmapLeaderboardModal: React.FC<RoadmapLeaderboardModalProps> = ({
 }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
-      <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-5">
-        <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+      <div className="bg-white border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] rounded-3xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-5">
+        <div className="flex items-center justify-between border-b-2 border-[#E5E5E5] pb-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-2xl bg-[#FFF5D6] border-2 border-[#FFC800] border-b-3 border-b-[#E5B400] text-[#FF9600] flex items-center justify-center">
               <Trophy className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-extrabold text-slate-900">
+              <h3 className="text-base font-black text-slate-900">
                 Bảng Xếp Hạng Lộ Trình (BXH)
               </h3>
-              <p className="text-xs text-slate-500 line-clamp-1">{roadmap.title}</p>
+              <p className="text-xs font-bold text-slate-500 line-clamp-1">{roadmap.title}</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700"
+            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {!isUserAuthenticated || vocabState.userId === 'guest' ? (
-          <div className="p-5 rounded-2xl bg-amber-50/80 border border-amber-200 text-center space-y-2">
-            <Lock className="w-8 h-8 text-amber-600 mx-auto" />
-            <h4 className="text-sm font-extrabold text-slate-900">
+          <div className="p-5 rounded-2xl bg-[#FFF5D6]/80 border-2 border-[#FFC800] border-b-4 border-b-[#E5B400] text-center space-y-2">
+            <Lock className="w-8 h-8 text-[#FF9600] mx-auto" />
+            <h4 className="text-sm font-black text-slate-900">
               Cần đăng nhập và đồng bộ để xem xếp hạng
             </h4>
-            <p className="text-xs text-slate-600">
+            <p className="text-xs font-semibold text-slate-600">
               Tiến độ hiện tại của bạn đang lưu cục bộ trên trình duyệt ({stats.knownWords}/
               {stats.totalWords} từ đã thuộc • {vocabState.pointsBalance} điểm). Hãy đăng nhập tài
               khoản học viên để đồng bộ xếp hạng thật.
@@ -671,14 +671,14 @@ const RoadmapLeaderboardModal: React.FC<RoadmapLeaderboardModalProps> = ({
         ) : (
           <div className="space-y-4">
             {/* Opt-in Privacy Control (Section 17) */}
-            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
+            <div className="p-3.5 rounded-2xl bg-slate-50 border-2 border-[#E5E5E5] border-b-3 border-b-[#CECECE] flex items-center justify-between gap-3">
               <div className="flex items-start gap-2">
-                <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                <ShieldCheck className="w-4 h-4 text-[#58CC02] shrink-0 mt-0.5" />
                 <div>
-                  <div className="text-xs font-bold text-slate-900">
+                  <div className="text-xs font-black text-slate-900">
                     Hiển thị tiến độ của tôi trên BXH công khai
                   </div>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="text-[11px] font-semibold text-slate-500">
                     Mặc định tắt để bảo vệ quyền riêng tư của học viên.
                   </p>
                 </div>
@@ -689,7 +689,7 @@ const RoadmapLeaderboardModal: React.FC<RoadmapLeaderboardModalProps> = ({
                 aria-checked={vocabState.leaderboardOptIn}
                 onClick={onToggleOptIn}
                 className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
-                  vocabState.leaderboardOptIn ? 'bg-indigo-600' : 'bg-slate-300'
+                  vocabState.leaderboardOptIn ? 'bg-[#58CC02]' : 'bg-slate-300'
                 }`}
               >
                 <span
@@ -701,35 +701,35 @@ const RoadmapLeaderboardModal: React.FC<RoadmapLeaderboardModalProps> = ({
             </div>
 
             {/* Verified Current Learner Card */}
-            <div className="p-4 rounded-2xl border-2 border-indigo-200 bg-indigo-50/40 flex items-center justify-between gap-3">
+            <div className="p-4 rounded-2xl border-2 border-[#58CC02] border-b-4 border-b-[#46A302] bg-[#D7FFB8]/40 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <span className="w-8 h-8 rounded-full bg-indigo-600 text-white font-extrabold text-xs flex items-center justify-center">
+                <span className="w-9 h-9 rounded-xl bg-[#58CC02] border-2 border-[#58CC02] border-b-3 border-b-[#46A302] text-white font-black text-xs flex items-center justify-center">
                   #1
                 </span>
                 <div>
-                  <div className="text-sm font-extrabold text-slate-900">
+                  <div className="text-sm font-black text-slate-900">
                     {currentUserDisplayName || 'Học viên (Bạn)'}
                   </div>
-                  <div className="text-xs text-slate-600">
+                  <div className="text-xs font-bold text-slate-600">
                     Đã thuộc {stats.knownWords}/{stats.totalWords} từ ({stats.percent}%)
                   </div>
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-sm font-extrabold text-indigo-700">
+                <div className="text-sm font-black text-[#46A302]">
                   {vocabState.pointsBalance} điểm
                 </div>
-                <div className="text-[10px] text-slate-500">Dữ liệu xác thực</div>
+                <div className="text-[10px] font-bold text-slate-500">Dữ liệu xác thực</div>
               </div>
             </div>
           </div>
         )}
 
-        <div className="flex justify-end pt-2 border-t border-slate-100">
+        <div className="flex justify-end pt-2 border-t-2 border-[#E5E5E5]">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800"
+            className="btn-duo-green px-5 py-2 rounded-2xl text-xs font-black cursor-pointer"
           >
             Đóng
           </button>

@@ -124,5 +124,23 @@ service cloud.firestore {
 
       allow delete: if isAdmin();
     }
+
+    // Unauthenticated & Guest Exam Submissions (allows students like Uyên to submit with name)
+    match /guest_submissions/{submissionId} {
+      allow create: if isValidId(submissionId);
+      allow read, update, delete: if isAdmin();
+    }
+
+    // Auxiliary real-time synchronized target scores per student
+    match /user_target_scores/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner(userId) || isAdmin();
+    }
+
+    // Auxiliary real-time synchronized vocabulary stats per student
+    match /user_vocab_stats/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner(userId) || isAdmin();
+    }
   }
 }

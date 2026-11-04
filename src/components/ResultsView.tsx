@@ -151,7 +151,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   onBackToTests,
   onOpenFeedback,
 }) => {
-  const { currentUser, isAdmin, canManageExams } = useAuth();
+  const { currentUser, isAdmin, canManageExams, signInWithGoogle } = useAuth();
 
   // Main Tab Navigation: 'certificate' | 'analytics' | 'review'
   const [activeMainTab, setActiveMainTab] = useState<'certificate' | 'analytics' | 'review'>('certificate');
@@ -547,9 +547,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
     <div className="min-h-screen bg-slate-100/90 dark:bg-slate-950 py-6 sm:py-8 px-3 sm:px-6 lg:px-8 text-slate-800 dark:text-slate-100 transition-colors">
       <div className="mx-auto max-w-6xl space-y-6">
         {/* Top Bar with Exam Meta & Global CTAs */}
-        <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl bg-white dark:bg-slate-900 p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl bg-white dark:bg-slate-900 p-4 sm:p-5 border-2 border-slate-200 dark:border-slate-800 border-b-4 border-b-slate-300 dark:border-b-slate-950 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#58CC02] to-[#3C8C02] text-white shadow-sm font-black text-xs">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#58CC02] border-b-4 border-[#46A302] text-white shadow-sm font-black text-xs">
               VSTEP
             </div>
             <div>
@@ -558,7 +558,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                   VSTEP Tutor · Khung 6 Bậc Việt Nam (B1–B2–C1)
                 </span>
                 <span className="text-slate-300 dark:text-slate-700">·</span>
-                <span className="text-xs text-slate-500 dark:text-slate-400">
+                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
                   Thời gian: {formatMinutes(timeSpentSeconds)}
                 </span>
               </div>
@@ -572,9 +572,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
             <button
               type="button"
               onClick={onBackToTests}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3.5 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-2xs cursor-pointer"
+              className="btn-duo-white px-3.5 py-2 rounded-2xl text-xs"
             >
-              <Home className="h-4 w-4" />
+              <Home className="h-4 w-4 text-[#58CC02]" />
               <span>Kho đề</span>
             </button>
 
@@ -582,9 +582,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
               <button
                 type="button"
                 onClick={onOpenFeedback}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-lime-300 dark:border-lime-800 bg-lime-50 dark:bg-lime-950/60 hover:bg-lime-100 px-3.5 py-2 text-xs font-extrabold text-[#2B6601] dark:text-[#78E014] transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-2xl border-2 border-[#58CC02] border-b-4 border-b-[#46A302] bg-[#D7FFB8]/65 dark:bg-lime-950/60 hover:bg-[#D7FFB8] px-3.5 py-2 text-xs font-black text-[#2B6601] dark:text-[#78E014] active:border-b-0 active:translate-y-1 transition-all cursor-pointer"
               >
-                <MessageSquareWarning className="h-4 w-4 text-[#58CC02]" />
+                <MessageSquareWarning className="h-4 w-4 text-[#46A302]" />
                 <span className="hidden sm:inline">Góp ý đề</span>
               </button>
             )}
@@ -592,7 +592,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
             <button
               type="button"
               onClick={onRetake}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-[#58CC02] hover:bg-[#46A302] px-4 py-2 text-xs font-black text-white shadow-sm border-b-2 border-[#3C8C02] transition-all cursor-pointer"
+              className="btn-duo-green px-4 py-2 rounded-2xl text-xs"
             >
               <RotateCcw className="h-4 w-4" />
               <span>Thi lại</span>
@@ -600,16 +600,45 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
           </div>
         </div>
 
+        {/* Guest result notification banner */}
+        {!currentUser && (
+          <div className="rounded-3xl bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/50 dark:to-orange-950/40 p-4 sm:p-5 border-2 border-amber-300 dark:border-amber-800 border-b-4 border-b-amber-400 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+            <div className="flex items-center gap-3.5">
+              <div className="h-11 w-11 rounded-2xl bg-[#FF9600] border-b-4 border-[#E58700] text-white flex items-center justify-center shrink-0 shadow-xs font-black">
+                <Sparkles className="h-6 w-6" />
+              </div>
+              <div>
+                <h4 className="text-xs sm:text-sm font-black text-amber-950 dark:text-amber-100 flex items-center gap-2">
+                  <span>Bài nộp của bạn đã được gửi an toàn lên Cloud Firestore!</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-200 uppercase font-black tracking-wider">
+                    Chế độ Khách
+                  </span>
+                </h4>
+                <p className="text-[11px] sm:text-xs text-amber-800 dark:text-amber-300 font-semibold mt-0.5 leading-relaxed">
+                  Để lưu trữ vĩnh viễn vào tài khoản cá nhân, xem biểu đồ tiến trình và được Giáo viên vinh danh trên bảng vàng, hãy đăng nhập bằng tài khoản Google của bạn:
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => signInWithGoogle()}
+              className="btn-duo-green px-5 py-2.5 rounded-2xl text-xs shrink-0"
+            >
+              <span>Đăng nhập Google để gắn kết bài nộp</span>
+            </button>
+          </div>
+        )}
+
         {/* =================================================================== */}
         {/* MAIN 3-TAB NAVIGATION BAR                                           */}
         {/* =================================================================== */}
-        <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-2 p-2 rounded-3xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 border-b-4 border-b-slate-300 dark:border-b-slate-950 shadow-sm overflow-x-auto no-scrollbar">
           <button
             type="button"
             onClick={() => setActiveMainTab('certificate')}
-            className={`flex items-center gap-2 rounded-xl px-4 sm:px-6 py-2.5 text-xs sm:text-sm font-black transition-all cursor-pointer shrink-0 ${
+            className={`flex items-center gap-2 rounded-2xl px-4 sm:px-6 py-2.5 text-xs sm:text-sm font-black transition-all cursor-pointer shrink-0 ${
               activeMainTab === 'certificate'
-                ? 'bg-[#EA580C] text-white shadow-sm'
+                ? 'bg-[#FF9600] text-white border-2 border-[#FF9600] border-b-4 border-b-[#E58700] shadow-sm'
                 : 'text-slate-600 dark:text-slate-300 hover:bg-orange-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -620,9 +649,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
           <button
             type="button"
             onClick={() => setActiveMainTab('analytics')}
-            className={`flex items-center gap-2 rounded-xl px-4 sm:px-6 py-2.5 text-xs sm:text-sm font-black transition-all cursor-pointer shrink-0 ${
+            className={`flex items-center gap-2 rounded-2xl px-4 sm:px-6 py-2.5 text-xs sm:text-sm font-black transition-all cursor-pointer shrink-0 ${
               activeMainTab === 'analytics'
-                ? 'bg-[#58CC02] text-white shadow-sm'
+                ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-4 border-b-[#46A302] shadow-sm'
                 : 'text-slate-600 dark:text-slate-300 hover:bg-lime-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -633,9 +662,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
           <button
             type="button"
             onClick={() => setActiveMainTab('review')}
-            className={`flex items-center gap-2 rounded-xl px-4 sm:px-6 py-2.5 text-xs sm:text-sm font-black transition-all cursor-pointer shrink-0 ${
+            className={`flex items-center gap-2 rounded-2xl px-4 sm:px-6 py-2.5 text-xs sm:text-sm font-black transition-all cursor-pointer shrink-0 ${
               activeMainTab === 'review'
-                ? 'bg-sky-600 text-white shadow-sm'
+                ? 'bg-[#1CB0F6] text-white border-2 border-[#1CB0F6] border-b-4 border-b-[#1899D6] shadow-sm'
                 : 'text-slate-600 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-800'
             }`}
           >
@@ -650,18 +679,18 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
         {activeMainTab === 'certificate' && (
           <div className="space-y-6">
             {/* Certificate Style Selector & Print Toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white dark:bg-slate-900 p-3 sm:p-4 border border-slate-200 dark:border-slate-800 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl bg-white dark:bg-slate-900 p-3.5 sm:p-4 border-2 border-slate-200 dark:border-slate-800 border-b-4 border-b-slate-300 dark:border-b-slate-950 shadow-sm">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mr-1">
+                <span className="text-xs font-black text-slate-500 uppercase tracking-wider mr-1">
                   Chọn mẫu hiển thị:
                 </span>
-                <div className="inline-flex rounded-xl bg-slate-100 dark:bg-slate-800 p-1 border border-slate-200 dark:border-slate-700">
+                <div className="inline-flex rounded-2xl bg-slate-100 dark:bg-slate-800 p-1 border border-slate-200 dark:border-slate-700 gap-1">
                   <button
                     type="button"
                     onClick={() => setCertStyle('certificate')}
-                    className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                    className={`rounded-xl px-3.5 py-1.5 text-xs font-black transition-all cursor-pointer ${
                       certStyle === 'certificate'
-                        ? 'bg-white dark:bg-slate-900 text-[#EA580C] shadow-xs'
+                        ? 'bg-[#FF9600] text-white border-b-2 border-[#E58700] shadow-xs'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
                     }`}
                   >
@@ -670,9 +699,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setCertStyle('report')}
-                    className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                    className={`rounded-xl px-3.5 py-1.5 text-xs font-black transition-all cursor-pointer ${
                       certStyle === 'report'
-                        ? 'bg-white dark:bg-slate-900 text-[#EA580C] shadow-xs'
+                        ? 'bg-[#58CC02] text-white border-b-2 border-[#46A302] shadow-xs'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
                     }`}
                   >
@@ -685,7 +714,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                 <button
                   type="button"
                   onClick={handlePrint}
-                  className="inline-flex items-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition-all cursor-pointer"
+                  className="btn-duo-blue px-4 py-2 rounded-2xl text-xs"
                   title="In trực tiếp hoặc Lưu dưới dạng file PDF"
                 >
                   <Printer className="h-4 w-4" />
@@ -695,7 +724,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveMainTab('analytics')}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-lime-300 dark:border-lime-800 bg-lime-50 dark:bg-lime-950/60 hover:bg-lime-100 px-3.5 py-2 text-xs font-bold text-[#2E7D32] dark:text-[#78E014] transition-colors cursor-pointer"
+                  className="btn-duo-green px-4 py-2 rounded-2xl text-xs"
                 >
                   <BarChart3 className="h-4 w-4" />
                   <span>Xem Phân Tích Điểm</span>
@@ -710,13 +739,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                   /* ========================================================= */
                   /* BELOW 4.0 / 10.0: NO VSTEP CERTIFICATE ISSUED             */
                   /* ========================================================= */
-                  <div className="mx-auto max-w-3xl rounded-3xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xl border-2 border-rose-200 dark:border-rose-900/70 p-8 sm:p-12 text-center space-y-6">
-                    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-rose-100 dark:bg-rose-950/70 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 shadow-xs">
+                  <div className="mx-auto max-w-3xl rounded-3xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-md border-2 border-[#FF4B4B] border-b-4 border-b-[#EA2B2B] p-8 sm:p-12 text-center space-y-6">
+                    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-[#FFDADC] dark:bg-rose-950/70 text-[#EA2B2B] dark:text-rose-400 border-2 border-[#FF4B4B] border-b-4 border-b-[#EA2B2B]">
                       <AlertTriangle className="h-10 w-10" />
                     </div>
 
                     <div className="space-y-2">
-                      <span className="inline-flex items-center gap-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 px-3.5 py-1 text-xs font-black uppercase tracking-wider text-rose-700 dark:text-rose-300">
+                      <span className="inline-flex items-center gap-1.5 rounded-xl bg-[#FFDADC] dark:bg-rose-950/60 border-2 border-[#FF4B4B] border-b-3 border-b-[#EA2B2B] px-3.5 py-1 text-xs font-black uppercase tracking-wider text-[#EA2B2B] dark:text-rose-300">
                         Không Xét Bậc VSTEP · Tổng Điểm: {results.overallScore10.toFixed(1)} / 10.0 (Dưới 4.0)
                       </span>
                       <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">
@@ -728,27 +757,27 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                     </div>
 
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl mx-auto text-left">
-                      <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-3.5">
-                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Listening (Nghe)</span>
-                        <span className="font-mono text-base font-black text-sky-600 dark:text-sky-400">
+                      <div className="rounded-2xl bg-[#DDF4FF]/60 dark:bg-slate-800/60 border-2 border-[#1CB0F6] border-b-4 border-b-[#1899D6] p-3.5">
+                        <span className="text-[10px] font-black uppercase text-[#1899D6] block">Listening (Nghe)</span>
+                        <span className="font-mono text-base font-black text-[#1899D6] dark:text-sky-400">
                           {results.listeningScore10.toFixed(2)} / 10 ({results.listening.rawScore}/35)
                         </span>
                       </div>
-                      <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-3.5">
-                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Reading (Đọc)</span>
-                        <span className="font-mono text-base font-black text-amber-600 dark:text-amber-400">
+                      <div className="rounded-2xl bg-[#D7FFB8]/60 dark:bg-slate-800/60 border-2 border-[#58CC02] border-b-4 border-b-[#46A302] p-3.5">
+                        <span className="text-[10px] font-black uppercase text-[#46A302] block">Reading (Đọc)</span>
+                        <span className="font-mono text-base font-black text-[#46A302] dark:text-emerald-400">
                           {results.readingScore10.toFixed(2)} / 10 ({results.reading.rawScore}/40)
                         </span>
                       </div>
-                      <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-3.5">
-                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Writing (Viết)</span>
-                        <span className="font-mono text-base font-black text-emerald-600 dark:text-emerald-400">
+                      <div className="rounded-2xl bg-[#F3E5FF]/60 dark:bg-slate-800/60 border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8] p-3.5">
+                        <span className="text-[10px] font-black uppercase text-[#A560E8] block">Writing (Viết)</span>
+                        <span className="font-mono text-base font-black text-[#A560E8] dark:text-purple-400">
                           {results.writing ? `${(results.writingScore10 ?? 0).toFixed(2)} / 10` : 'Chưa nộp'}
                         </span>
                       </div>
-                      <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-3.5">
-                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Speaking (Nói)</span>
-                        <span className="font-mono text-base font-black text-rose-600 dark:text-rose-400">
+                      <div className="rounded-2xl bg-[#FFDADC]/60 dark:bg-slate-800/60 border-2 border-[#FF4B4B] border-b-4 border-b-[#EA2B2B] p-3.5">
+                        <span className="text-[10px] font-black uppercase text-[#EA2B2B] block">Speaking (Nói)</span>
+                        <span className="font-mono text-base font-black text-[#EA2B2B] dark:text-rose-400">
                           {results.speaking ? `${(results.speakingScore10 ?? 0).toFixed(2)} / 10` : 'Chưa nộp'}
                         </span>
                       </div>
@@ -758,7 +787,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                       <button
                         type="button"
                         onClick={() => setCertStyle('report')}
-                        className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 px-5 py-3 text-xs font-black text-white shadow-sm transition-all cursor-pointer"
+                        className="btn-duo-blue inline-flex items-center gap-2 rounded-2xl px-5 py-3 text-xs font-black cursor-pointer"
                       >
                         <FileText className="h-4 w-4" />
                         <span>Xem Phiếu Báo Điểm (Score Card)</span>
@@ -767,16 +796,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                       <button
                         type="button"
                         onClick={() => setActiveMainTab('review')}
-                        className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 px-5 py-3 text-xs font-black text-slate-700 dark:text-slate-200 transition-all cursor-pointer"
+                        className="btn-duo-white inline-flex items-center gap-2 rounded-2xl px-5 py-3 text-xs font-black text-slate-700 dark:text-slate-200 cursor-pointer"
                       >
-                        <Eye className="h-4 w-4 text-sky-600" />
+                        <Eye className="h-4 w-4 text-[#1CB0F6]" />
                         <span>Xem Giải Thích Từng Câu</span>
                       </button>
 
                       <button
                         type="button"
                         onClick={onRetake}
-                        className="inline-flex items-center gap-2 rounded-2xl bg-[#58CC02] hover:bg-[#46A302] px-5 py-3 text-xs font-black text-white shadow-sm border-b-2 border-[#3C8C02] transition-all cursor-pointer"
+                        className="btn-duo-green inline-flex items-center gap-2 rounded-2xl px-5 py-3 text-xs font-black cursor-pointer"
                       >
                         <RotateCcw className="h-4 w-4" />
                         <span>Thi Lại Ngay</span>
@@ -1201,13 +1230,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
             {/* Top Row: Donut Chart + CEFR Level Card */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
               {/* SVG Donut Chart Card */}
-              <div className="md:col-span-5 rounded-3xl bg-white dark:bg-slate-900 p-6 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+              <div className="md:col-span-5 rounded-3xl bg-white dark:bg-slate-900 p-6 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 shadow-xs flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-black uppercase tracking-wider text-slate-500">
                       Điểm Tổng Kết Thang 10
                     </span>
-                    <span className="text-xs font-bold text-[#3C8C02] dark:text-[#78E014]">
+                    <span className="inline-flex items-center rounded-xl bg-[#D7FFB8] dark:bg-lime-950/60 border-2 border-[#58CC02] border-b-3 border-b-[#46A302] px-2.5 py-0.5 text-[11px] font-black text-[#46A302] dark:text-[#78E014]">
                       Chuẩn VSTEP Bộ GD&ĐT
                     </span>
                   </div>
@@ -1246,37 +1275,37 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                         {results.overallScore10.toFixed(1)}
                       </span>
                       <span className="text-xs font-bold text-slate-400">/ 10.0 điểm</span>
-                      <span className="mt-1 inline-block text-[11px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                      <span className="mt-1 inline-block text-[11px] font-black uppercase tracking-wider text-[#46A302] dark:text-[#58CC02]">
                         {results.cefr.name}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                <div className="border-t border-slate-100 dark:border-slate-800 pt-3 grid grid-cols-3 gap-2 text-center text-xs">
-                  <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-2">
-                    <span className="text-[10px] text-slate-400 block font-bold">Bậc 3 (B1):</span>
-                    <span className="font-mono font-black text-sky-600">4.0 – 5.5</span>
+                <div className="border-t-2 border-[#E5E5E5] dark:border-slate-800 pt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="rounded-xl bg-[#DDF4FF]/60 dark:bg-slate-800/50 border-2 border-[#1CB0F6] border-b-3 border-b-[#1899D6] p-2">
+                    <span className="text-[10px] text-[#1899D6] block font-black">Bậc 3 (B1):</span>
+                    <span className="font-mono font-black text-[#1899D6]">4.0 – 5.5</span>
                   </div>
-                  <div className="rounded-xl bg-lime-50 dark:bg-lime-950/30 p-2">
-                    <span className="text-[10px] text-lime-700 dark:text-lime-400 block font-bold">Bậc 4 (B2):</span>
-                    <span className="font-mono font-black text-[#3C8C02]">6.0 – 8.0</span>
+                  <div className="rounded-xl bg-[#D7FFB8]/60 dark:bg-lime-950/30 border-2 border-[#58CC02] border-b-3 border-b-[#46A302] p-2">
+                    <span className="text-[10px] text-[#46A302] dark:text-lime-400 block font-black">Bậc 4 (B2):</span>
+                    <span className="font-mono font-black text-[#46A302]">6.0 – 8.0</span>
                   </div>
-                  <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 p-2">
-                    <span className="text-[10px] text-amber-600 dark:text-amber-400 block font-bold">Bậc 5 (C1):</span>
-                    <span className="font-mono font-black text-amber-600">8.5 – 10</span>
+                  <div className="rounded-xl bg-[#FFF5D6] dark:bg-amber-950/30 border-2 border-[#FFC800] border-b-3 border-b-[#E5B400] p-2">
+                    <span className="text-[10px] text-[#FF9600] dark:text-amber-400 block font-black">Bậc 5 (C1):</span>
+                    <span className="font-mono font-black text-[#FF9600]">8.5 – 10</span>
                   </div>
                 </div>
               </div>
 
               {/* CEFR Level Mapping & Skill Bars */}
-              <div className="md:col-span-7 rounded-3xl bg-white dark:bg-slate-900 p-6 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between space-y-4">
+              <div className="md:col-span-7 rounded-3xl bg-white dark:bg-slate-900 p-6 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 shadow-xs flex flex-col justify-between space-y-4">
                 <div>
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-black uppercase tracking-wider text-[#3C8C02] dark:text-[#78E014]">
+                    <span className="text-xs font-black uppercase tracking-wider text-[#46A302] dark:text-[#78E014]">
                       Khung Năng Lực Ngoại Ngữ 6 Bậc Dùng Cho Việt Nam (VSTEP)
                     </span>
-                    <span className="rounded-lg bg-lime-100 dark:bg-lime-950 text-[#2B6601] dark:text-[#78E014] px-2.5 py-0.5 text-xs font-black border border-lime-300 dark:border-lime-800">
+                    <span className="rounded-xl bg-[#D7FFB8] dark:bg-lime-950 text-[#46A302] dark:text-[#78E014] px-3 py-1 text-xs font-black border-2 border-[#58CC02] border-b-3 border-b-[#46A302]">
                       {results.cefr.level}
                     </span>
                   </div>
@@ -1288,23 +1317,23 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                   </p>
                 </div>
 
-                {/* 3 Skill Comparative Bars */}
-                <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
+                {/* 4 Skill Comparative Bars */}
+                <div className="space-y-3 pt-3 border-t-2 border-[#E5E5E5] dark:border-slate-800">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-400 block">
                     Điểm Thành Phần Theo Kỹ Năng (Thang điểm 10):
                   </span>
 
                   {/* Listening */}
                   <div>
-                    <div className="flex items-center justify-between text-xs font-bold mb-1">
-                      <span className="flex items-center gap-1.5 text-sky-700 dark:text-sky-300">
+                    <div className="flex items-center justify-between text-xs font-black mb-1">
+                      <span className="flex items-center gap-1.5 text-[#1899D6] dark:text-sky-300">
                         <Headphones className="h-3.5 w-3.5" /> Listening ({results.listening.rawScore}/35 câu đúng)
                       </span>
-                      <span className="font-mono">{results.listeningScore10.toFixed(2)} / 10</span>
+                      <span className="font-mono text-[#1899D6]">{results.listeningScore10.toFixed(2)} / 10</span>
                     </div>
-                    <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                    <div className="h-3 w-full rounded-full bg-slate-100 dark:bg-slate-800 border border-[#E5E5E5] dark:border-slate-700 overflow-hidden">
                       <div
-                        className="h-full bg-sky-500 rounded-full transition-all duration-700"
+                        className="h-full bg-[#1CB0F6] rounded-full transition-all duration-700"
                         style={{ width: `${listeningScale100}%` }}
                       />
                     </div>
@@ -1312,15 +1341,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
                   {/* Reading */}
                   <div>
-                    <div className="flex items-center justify-between text-xs font-bold mb-1">
-                      <span className="flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
+                    <div className="flex items-center justify-between text-xs font-black mb-1">
+                      <span className="flex items-center gap-1.5 text-[#46A302] dark:text-emerald-300">
                         <BookOpen className="h-3.5 w-3.5" /> Reading ({results.reading.rawScore}/40 câu đúng)
                       </span>
-                      <span className="font-mono">{results.readingScore10.toFixed(2)} / 10</span>
+                      <span className="font-mono text-[#46A302]">{results.readingScore10.toFixed(2)} / 10</span>
                     </div>
-                    <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                    <div className="h-3 w-full rounded-full bg-slate-100 dark:bg-slate-800 border border-[#E5E5E5] dark:border-slate-700 overflow-hidden">
                       <div
-                        className="h-full bg-amber-500 rounded-full transition-all duration-700"
+                        className="h-full bg-[#58CC02] rounded-full transition-all duration-700"
                         style={{ width: `${readingScale100}%` }}
                       />
                     </div>
@@ -1328,15 +1357,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
                   {/* Writing */}
                   <div>
-                    <div className="flex items-center justify-between text-xs font-bold mb-1">
-                      <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
+                    <div className="flex items-center justify-between text-xs font-black mb-1">
+                      <span className="flex items-center gap-1.5 text-[#A560E8] dark:text-purple-300">
                         <PenTool className="h-3.5 w-3.5" /> Writing ({results.writing ? 'Task 1 ×1 + Task 2 ×2' : 'Chưa làm'})
                       </span>
-                      <span className="font-mono">{results.writing ? `${(results.writingScore10 ?? 0).toFixed(2)} / 10` : '0.0 / 10'}</span>
+                      <span className="font-mono text-[#A560E8]">{results.writing ? `${(results.writingScore10 ?? 0).toFixed(2)} / 10` : '0.0 / 10'}</span>
                     </div>
-                    <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                    <div className="h-3 w-full rounded-full bg-slate-100 dark:bg-slate-800 border border-[#E5E5E5] dark:border-slate-700 overflow-hidden">
                       <div
-                        className="h-full bg-emerald-500 rounded-full transition-all duration-700"
+                        className="h-full bg-[#CE82FF] rounded-full transition-all duration-700"
                         style={{ width: `${writingScale100}%` }}
                       />
                     </div>
@@ -1344,15 +1373,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
                   {/* Speaking */}
                   <div>
-                    <div className="flex items-center justify-between text-xs font-bold mb-1">
-                      <span className="flex items-center gap-1.5 text-rose-700 dark:text-rose-300">
+                    <div className="flex items-center justify-between text-xs font-black mb-1">
+                      <span className="flex items-center gap-1.5 text-[#EA2B2B] dark:text-rose-300">
                         <Mic className="h-3.5 w-3.5" /> Speaking ({results.speaking ? 'Part 1 + Part 2 + Part 3' : 'Chưa làm'})
                       </span>
-                      <span className="font-mono">{results.speaking ? `${(results.speakingScore10 ?? 0).toFixed(2)} / 10` : '0.0 / 10'}</span>
+                      <span className="font-mono text-[#EA2B2B]">{results.speaking ? `${(results.speakingScore10 ?? 0).toFixed(2)} / 10` : '0.0 / 10'}</span>
                     </div>
-                    <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                    <div className="h-3 w-full rounded-full bg-slate-100 dark:bg-slate-800 border border-[#E5E5E5] dark:border-slate-700 overflow-hidden">
                       <div
-                        className="h-full bg-rose-500 rounded-full transition-all duration-700"
+                        className="h-full bg-[#FF4B4B] rounded-full transition-all duration-700"
                         style={{ width: `${speakingScale100}%` }}
                       />
                     </div>
@@ -1362,14 +1391,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
             </div>
 
             {/* =================================================================== */}
-            {/* STRICT LANGUAGECERT WRITING EXAMINER RUBRIC CARD (Item 3)           */}
+            {/* STRICT VSTEP WRITING EXAMINER RUBRIC CARD (Duolingo 3D Purple/Green)*/}
             {/* =================================================================== */}
             {writingSubmission && (
-              <div className="rounded-3xl bg-white dark:bg-slate-900 border-2 border-emerald-200 dark:border-emerald-900/70 shadow-sm overflow-hidden">
-                <div className="p-5 sm:p-6 border-b border-emerald-100 dark:border-emerald-900/60 bg-gradient-to-r from-emerald-50/70 via-teal-50/40 to-white dark:from-slate-900 dark:to-emerald-950/30 flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-sm">
-                      <PenTool className="h-5 w-5" />
+              <div className="rounded-3xl bg-white dark:bg-slate-900 border-2 border-[#CE82FF] dark:border-purple-800 border-b-4 border-b-[#A560E8] dark:border-b-purple-950 shadow-sm overflow-hidden">
+                <div className="p-5 sm:p-6 border-b-2 border-[#F3E5FF] dark:border-purple-900/60 bg-gradient-to-r from-[#F3E5FF]/60 via-purple-50/30 to-white dark:from-slate-900 dark:to-purple-950/30 flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#CE82FF] border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8] text-white shrink-0">
+                      <PenTool className="h-6 w-6" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -1377,10 +1406,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                           Hội Đồng Chấm Writing Theo Rubrics VSTEP Bộ GD&ĐT (4 Tiêu Chí · Thang 10)
                         </h3>
                         <span
-                          className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider ${
+                          className={`inline-flex items-center gap-1 rounded-xl px-3 py-1 text-[10px] font-black uppercase tracking-wider ${
                             writingEvaluation.isAiGraded
-                              ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
-                              : 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
+                              ? 'bg-[#D7FFB8] dark:bg-emerald-950 text-[#46A302] dark:text-emerald-300 border-2 border-[#58CC02] border-b-3 border-b-[#46A302]'
+                              : 'bg-[#FFF5D6] dark:bg-amber-950 text-[#FF9600] dark:text-amber-300 border-2 border-[#FFC800] border-b-3 border-b-[#E5B400]'
                           }`}
                         >
                           <Sparkles className="h-3 w-3" />
@@ -1391,16 +1420,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                             : 'Chấm theo Rubrics Chuẩn VSTEP'}
                         </span>
                       </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-1">
                         Trọng số VSTEP: (Task 1 + Task 2 × 2) / 3 · Task Fulfillment · Organization · Vocabulary · Grammar
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2.5">
-                    <div className="rounded-xl bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-800 px-3.5 py-1.5 text-right">
-                      <span className="block text-[10px] font-bold uppercase text-slate-400">Điểm Writing VSTEP</span>
-                      <span className="font-mono text-sm font-black text-emerald-700 dark:text-emerald-300">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="rounded-2xl bg-white dark:bg-slate-800 border-2 border-[#CE82FF] dark:border-purple-700 border-b-4 border-b-[#A560E8] px-4 py-2 text-right">
+                      <span className="block text-[10px] font-black uppercase text-slate-400">Điểm Writing VSTEP</span>
+                      <span className="font-mono text-sm font-black text-[#A560E8] dark:text-purple-300">
                         {(results.writingScore10 ?? 0).toFixed(1)} / 10 ({writingEvaluation.task1Score + writingEvaluation.task2Score}/24 raw)
                       </span>
                     </div>
@@ -1409,9 +1438,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                       type="button"
                       disabled={isGradingWritingAi}
                       onClick={handleTriggerAiWritingGrader}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 px-3.5 py-2 text-xs font-black text-white shadow-2xs transition-all cursor-pointer"
+                      className="btn-duo-green inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-xs font-black disabled:opacity-50 cursor-pointer"
                     >
-                      <RefreshCw className={`h-3.5 w-3.5 ${isGradingWritingAi ? 'animate-spin' : ''}`} />
+                      <RefreshCw className={`h-4 w-4 ${isGradingWritingAi ? 'animate-spin' : ''}`} />
                       <span>{isGradingWritingAi ? 'Đang chấm...' : 'Chấm lại bằng AI'}</span>
                     </button>
                   </div>
@@ -1436,25 +1465,25 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                   ].map((item, idx) => (
                     <div
                       key={idx}
-                      className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 p-4 sm:p-5 space-y-4 flex flex-col justify-between"
+                      className="rounded-3xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 bg-slate-50/60 dark:bg-slate-800/40 p-5 space-y-4 flex flex-col justify-between"
                     >
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2.5">
+                      <div className="space-y-3.5">
+                        <div className="flex items-center justify-between border-b-2 border-[#E5E5E5] dark:border-slate-700 pb-3">
                           <div>
-                            <span className="text-xs font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-                              {item.partLabel} ({item.wordCount} từ / mục tiêu {item.task?.minWords || 70}–{item.task?.maxWords || 100} từ)
+                            <span className="text-xs font-black uppercase tracking-wider text-[#A560E8] dark:text-purple-400">
+                              {item.partLabel} ({item.wordCount} từ / mục tiêu {item.task?.minWords || 120}–{item.task?.maxWords || 180} từ)
                             </span>
-                            <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                            <h4 className="text-sm font-black text-slate-900 dark:text-white mt-0.5">
                               {item.task?.title || item.partLabel}
                             </h4>
                           </div>
-                          <div className="rounded-xl bg-emerald-100 dark:bg-emerald-950 px-3 py-1 font-mono text-sm font-black text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800">
+                          <div className="rounded-2xl bg-[#F3E5FF] dark:bg-purple-950 px-3.5 py-1.5 font-mono text-sm font-black text-[#A560E8] dark:text-purple-200 border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8]">
                             {item.breakdown.total} / 12
                           </div>
                         </div>
 
                         {/* 4 Criteria Rubric Bars */}
-                        <div className="grid grid-cols-2 gap-2.5 text-xs">
+                        <div className="grid grid-cols-2 gap-3 text-xs">
                           {[
                             { label: 'Task Fulfilment', val: item.breakdown.taskFulfilment },
                             { label: 'Grammar Range & Acc.', val: item.breakdown.grammar },
@@ -1463,15 +1492,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                           ].map((crit, cIdx) => (
                             <div
                               key={cIdx}
-                              className="rounded-xl bg-white dark:bg-slate-900 p-2.5 border border-slate-200/80 dark:border-slate-700/80"
+                              className="rounded-2xl bg-white dark:bg-slate-900 p-3 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-800"
                             >
-                              <div className="flex items-center justify-between font-bold text-[11px] mb-1">
-                                <span className="text-slate-600 dark:text-slate-300 truncate">{crit.label}</span>
-                                <span className="font-mono text-emerald-700 dark:text-emerald-400">{crit.val}/3</span>
+                              <div className="flex items-center justify-between font-black text-[11px] mb-1.5">
+                                <span className="text-slate-700 dark:text-slate-200 truncate">{crit.label}</span>
+                                <span className="font-mono text-[#A560E8] dark:text-purple-400">{crit.val}/3</span>
                               </div>
-                              <div className="h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                              <div className="h-2.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 border border-[#E5E5E5] dark:border-slate-700 overflow-hidden">
                                 <div
-                                  className="h-full bg-emerald-500 rounded-full transition-all"
+                                  className="h-full bg-[#CE82FF] rounded-full transition-all"
                                   style={{ width: `${(crit.val / 3) * 100}%` }}
                                 />
                               </div>
@@ -1480,7 +1509,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                         </div>
 
                         {/* Candidate Submitted Essay Preview */}
-                        <div className="rounded-xl bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-700 text-xs">
+                        <div className="rounded-2xl bg-white dark:bg-slate-900 p-3.5 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-800 text-xs">
                           <span className="block text-[10px] font-black uppercase text-slate-400 mb-1">
                             Bài làm đã ghi nhận của học sinh:
                           </span>
@@ -1489,16 +1518,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                               {item.text}
                             </p>
                           ) : (
-                            <p className="italic text-rose-500">Học sinh bỏ trống phần viết này (0 điểm).</p>
+                            <p className="italic font-bold text-[#EA2B2B]">Học sinh bỏ trống phần viết này (0 điểm).</p>
                           )}
                         </div>
 
                         {/* Examiner Commentary */}
-                        <div className="rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/80 p-3 text-xs space-y-1.5">
-                          <span className="font-black text-emerald-900 dark:text-emerald-300 block">
+                        <div className="rounded-2xl bg-[#D7FFB8]/40 dark:bg-emerald-950/30 border-2 border-[#58CC02] dark:border-emerald-700 border-b-4 border-b-[#46A302] p-3.5 text-xs space-y-1.5">
+                          <span className="font-black text-[#46A302] dark:text-emerald-300 block">
                             Nhận xét từ Giám khảo:
                           </span>
-                          <p className="text-slate-700 dark:text-slate-200 leading-relaxed">
+                          <p className="text-slate-800 dark:text-slate-200 font-semibold leading-relaxed">
                             {item.breakdown.feedbackVi}
                           </p>
                           {item.breakdown.improvementsVi && item.breakdown.improvementsVi.length > 0 && (
@@ -1512,8 +1541,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
                         {/* Corrected Sample / Upgraded Version if available */}
                         {item.breakdown.correctedSample && (
-                          <div className="rounded-xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/80 p-3 text-xs space-y-1">
-                            <span className="font-black text-indigo-900 dark:text-indigo-300 block">
+                          <div className="rounded-2xl bg-[#F3E5FF]/50 dark:bg-purple-950/30 border-2 border-[#CE82FF] dark:border-purple-800 border-b-4 border-b-[#A560E8] p-3.5 text-xs space-y-1">
+                            <span className="font-black text-[#A560E8] dark:text-purple-300 block">
                               ✨ Bài sửa nâng cấp chuẩn B1 High Pass:
                             </span>
                             <p className="whitespace-pre-line text-slate-700 dark:text-slate-200 leading-relaxed">
@@ -1532,31 +1561,31 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
             {/* VSTEP SPEAKING EXAMINER RUBRIC CARD (5 CRITERIA · THANG 10)          */}
             {/* =================================================================== */}
             {speakingSubmission && (
-              <div className="rounded-3xl bg-white dark:bg-slate-900 border-2 border-rose-200 dark:border-rose-900/70 shadow-sm overflow-hidden">
-                <div className="p-5 sm:p-6 border-b border-rose-100 dark:border-rose-900/60 bg-gradient-to-r from-rose-50/70 via-orange-50/40 to-white dark:from-slate-900 dark:to-rose-950/30 flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-600 text-white shadow-sm">
-                      <Mic className="h-5 w-5" />
+              <div className="rounded-3xl bg-white dark:bg-slate-900 border-2 border-[#FF4B4B] dark:border-rose-800 border-b-4 border-b-[#EA2B2B] dark:border-b-rose-950 shadow-sm overflow-hidden">
+                <div className="p-5 sm:p-6 border-b-2 border-[#FFDADC] dark:border-rose-900/60 bg-gradient-to-r from-[#FFDADC]/60 via-orange-50/30 to-white dark:from-slate-900 dark:to-rose-950/30 flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#FF4B4B] border-2 border-[#FF4B4B] border-b-4 border-b-[#EA2B2B] text-white shrink-0">
+                      <Mic className="h-6 w-6" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
                           Hội Đồng Chấm Speaking Theo Rubrics VSTEP Bộ GD&ĐT (5 Tiêu Chí · Thang 10)
                         </h3>
-                        <span className="inline-flex items-center gap-1 rounded-lg px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
+                        <span className="inline-flex items-center gap-1 rounded-xl px-3 py-1 text-[10px] font-black uppercase tracking-wider bg-[#FFDADC] dark:bg-rose-950 text-[#EA2B2B] dark:text-rose-300 border-2 border-[#FF4B4B] border-b-3 border-b-[#EA2B2B]">
                           <Sparkles className="h-3 w-3" />
                           Chấm Tự Động Theo 5 Tiêu Chí VSTEP
                         </span>
                       </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-1">
                         5 Tiêu chí VSTEP Speaking: Grammar · Vocabulary · Pronunciation · Fluency · Discourse Management
                       </p>
                     </div>
                   </div>
 
-                  <div className="rounded-xl bg-white dark:bg-slate-800 border border-rose-200 dark:border-rose-800 px-3.5 py-1.5 text-right">
-                    <span className="block text-[10px] font-bold uppercase text-slate-400">Điểm Speaking VSTEP</span>
-                    <span className="font-mono text-sm font-black text-rose-700 dark:text-rose-300">
+                  <div className="rounded-2xl bg-white dark:bg-slate-800 border-2 border-[#FF4B4B] dark:border-rose-700 border-b-4 border-b-[#EA2B2B] px-4 py-2 text-right">
+                    <span className="block text-[10px] font-black uppercase text-slate-400">Điểm Speaking VSTEP</span>
+                    <span className="font-mono text-sm font-black text-[#EA2B2B] dark:text-rose-300">
                       {(results.speakingScore10 ?? speakingEvaluation.overallBand10).toFixed(1)} / 10.0
                     </span>
                   </div>
@@ -1594,25 +1623,25 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                   ].map((item, idx) => (
                     <div
                       key={idx}
-                      className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 p-4 space-y-3.5 flex flex-col justify-between"
+                      className="rounded-3xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 bg-slate-50/60 dark:bg-slate-800/40 p-4 sm:p-5 space-y-3.5 flex flex-col justify-between"
                     >
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2.5">
+                      <div className="space-y-3.5">
+                        <div className="flex items-center justify-between border-b-2 border-[#E5E5E5] dark:border-slate-700 pb-3">
                           <div>
-                            <span className="text-[11px] font-black uppercase tracking-wider text-rose-700 dark:text-rose-400 block">
+                            <span className="text-[11px] font-black uppercase tracking-wider text-[#EA2B2B] dark:text-rose-400 block">
                               {item.partLabel}
                             </span>
-                            <span className="text-[11px] text-slate-500">
+                            <span className="text-[11px] font-bold text-slate-500">
                               {item.wordCount} từ {item.durationSec ? `· Thu âm ${item.durationSec}s` : ''}
                             </span>
                           </div>
-                          <div className="rounded-xl bg-rose-100 dark:bg-rose-950 px-2.5 py-1 font-mono text-xs font-black text-rose-800 dark:text-rose-200 border border-rose-300 dark:border-rose-800">
+                          <div className="rounded-2xl bg-[#FFDADC] dark:bg-rose-950 px-3 py-1 font-mono text-xs font-black text-[#EA2B2B] dark:text-rose-200 border-2 border-[#FF4B4B] border-b-4 border-b-[#EA2B2B]">
                             {item.breakdown.total10.toFixed(1)} / 10
                           </div>
                         </div>
 
                         {/* 5 Criteria Rubric Bars */}
-                        <div className="space-y-1.5 text-xs">
+                        <div className="space-y-2 text-xs">
                           {[
                             { label: 'Grammar', val: item.breakdown.grammar },
                             { label: 'Vocabulary', val: item.breakdown.vocabulary },
@@ -1622,15 +1651,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                           ].map((crit, cIdx) => (
                             <div
                               key={cIdx}
-                              className="rounded-lg bg-white dark:bg-slate-900 px-2.5 py-1.5 border border-slate-200/80 dark:border-slate-700/80"
+                              className="rounded-2xl bg-white dark:bg-slate-900 px-3 py-2 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-800"
                             >
-                              <div className="flex items-center justify-between font-bold text-[11px] mb-1">
-                                <span className="text-slate-600 dark:text-slate-300">{crit.label}</span>
-                                <span className="font-mono text-rose-700 dark:text-rose-400">{crit.val}/10</span>
+                              <div className="flex items-center justify-between font-black text-[11px] mb-1">
+                                <span className="text-slate-700 dark:text-slate-200">{crit.label}</span>
+                                <span className="font-mono text-[#EA2B2B] dark:text-rose-400">{crit.val}/10</span>
                               </div>
-                              <div className="h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                              <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 border border-[#E5E5E5] dark:border-slate-700 overflow-hidden">
                                 <div
-                                  className="h-full bg-rose-500 rounded-full transition-all"
+                                  className="h-full bg-[#FF4B4B] rounded-full transition-all"
                                   style={{ width: `${(crit.val / 10) * 100}%` }}
                                 />
                               </div>
@@ -1640,8 +1669,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
                         {/* Audio playback if recorded */}
                         {item.audioUrl && (
-                          <div className="rounded-xl bg-rose-50/70 dark:bg-rose-950/30 p-2.5 border border-rose-200 dark:border-rose-800">
-                            <span className="block text-[10px] font-black uppercase text-rose-700 dark:text-rose-300 mb-1">
+                          <div className="rounded-2xl bg-[#FFDADC]/50 dark:bg-rose-950/30 p-3 border-2 border-[#FF4B4B] dark:border-rose-800 border-b-3 border-b-[#EA2B2B]">
+                            <span className="block text-[10px] font-black uppercase text-[#EA2B2B] dark:text-rose-300 mb-1.5">
                               🎙️ Bản thu âm của thí sinh:
                             </span>
                             <audio src={item.audioUrl} controls className="h-8 w-full" />
@@ -1649,7 +1678,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                         )}
 
                         {/* Candidate Submitted Transcript */}
-                        <div className="rounded-xl bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-700 text-xs">
+                        <div className="rounded-2xl bg-white dark:bg-slate-900 p-3 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-800 text-xs">
                           <span className="block text-[10px] font-black uppercase text-slate-400 mb-1">
                             Nội dung bài nói (Transcript):
                           </span>
@@ -1658,16 +1687,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                               {item.text}
                             </p>
                           ) : (
-                            <p className="italic text-rose-500">Chưa có nội dung văn bản cho phần này.</p>
+                            <p className="italic font-bold text-[#EA2B2B]">Chưa có nội dung văn bản cho phần này.</p>
                           )}
                         </div>
 
                         {/* Examiner Commentary */}
-                        <div className="rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/80 p-3 text-xs space-y-1.5">
-                          <span className="font-black text-rose-900 dark:text-rose-300 block">
+                        <div className="rounded-2xl bg-[#FFDADC]/40 dark:bg-rose-950/30 border-2 border-[#FF4B4B] dark:border-rose-800 border-b-4 border-b-[#EA2B2B] p-3 text-xs space-y-1.5">
+                          <span className="font-black text-[#EA2B2B] dark:text-rose-300 block">
                             Nhận xét từ Giám khảo VSTEP:
                           </span>
-                          <p className="text-slate-700 dark:text-slate-200 leading-relaxed">
+                          <p className="text-slate-800 dark:text-slate-200 font-semibold leading-relaxed">
                             {item.breakdown.feedbackVi}
                           </p>
                           {item.breakdown.improvementsVi && item.breakdown.improvementsVi.length > 0 && (
@@ -1681,11 +1710,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
                         {/* Sample Answer */}
                         {item.task?.sampleAnswer && (
-                          <div className="rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 p-3 text-xs space-y-1">
-                            <span className="font-black text-amber-900 dark:text-amber-300 block">
+                          <div className="rounded-2xl bg-[#FFF5D6] dark:bg-amber-950/30 border-2 border-[#FFC800] dark:border-amber-800 border-b-4 border-b-[#E5B400] p-3 text-xs space-y-1">
+                            <span className="font-black text-[#FF9600] dark:text-amber-300 block">
                               ✨ Bài nói mẫu B2–C1:
                             </span>
-                            <p className="whitespace-pre-line text-slate-700 dark:text-slate-200 leading-relaxed max-h-40 overflow-y-auto">
+                            <p className="whitespace-pre-line text-slate-800 dark:text-slate-200 font-medium leading-relaxed max-h-40 overflow-y-auto">
                               {item.task.sampleAnswer}
                             </p>
                           </div>
@@ -1697,23 +1726,27 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
               </div>
             )}
 
-            {/* 12-Part Performance Matrix Table */}
-            <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-              <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Layers className="h-4 w-4 text-[#EA580C]" />
-                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 dark:text-slate-100">
-                    Bảng Ma Trận Hiệu Suất 12 Phần Thi 4 Kỹ Năng (Part-by-Part Matrix)
-                  </h3>
+            {/* 12-Part Performance Matrix Table (Duolingo 3D Card & Skill Badges) */}
+            <div className="rounded-3xl bg-white dark:bg-slate-900 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 shadow-xs overflow-hidden">
+              <div className="p-5 border-b-2 border-[#E5E5E5] dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#FFF5D6] dark:bg-amber-950/60 border-2 border-[#FFC800] border-b-3 border-b-[#E5B400] text-[#FF9600]">
+                    <Layers className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm sm:text-base font-black uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                      Bảng Ma Trận Hiệu Suất 12 Phần Thi 4 Kỹ Năng (Part-by-Part Matrix)
+                    </h3>
+                    <span className="text-xs font-bold text-slate-500">
+                      Thống kê L · R · W · S & tỷ lệ hoàn thành từng phần
+                    </span>
+                  </div>
                 </div>
-                <span className="text-xs text-slate-500">
-                  Thống kê L · R · W · S & tỷ lệ hoàn thành
-                </span>
               </div>
 
               <div className="overflow-x-auto">
                 <table className="w-full text-xs text-left">
-                  <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-800">
+                  <thead className="bg-slate-100/80 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 font-black uppercase tracking-wider border-b-2 border-[#E5E5E5] dark:border-slate-700">
                     <tr>
                       <th className="p-3.5">Phần Thi</th>
                       <th className="p-3.5">Kỹ Năng</th>
@@ -1725,72 +1758,101 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                       <th className="p-3.5 text-right">Đánh Giá Năng Lực</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {partMatrixRows.map((row) => (
-                      <tr key={row.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-                        <td className="p-3.5 font-bold text-slate-900 dark:text-white">
-                          {row.name}
-                        </td>
-                        <td className="p-3.5 font-semibold text-slate-500">
-                          {row.section}
-                        </td>
-                        <td className="p-3.5 font-mono text-center text-slate-700 dark:text-slate-300">
-                          {row.total}
-                        </td>
-                        <td className="p-3.5 font-mono text-center font-bold text-emerald-600 dark:text-emerald-400">
-                          {row.correct}
-                        </td>
-                        <td className="p-3.5 font-mono text-center font-bold text-rose-500">
-                          {row.wrong}
-                        </td>
-                        <td className="p-3.5 font-mono text-center text-slate-400">
-                          {row.blank}
-                        </td>
-                        <td className="p-3.5 font-mono text-center font-black">
-                          <span
-                            className={
-                              row.percentage >= 75
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : row.percentage >= 50
-                                ? 'text-sky-600 dark:text-sky-400'
-                                : 'text-rose-500'
-                            }
-                          >
-                            {row.percentage}%
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-right">
-                          <span
-                            className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-black ${
-                              row.percentage >= 75
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
-                                : row.percentage >= 50
-                                ? 'bg-sky-50 text-sky-700 border border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-800'
-                                : 'bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800'
-                            }`}
-                          >
-                            {row.statusLabel}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                  <tbody className="divide-y-2 divide-[#F0F0F0] dark:divide-slate-800">
+                    {partMatrixRows.map((row) => {
+                      const skillBadgeStyle =
+                        row.section === 'LISTENING'
+                          ? 'bg-[#DDF4FF] text-[#1899D6] border-[#1CB0F6] border-b-[#1899D6]'
+                          : row.section === 'READING'
+                          ? 'bg-[#D7FFB8] text-[#46A302] border-[#58CC02] border-b-[#46A302]'
+                          : row.section === 'WRITING'
+                          ? 'bg-[#F3E5FF] text-[#A560E8] border-[#CE82FF] border-b-[#A560E8]'
+                          : 'bg-[#FFDADC] text-[#EA2B2B] border-[#FF4B4B] border-b-[#EA2B2B]';
+
+                      return (
+                        <tr key={row.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                          <td className="p-3.5 font-black text-slate-900 dark:text-white">
+                            {row.name}
+                          </td>
+                          <td className="p-3.5">
+                            <span
+                              className={`inline-flex items-center px-2.5 py-0.5 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 border-b-3 ${skillBadgeStyle}`}
+                            >
+                              {row.section}
+                            </span>
+                          </td>
+                          <td className="p-3.5 font-mono text-center font-bold text-slate-700 dark:text-slate-300">
+                            {row.total}
+                          </td>
+                          <td className="p-3.5 font-mono text-center font-black text-[#46A302] dark:text-[#58CC02]">
+                            {row.correct}
+                          </td>
+                          <td className="p-3.5 font-mono text-center font-black text-[#EA2B2B]">
+                            {row.wrong}
+                          </td>
+                          <td className="p-3.5 font-mono text-center font-bold text-slate-400">
+                            {row.blank}
+                          </td>
+                          <td className="p-3.5 font-mono text-center font-black">
+                            <div className="flex flex-col items-center gap-1 min-w-[70px]">
+                              <span
+                                className={
+                                  row.percentage >= 75
+                                    ? 'text-[#46A302] dark:text-[#58CC02]'
+                                    : row.percentage >= 50
+                                    ? 'text-[#1899D6] dark:text-[#1CB0F6]'
+                                    : 'text-[#EA2B2B]'
+                                }
+                              >
+                                {row.percentage}%
+                              </span>
+                              <div className="h-2 w-16 rounded-full bg-slate-100 dark:bg-slate-800 border border-[#E5E5E5] dark:border-slate-700 overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${
+                                    row.percentage >= 75
+                                      ? 'bg-[#58CC02]'
+                                      : row.percentage >= 50
+                                      ? 'bg-[#1CB0F6]'
+                                      : 'bg-[#FF4B4B]'
+                                  }`}
+                                  style={{ width: `${row.percentage}%` }}
+                                />
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-3.5 text-right">
+                            <span
+                              className={`inline-block px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 border-b-3 ${
+                                row.percentage >= 75
+                                  ? 'bg-[#D7FFB8] text-[#46A302] border-[#58CC02] border-b-[#46A302] dark:bg-emerald-950/60 dark:text-emerald-300'
+                                  : row.percentage >= 50
+                                  ? 'bg-[#DDF4FF] text-[#1899D6] border-[#1CB0F6] border-b-[#1899D6] dark:bg-sky-950/60 dark:text-sky-300'
+                                  : 'bg-[#FFDADC] text-[#EA2B2B] border-[#FF4B4B] border-b-[#EA2B2B] dark:bg-rose-950/60 dark:text-rose-300'
+                              }`}
+                            >
+                              {row.statusLabel}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </div>
 
-            {/* AI Diagnostic CTA & Study Plan */}
-            <div className="rounded-3xl border-2 border-indigo-200 dark:border-indigo-900 bg-gradient-to-br from-indigo-50/60 via-purple-50/40 to-white dark:from-slate-900 dark:to-indigo-950/40 p-6 sm:p-8 shadow-sm">
+            {/* AI Diagnostic CTA & Study Plan (Duolingo 3D Purple Card & Button) */}
+            <div className="rounded-3xl border-2 border-[#CE82FF] dark:border-purple-800 border-b-4 border-b-[#A560E8] dark:border-b-purple-950 bg-gradient-to-br from-[#F3E5FF]/50 via-purple-50/30 to-white dark:from-slate-900 dark:to-purple-950/40 p-6 sm:p-8 shadow-xs">
               <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-md">
+                <div className="flex items-center gap-3.5">
+                  <div className="flex h-13 w-13 items-center justify-center rounded-2xl bg-[#CE82FF] border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8] text-white shrink-0">
                     <Sparkles className="h-6 w-6" />
                   </div>
                   <div>
-                    <h3 className="text-base sm:text-lg font-extrabold text-indigo-950 dark:text-indigo-200">
-                      AI Diagnostic & Kế Hoạch Ôn Luyện B1
+                    <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                      AI Diagnostic & Kế Hoạch Ôn Luyện VSTEP B1–B2–C1
                     </h3>
-                    <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                    <p className="text-xs font-bold text-[#A560E8] dark:text-purple-300 mt-0.5">
                       Chẩn đoán điểm mạnh/yếu, nhận xét bài viết và lên lộ trình học tập cá nhân hóa
                     </p>
                   </div>
@@ -1801,7 +1863,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                     type="button"
                     disabled={isAiLoading}
                     onClick={handleRequestAiDiagnostic}
-                    className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white shadow-md hover:bg-indigo-700 active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
+                    className="btn-duo-purple inline-flex items-center gap-2 rounded-2xl px-5 py-3 text-xs font-black disabled:opacity-50 cursor-pointer"
                   >
                     <Sparkles className="h-4 w-4" />
                     <span>{isAiLoading ? 'AI Đang phân tích...' : '✨ Bấm để AI Chẩn đoán chuyên sâu'}</span>
@@ -1810,8 +1872,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
               </div>
 
               {aiData && (
-                <div className="mt-6 pt-6 border-t border-indigo-100 dark:border-indigo-900 space-y-6">
-                  <div className="flex overflow-x-auto pb-1 gap-2 border-b border-indigo-100 dark:border-indigo-900">
+                <div className="mt-6 pt-6 border-t-2 border-[#F3E5FF] dark:border-purple-900 space-y-6">
+                  <div className="flex overflow-x-auto pb-2 gap-2.5 border-b-2 border-[#F3E5FF] dark:border-purple-900">
                     {[
                       { id: 'strengths', label: 'Điểm mạnh', icon: ShieldCheck },
                       { id: 'weaknesses', label: 'Điểm cần khắc phục', icon: AlertTriangle },
@@ -1825,10 +1887,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                           key={tab.id}
                           type="button"
                           onClick={() => setActiveAiTab(tab.id as any)}
-                          className={`flex items-center gap-1.5 shrink-0 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                          className={`flex items-center gap-1.5 shrink-0 rounded-2xl px-4 py-2 text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-1 ${
                             activeAiTab === tab.id
-                              ? 'bg-indigo-600 text-white shadow-2xs'
-                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-indigo-50'
+                              ? 'bg-[#CE82FF] text-white border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8]'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-900 hover:bg-purple-50/50'
                           }`}
                         >
                           <Icon className="h-3.5 w-3.5" />
@@ -1839,13 +1901,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                   </div>
 
                   {activeAiTab === 'strengths' && (
-                    <div className="space-y-2">
+                    <div className="space-y-2.5">
                       {aiData.strengths.map((st, i) => (
                         <div
                           key={i}
-                          className="flex items-start gap-2.5 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/40 p-3.5 text-xs text-emerald-950 dark:text-emerald-100"
+                          className="flex items-start gap-2.5 rounded-2xl border-2 border-[#58CC02] border-b-4 border-b-[#46A302] bg-[#D7FFB8]/40 dark:bg-emerald-950/40 p-3.5 text-xs font-semibold text-slate-800 dark:text-emerald-100"
                         >
-                          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 mt-0.5" />
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-[#46A302] mt-0.5" />
                           <span className="leading-relaxed">{st}</span>
                         </div>
                       ))}
@@ -1853,13 +1915,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                   )}
 
                   {activeAiTab === 'weaknesses' && (
-                    <div className="space-y-2">
+                    <div className="space-y-2.5">
                       {aiData.weaknesses.map((wk, i) => (
                         <div
                           key={i}
-                          className="flex items-start gap-2.5 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/40 p-3.5 text-xs text-amber-950 dark:text-amber-100"
+                          className="flex items-start gap-2.5 rounded-2xl border-2 border-[#FFC800] border-b-4 border-b-[#E5B400] bg-[#FFF5D6]/60 dark:bg-amber-950/40 p-3.5 text-xs font-semibold text-slate-800 dark:text-amber-100"
                         >
-                          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                          <AlertTriangle className="h-4 w-4 shrink-0 text-[#FF9600] mt-0.5" />
                           <span className="leading-relaxed">{wk}</span>
                         </div>
                       ))}
@@ -1867,33 +1929,33 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                   )}
 
                   {activeAiTab === 'writing' && aiData.writingFeedback && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-1">
-                        <span className="font-bold text-indigo-700 dark:text-indigo-300 block">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 text-xs">
+                      <div className="rounded-2xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] bg-white dark:bg-slate-900 p-4 space-y-1">
+                        <span className="font-black text-[#A560E8] dark:text-purple-300 block">
                           Hoàn thành yêu cầu (Task Achievement):
                         </span>
                         <p className="text-slate-600 dark:text-slate-300">
                           {aiData.writingFeedback.taskAchievement}
                         </p>
                       </div>
-                      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-1">
-                        <span className="font-bold text-indigo-700 dark:text-indigo-300 block">
+                      <div className="rounded-2xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] bg-white dark:bg-slate-900 p-4 space-y-1">
+                        <span className="font-black text-[#A560E8] dark:text-purple-300 block">
                           Độ mạch lạc (Coherence):
                         </span>
                         <p className="text-slate-600 dark:text-slate-300">
                           {aiData.writingFeedback.coherence}
                         </p>
                       </div>
-                      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-1">
-                        <span className="font-bold text-indigo-700 dark:text-indigo-300 block">
+                      <div className="rounded-2xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] bg-white dark:bg-slate-900 p-4 space-y-1">
+                        <span className="font-black text-[#A560E8] dark:text-purple-300 block">
                           Vốn từ vựng (Lexical Resource):
                         </span>
                         <p className="text-slate-600 dark:text-slate-300">
                           {aiData.writingFeedback.lexicalResource}
                         </p>
                       </div>
-                      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-1">
-                        <span className="font-bold text-indigo-700 dark:text-indigo-300 block">
+                      <div className="rounded-2xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] bg-white dark:bg-slate-900 p-4 space-y-1">
+                        <span className="font-black text-[#A560E8] dark:text-purple-300 block">
                           Ngữ pháp & Độ chính xác (Grammar):
                         </span>
                         <p className="text-slate-600 dark:text-slate-300">
@@ -1904,18 +1966,18 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                   )}
 
                   {activeAiTab === 'plan' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
                       {aiData.studyPlan.map((p) => (
                         <div
                           key={p.week}
-                          className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-2xs space-y-2"
+                          className="rounded-2xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] bg-white dark:bg-slate-900 p-4 space-y-2"
                         >
-                          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
-                            <span className="font-black text-indigo-700 dark:text-indigo-300">
+                          <div className="flex items-center justify-between border-b-2 border-[#F0F0F0] dark:border-slate-800 pb-2">
+                            <span className="font-black text-[#A560E8] dark:text-purple-300">
                               Tuần {p.week}: {p.title}
                             </span>
                           </div>
-                          <p className="text-slate-600 dark:text-slate-400 font-semibold">
+                          <p className="text-slate-600 dark:text-slate-400 font-bold">
                             Trọng tâm: {p.focusSkills}
                           </p>
                           <ul className="space-y-1 text-slate-600 dark:text-slate-300 list-disc pl-4">
@@ -1930,12 +1992,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
                   {activeAiTab === 'resources' && (
                     <div className="space-y-4 text-xs">
-                      <div className="rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/40 p-4 text-amber-950 dark:text-amber-100 space-y-2">
-                        <div className="flex items-center gap-2 font-bold text-amber-900 dark:text-amber-300">
-                          <Heart className="h-4 w-4 text-rose-500 fill-rose-500" />
+                      <div className="rounded-2xl border-2 border-[#FFC800] border-b-4 border-b-[#E5B400] bg-[#FFF5D6]/70 dark:bg-amber-950/40 p-4 text-slate-900 dark:text-amber-100 space-y-2">
+                        <div className="flex items-center gap-2 font-black text-[#FF9600] dark:text-amber-300">
+                          <Heart className="h-4 w-4 text-[#FF4B4B] fill-[#FF4B4B]" />
                           <span>Lời động viên từ Giảng viên AI:</span>
                         </div>
-                        <p className="leading-relaxed whitespace-pre-line font-medium">
+                        <p className="leading-relaxed whitespace-pre-line font-semibold">
                           {aiData.encouragement}
                         </p>
                       </div>
@@ -1951,30 +2013,30 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
         {/* TAB 3: SMART DETAILED REVIEW SECTION                                */}
         {/* =================================================================== */}
         {activeMainTab === 'review' && (
-          <div className="rounded-3xl border-2 border-lime-400 dark:border-lime-700 bg-white dark:bg-slate-900 p-5 sm:p-8 shadow-lg space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#58CC02] text-white shadow-sm">
+          <div className="rounded-3xl border-2 border-[#58CC02] dark:border-lime-700 border-b-4 border-b-[#46A302] bg-white dark:bg-slate-900 p-5 sm:p-8 shadow-md space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b-2 border-[#E5E5E5] dark:border-slate-800 pb-4">
+              <div className="flex items-center gap-3.5">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#58CC02] border-2 border-[#58CC02] border-b-4 border-b-[#46A302] text-white shrink-0">
                   <Eye className="h-6 w-6" />
                 </div>
                 <div>
                   <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
                     Xem Lại Toàn Bộ Bài Làm, Bằng Chứng & Bản Dịch Song Ngữ
                   </h3>
-                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
                     Đối chiếu câu đúng/sai trực tiếp trên giao diện thi chuẩn hoặc danh sách câu hỏi
                   </p>
                 </div>
               </div>
 
               {/* Mode Switcher: Interactive Full Stage vs Summary List */}
-              <div className="inline-flex rounded-2xl bg-slate-100 dark:bg-slate-800 p-1 border border-slate-200 dark:border-slate-700">
+              <div className="inline-flex rounded-2xl bg-slate-100 dark:bg-slate-800 p-1.5 border-2 border-[#E5E5E5] dark:border-slate-700 gap-1.5">
                 <button
                   type="button"
                   onClick={() => setReviewDisplayMode('interactive')}
-                  className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-black transition-all cursor-pointer ${
+                  className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-0.5 ${
                     reviewDisplayMode === 'interactive'
-                      ? 'bg-[#58CC02] text-white shadow-xs'
+                      ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-3 border-b-[#46A302]'
                       : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
@@ -1984,9 +2046,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setReviewDisplayMode('list')}
-                  className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-black transition-all cursor-pointer ${
+                  className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-0.5 ${
                     reviewDisplayMode === 'list'
-                      ? 'bg-[#58CC02] text-white shadow-xs'
+                      ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-3 border-b-[#46A302]'
                       : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
@@ -1999,7 +2061,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
             {reviewDisplayMode === 'interactive' ? (
               <div className="space-y-4">
                 {/* Part Selector Bar */}
-                <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar">
+                <div className="flex items-center gap-2.5 overflow-x-auto pb-2 no-scrollbar">
                   {availableReviewParts.map((part) => {
                     const isSelected = part.id === selectedReviewPartId;
                     return (
@@ -2017,10 +2079,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                             }
                           }
                         }}
-                        className={`rounded-xl px-4 py-2 text-xs font-black transition-all shrink-0 cursor-pointer ${
+                        className={`rounded-2xl px-4 py-2 text-xs font-black transition-all shrink-0 cursor-pointer active:border-b-0 active:translate-y-1 ${
                           isSelected
-                            ? 'bg-[#58CC02] text-white shadow-sm'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200'
+                            ? 'bg-[#58CC02] text-white border-2 border-[#58CC02] border-b-4 border-b-[#46A302]'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-900 hover:bg-slate-200/70'
                         }`}
                       >
                         {part.label}
@@ -2087,16 +2149,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
               /* List Mode */
               <div className="space-y-4">
                 {/* Filter buttons */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2.5">
                   {(['all', 'incorrect', 'correct'] as const).map((mode) => (
                     <button
                       key={mode}
                       type="button"
                       onClick={() => setFilter(mode)}
-                      className={`rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                      className={`rounded-2xl px-4 py-2 text-xs font-black transition-all cursor-pointer active:border-b-0 active:translate-y-1 ${
                         filter === mode
-                          ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-2xs'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                          ? 'bg-[#1CB0F6] text-white border-2 border-[#1CB0F6] border-b-4 border-b-[#1899D6]'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] hover:bg-slate-200'
                       }`}
                     >
                       {mode === 'all'
@@ -2118,10 +2180,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                     return (
                       <div
                         key={q.id}
-                        className={`rounded-2xl border-2 p-4 transition-all ${
+                        className={`rounded-2xl border-2 border-b-4 p-4 transition-all ${
                           isCorrect
-                            ? 'border-emerald-200 dark:border-emerald-900 bg-emerald-50/40 dark:bg-emerald-950/20'
-                            : 'border-rose-200 dark:border-rose-900 bg-rose-50/40 dark:bg-rose-950/20'
+                            ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/25 dark:bg-emerald-950/20'
+                            : 'border-[#FF4B4B] border-b-[#EA2B2B] bg-[#FFDADC]/25 dark:bg-rose-950/20'
                         }`}
                       >
                         <div
@@ -2130,21 +2192,21 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                         >
                           <div className="flex items-center gap-2.5">
                             {isCorrect ? (
-                              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                              <CheckCircle2 className="h-5 w-5 text-[#46A302]" />
                             ) : (
-                              <XCircle className="h-5 w-5 text-rose-500" />
+                              <XCircle className="h-5 w-5 text-[#EA2B2B]" />
                             )}
                             <span className="text-xs font-black uppercase text-slate-500">
                               {getQuestionRelativeDisplay(q)}
                             </span>
-                            <span className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 truncate max-w-md">
+                            <span className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100 truncate max-w-md">
                               {q.prompt}
                             </span>
                           </div>
 
                           <div className="flex items-center gap-3">
-                            <span className="text-xs font-mono font-bold">
-                              Đã chọn: <span className={isCorrect ? 'text-emerald-700' : 'text-rose-600'}>{userVal}</span>
+                            <span className="text-xs font-mono font-black">
+                              Đã chọn: <span className={isCorrect ? 'text-[#46A302]' : 'text-[#EA2B2B]'}>{userVal}</span>
                             </span>
                             {isExpanded ? (
                               <ChevronUp className="h-4 w-4 text-slate-400" />
@@ -2155,10 +2217,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                         </div>
 
                         {isExpanded && (
-                          <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2 text-xs">
+                          <div className="mt-3 pt-3 border-t-2 border-[#E5E5E5] dark:border-slate-800 space-y-2 text-xs">
                             <p className="font-bold text-slate-700 dark:text-slate-300">
                               Đáp án chuẩn:{' '}
-                              <span className="text-emerald-600 font-black">
+                              <span className="text-[#46A302] font-black">
                                 {Array.isArray(q.correctAnswer) ? q.correctAnswer.join(' / ') : q.correctAnswer}
                               </span>
                             </p>

@@ -128,7 +128,7 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
     return val !== undefined && val.trim().length > 0;
   };
 
-  // Render question circle with relative number (1..N) and unified section color palette
+  // Render question circle with relative number (1..N) and Duolingo 3D section color palette
   const renderClusterQuestionCircle = (
     qId: number,
     relativeNum: number,
@@ -156,31 +156,31 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
           })()
         : false;
 
-    // Status Styling
+    // 3D Duolingo Tactile Styling
     let colorClasses = '';
     if (isPracticeMode && answered && targetQ) {
       if (isCorrect) {
         colorClasses =
-          'bg-emerald-600 text-white border-2 border-emerald-300 dark:border-emerald-400/60 font-black shadow-xs hover:bg-emerald-700';
+          'bg-[#58CC02] text-white border-2 border-[#46A302] border-b-4 border-b-[#2B6600] font-black hover:bg-[#61E002]';
       } else {
         colorClasses =
-          'bg-rose-600 text-white border-2 border-rose-300 dark:border-rose-400/60 font-black shadow-xs hover:bg-rose-700';
+          'bg-[#FF4B4B] text-white border-2 border-[#EA2B2B] border-b-4 border-b-[#C91D1D] font-black hover:bg-[#FF6262]';
       }
     } else if (answered) {
       colorClasses =
         section === 'LISTENING'
-          ? 'bg-[#58CC02] text-white border-[#46A302] shadow-xs hover:bg-[#46A302]'
-          : 'bg-[#2E7D32] text-white border-[#1B5E20] shadow-xs hover:bg-[#1B5E20]';
+          ? 'bg-[#1CB0F6] text-white border-2 border-[#1899D6] border-b-4 border-b-[#0E74A5] font-black hover:bg-[#29B9FF]'
+          : 'bg-[#58CC02] text-white border-2 border-[#46A302] border-b-4 border-b-[#2B6600] font-black hover:bg-[#61E002]';
     } else {
       colorClasses =
         section === 'LISTENING'
-          ? 'bg-lime-50/80 dark:bg-slate-800 text-lime-950 dark:text-lime-200 border-2 border-[#84CC16] dark:border-lime-600/70 hover:bg-lime-100 dark:hover:bg-slate-700'
-          : 'bg-emerald-50/80 dark:bg-slate-800 text-emerald-950 dark:text-emerald-200 border-2 border-[#2E7D32]/60 dark:border-emerald-600/70 hover:bg-emerald-100 dark:hover:bg-slate-700';
+          ? 'bg-[#DDF4FF]/65 dark:bg-slate-800 text-[#0E74A5] dark:text-sky-200 border-2 border-[#1CB0F6] border-b-4 border-b-[#1899D6] hover:bg-[#DDF4FF] font-black'
+          : 'bg-[#D7FFB8]/65 dark:bg-slate-800 text-[#2B6600] dark:text-lime-200 border-2 border-[#58CC02] border-b-4 border-b-[#46A302] hover:bg-[#D7FFB8] font-black';
     }
 
     const activeGlowClasses = isCurrent
-      ? 'ring-4 ring-amber-400 ring-offset-2 dark:ring-offset-slate-900 scale-110 z-10 font-black shadow-md'
-      : 'font-bold';
+      ? 'ring-4 ring-[#FFC800] ring-offset-2 dark:ring-offset-slate-900 scale-105 z-10 font-black'
+      : 'active:border-b-2 active:translate-y-0.5';
 
     const statusText =
       isPracticeMode && answered
@@ -208,7 +208,7 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
           )}
         </span>
         {isFlagged && (
-          <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-amber-500 ring-2 ring-white dark:ring-slate-900" />
+          <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-[#FF9600] ring-2 ring-white dark:ring-slate-900" />
         )}
       </button>
     );
@@ -219,21 +219,23 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
     const section: 'LISTENING' | 'READING' = isListening ? 'LISTENING' : 'READING';
     const answeredInCluster = cluster.questionIds.filter(isAnswered).length;
     const isClusterActive =
-      activeSection !== 'WRITING' && cluster.questionIds.includes(activeQuestionId);
+      activeSection !== 'WRITING' &&
+      activeSection !== 'SPEAKING' &&
+      cluster.questionIds.includes(activeQuestionId);
 
     const headerBannerClass = isListening
-      ? 'bg-[#58CC02] text-white shadow-2xs'
-      : 'bg-[#2E7D32] text-white shadow-2xs';
+      ? 'bg-[#1CB0F6] border-2 border-[#1899D6] border-b-3 border-b-[#0E74A5] text-white'
+      : 'bg-[#58CC02] border-2 border-[#46A302] border-b-3 border-b-[#2B6600] text-white';
 
     return (
       <div
         key={cluster.code}
-        className={`rounded-2xl border p-3 transition-all ${
+        className={`rounded-2xl border-2 border-b-4 p-3 transition-all ${
           isClusterActive
-            ? 'border-amber-400 bg-amber-50/30 dark:bg-amber-950/25 shadow-xs ring-1 ring-amber-300 dark:ring-amber-500/50'
+            ? 'border-[#FFC800] border-b-[#E58700] bg-amber-50/40 dark:bg-amber-950/25 shadow-xs'
             : isListening
-            ? 'border-lime-200 dark:border-slate-700 bg-white dark:bg-slate-800/80'
-            : 'border-emerald-200 dark:border-slate-700 bg-white dark:bg-slate-800/80'
+            ? 'border-[#DDF4FF] border-b-[#BAE6FD] dark:border-slate-700 bg-white dark:bg-slate-800/80'
+            : 'border-[#D7FFB8] border-b-[#B8F28B] dark:border-slate-700 bg-white dark:bg-slate-800/80'
         }`}
       >
         <div
@@ -242,7 +244,7 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
           <span className="flex items-center gap-1.5">
             <span>{cluster.partLabel}</span>
             {isClusterActive && (
-              <span className="h-2 w-2 rounded-full bg-amber-300 animate-ping" />
+              <span className="h-2 w-2 rounded-full bg-[#FFC800] animate-ping" />
             )}
           </span>
           <span className="font-mono text-[11px] bg-black/20 px-2 py-0.5 rounded-md">
@@ -250,7 +252,7 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
           </span>
         </div>
 
-        <div className="grid grid-cols-5 sm:grid-cols-6 gap-1.5">
+        <div className="grid grid-cols-5 sm:grid-cols-6 gap-2">
           {cluster.questionIds.map((qId) =>
             renderClusterQuestionCircle(qId, qId <= 35 ? qId : qId - 35, section)
           )}
@@ -258,11 +260,6 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
       </div>
     );
   };
-
-  const allActiveObjectiveIds = [
-    ...activeListeningClusters.flatMap((c) => c.questionIds),
-    ...activeReadingClusters.flatMap((c) => c.questionIds),
-  ];
 
   const task1Done = (writingSubmission?.task1WordCount || 0) > 0;
   const task2Done = (writingSubmission?.task2WordCount || 0) > 0;
@@ -276,6 +273,16 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
     (speakingSubmission?.part3WordCount || 0) > 0 ||
     Boolean(speakingSubmission?.part3AudioUrl || speakingSubmission?.part3AudioDataUrl);
 
+  const renderSpeakingStatusLabel = (
+    hasAudio: boolean,
+    wordCount: number
+  ) => {
+    if (hasAudio && wordCount > 0) return `Đã thu · ${wordCount} từ`;
+    if (hasAudio) return 'Đã thu âm';
+    if (wordCount > 0) return `${wordCount} từ`;
+    return 'Chưa thu';
+  };
+
   return (
     <>
       {/* Optional subtle backdrop when open so clicking outside also closes cleanly on smaller screens */}
@@ -287,7 +294,7 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
         />
       )}
 
-      {/* Floating Vertical Tab */}
+      {/* Floating Vertical Tab (3D Duolingo Green) */}
       <div
         className={`fixed top-1/2 -translate-y-1/2 z-50 transition-all duration-300 ${
           isOpen ? 'right-80 sm:right-88' : 'right-0'
@@ -296,14 +303,14 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
         <button
           type="button"
           onClick={onToggle}
-          className="flex items-center gap-1.5 rounded-l-2xl bg-[#2E7D32] dark:bg-emerald-700 py-4 px-2 text-white shadow-lg hover:bg-[#1B5E20] dark:hover:bg-emerald-600 active:scale-95 transition-all cursor-pointer border-y-2 border-l-2 border-white/20 dark:border-slate-700"
+          className="flex items-center gap-1.5 rounded-l-2xl bg-[#58CC02] hover:bg-[#61E002] py-4 px-2.5 text-white shadow-lg border-y-2 border-l-2 border-[#46A302] border-b-4 border-b-[#2B6600] active:translate-y-0.5 transition-all cursor-pointer"
           title="Mở / Đóng Bảng Tổng Quan (Summary Board)"
         >
           {isOpen ? (
-            <ChevronRight className="h-5 w-5" />
+            <ChevronRight className="h-5 w-5 stroke-[3]" />
           ) : (
             <div className="flex flex-col items-center gap-2">
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="h-4 w-4 stroke-[3]" />
               <span className="[writing-mode:vertical-rl] rotate-180 text-xs font-black tracking-widest uppercase">
                 BẢNG TỔNG QUAN
               </span>
@@ -312,30 +319,30 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
         </button>
       </div>
 
-      {/* Drawer Panel with PeopleCert Hierarchy (z-50 & top-0 so ExamHeader never clips the top header) */}
+      {/* Drawer Panel with Duolingo 3D Hierarchy */}
       <div
-        className={`fixed top-0 bottom-14 right-0 z-50 w-80 sm:w-88 bg-white dark:bg-slate-900 border-l-2 border-slate-200 dark:border-slate-800 shadow-2xl transition-transform duration-300 ease-in-out flex flex-col ${
+        className={`fixed top-0 bottom-14 right-0 z-50 w-80 sm:w-88 bg-white dark:bg-slate-900 border-l-2 border-[#E5E5E5] dark:border-slate-800 shadow-2xl transition-transform duration-300 ease-in-out flex flex-col ${
           isOpen ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
-        {/* Sticky Top Header inside Drawer — 100% visible, never covered */}
-        <div className="sticky top-0 z-10 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xs border-b border-slate-200 dark:border-slate-800 px-5 py-3.5 shrink-0 space-y-3">
+        {/* Sticky Top Header inside Drawer */}
+        <div className="sticky top-0 z-10 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xs border-b-2 border-[#E5E5E5] dark:border-slate-800 px-5 py-3.5 shrink-0 space-y-3">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <span className="block text-[10px] font-black uppercase tracking-widest text-[#16A34A] dark:text-[#58CC02]">
+              <span className="block text-[10px] font-black uppercase tracking-widest text-[#58CC02]">
                 VSTEP B1-B2-C1 Exam Navigator
               </span>
-              <h3 className="text-base font-black text-slate-900 dark:text-white leading-tight mt-0.5">
+              <h3 className="text-base font-black text-[#3C3C3C] dark:text-white leading-tight mt-0.5">
                 Bảng Tổng Quan Bài Thi VSTEP
               </h3>
-              <p className="text-xs font-medium text-slate-500 dark:text-slate-400 truncate mt-0.5">
+              <p className="text-xs font-bold text-[#777777] dark:text-slate-400 truncate mt-0.5">
                 {testTitle}
               </p>
             </div>
             <button
               type="button"
               onClick={onToggle}
-              className="rounded-xl p-1.5 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer shrink-0"
+              className="btn-duo-white rounded-xl p-1.5 text-slate-400 hover:text-slate-700 cursor-pointer shrink-0"
               title="Thu gọn bảng tổng quan"
             >
               <X className="h-5 w-5" />
@@ -352,7 +359,7 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
                     onToggle();
                     onSubmitClick();
                   }}
-                  className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-[#58CC02] hover:bg-[#46a302] text-white px-3 py-2 text-xs font-black shadow-md border-b-3 border-[#3c8c02] active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer whitespace-nowrap"
+                  className="btn-duo-green flex-1 flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-black cursor-pointer whitespace-nowrap"
                 >
                   <Check className="h-4 w-4 stroke-[3]" />
                   <span>Nộp bài</span>
@@ -366,10 +373,10 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
                     onToggle();
                     onSaveAndExitPractice();
                   }}
-                  className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border-2 border-emerald-200 dark:border-emerald-800 px-3 py-2 text-xs font-black transition-all cursor-pointer whitespace-nowrap"
+                  className="btn-duo-white flex-1 flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-black text-[#46A302] cursor-pointer whitespace-nowrap"
                   title="Sao lưu tiến trình và thoát ra để lần sau làm tiếp"
                 >
-                  <Save className="h-3.5 w-3.5 shrink-0" />
+                  <Save className="h-3.5 w-3.5 shrink-0 text-[#58CC02]" />
                   <span>Lưu làm tiếp</span>
                 </button>
               )}
@@ -379,16 +386,15 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
 
         {/* Scrollable Body */}
         <div className="p-5 space-y-6 flex-1 overflow-y-auto">
-
-          {/* 1. MAJOR SECTION: LISTENING */}
+          {/* 1. MAJOR SECTION: LISTENING (Macaw Blue #1CB0F6) */}
           {activeListeningClusters.length > 0 && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <h4 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
-                  <Headphones className="h-4 w-4 text-[#2E7D32] dark:text-[#58CC02]" />
+                <h4 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-[#3C3C3C] dark:text-slate-200">
+                  <Headphones className="h-4 w-4 text-[#1CB0F6]" />
                   <span>Listening</span>
                 </h4>
-                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                <span className="text-xs font-black text-[#1899D6] dark:text-sky-400">
                   {
                     activeListeningClusters
                       .flatMap((c) => c.questionIds)
@@ -403,15 +409,15 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
             </div>
           )}
 
-          {/* 2. MAJOR SECTION: READING */}
+          {/* 2. MAJOR SECTION: READING (Feather Green #58CC02) */}
           {activeReadingClusters.length > 0 && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <h4 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
-                  <BookOpen className="h-4 w-4 text-[#65A30D] dark:text-lime-400" />
+                <h4 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-[#3C3C3C] dark:text-slate-200">
+                  <BookOpen className="h-4 w-4 text-[#58CC02]" />
                   <span>Reading</span>
                 </h4>
-                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                <span className="text-xs font-black text-[#46A302] dark:text-lime-400">
                   {
                     activeReadingClusters
                       .flatMap((c) => c.questionIds)
@@ -426,44 +432,50 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
             </div>
           )}
 
-          {/* 3. MAJOR SECTION: WRITING */}
+          {/* 3. MAJOR SECTION: WRITING (Beetle Purple #CE82FF) */}
           {(showWritingPart1 || showWritingPart2) && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <h4 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
-                  <PenTool className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
+                <h4 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-[#3C3C3C] dark:text-slate-200">
+                  <PenTool className="h-4 w-4 text-[#A560E8]" />
                   <span>Writing</span>
                 </h4>
-                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                <span className="text-xs font-black text-[#A560E8]">
                   {(task1Done ? 1 : 0) + (task2Done ? 1 : 0)}/
                   {(showWritingPart1 ? 1 : 0) + (showWritingPart2 ? 1 : 0)} bài
                 </span>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 {showWritingPart1 && (
                   <button
                     type="button"
                     onClick={() => onSelectWritingTask && onSelectWritingTask(0)}
-                    className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-xs font-black transition-all cursor-pointer border-2 ${
+                    className={`w-full flex items-center justify-between rounded-2xl px-3.5 py-3 text-xs font-black transition-all cursor-pointer border-2 border-b-4 active:border-b-2 active:translate-y-0.5 ${
                       activeSection === 'WRITING' && activeWritingTaskIndex === 0
-                        ? 'bg-[#65A30D] text-white border-[#4D7C0F] ring-4 ring-amber-400 ring-offset-1 dark:ring-offset-slate-900 shadow-md scale-[1.01]'
+                        ? 'bg-[#CE82FF] text-white border-[#A560E8] border-b-[#8438C8] ring-3 ring-[#FFC800] ring-offset-1 dark:ring-offset-slate-900 shadow-sm'
                         : task1Done
-                        ? 'bg-[#65A30D] text-white border-[#4D7C0F]'
-                        : 'bg-lime-50/60 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-lime-300 dark:border-slate-700 hover:border-[#65A30D] dark:hover:border-lime-500'
+                        ? 'bg-[#CE82FF] text-white border-[#A560E8] border-b-[#8438C8]'
+                        : 'bg-[#F3E5FF]/55 dark:bg-slate-800 text-[#3C3C3C] dark:text-slate-200 border-[#CE82FF] border-b-[#A560E8] hover:bg-[#F3E5FF]'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/20 dark:bg-black/25 text-[11px] font-mono">
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className={`flex h-6 w-6 items-center justify-center rounded-lg text-[11px] font-mono font-black ${
+                          (activeSection === 'WRITING' && activeWritingTaskIndex === 0) || task1Done
+                            ? 'bg-black/20 text-white'
+                            : 'bg-white text-[#8438C8] border border-[#CE82FF]'
+                        }`}
+                      >
                         1
                       </span>
                       <span>Writing Task 1 (Thư/Email)</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-mono opacity-85">
+                      <span className="text-[11px] font-mono opacity-90">
                         {writingSubmission?.task1WordCount || 0} từ
                       </span>
-                      {task1Done && <CheckCircle2 className="h-4 w-4 text-lime-300" />}
+                      {task1Done && <CheckCircle2 className="h-4 w-4 text-white" />}
                     </div>
                   </button>
                 )}
@@ -472,25 +484,31 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
                   <button
                     type="button"
                     onClick={() => onSelectWritingTask && onSelectWritingTask(1)}
-                    className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-xs font-black transition-all cursor-pointer border-2 ${
+                    className={`w-full flex items-center justify-between rounded-2xl px-3.5 py-3 text-xs font-black transition-all cursor-pointer border-2 border-b-4 active:border-b-2 active:translate-y-0.5 ${
                       activeSection === 'WRITING' && activeWritingTaskIndex === 1
-                        ? 'bg-[#65A30D] text-white border-[#4D7C0F] ring-4 ring-amber-400 ring-offset-1 dark:ring-offset-slate-900 shadow-md scale-[1.01]'
+                        ? 'bg-[#CE82FF] text-white border-[#A560E8] border-b-[#8438C8] ring-3 ring-[#FFC800] ring-offset-1 dark:ring-offset-slate-900 shadow-sm'
                         : task2Done
-                        ? 'bg-[#65A30D] text-white border-[#4D7C0F]'
-                        : 'bg-lime-50/60 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-lime-300 dark:border-slate-700 hover:border-[#65A30D] dark:hover:border-lime-500'
+                        ? 'bg-[#CE82FF] text-white border-[#A560E8] border-b-[#8438C8]'
+                        : 'bg-[#F3E5FF]/55 dark:bg-slate-800 text-[#3C3C3C] dark:text-slate-200 border-[#CE82FF] border-b-[#A560E8] hover:bg-[#F3E5FF]'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/20 dark:bg-black/25 text-[11px] font-mono">
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className={`flex h-6 w-6 items-center justify-center rounded-lg text-[11px] font-mono font-black ${
+                          (activeSection === 'WRITING' && activeWritingTaskIndex === 1) || task2Done
+                            ? 'bg-black/20 text-white'
+                            : 'bg-white text-[#8438C8] border border-[#CE82FF]'
+                        }`}
+                      >
                         2
                       </span>
                       <span>Writing Task 2 (Luận Essay)</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-mono opacity-85">
+                      <span className="text-[11px] font-mono opacity-90">
                         {writingSubmission?.task2WordCount || 0} từ
                       </span>
-                      {task2Done && <CheckCircle2 className="h-4 w-4 text-lime-200" />}
+                      {task2Done && <CheckCircle2 className="h-4 w-4 text-white" />}
                     </div>
                   </button>
                 )}
@@ -498,47 +516,53 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
             </div>
           )}
 
-          {/* 4. MAJOR SECTION: SPEAKING */}
+          {/* 4. MAJOR SECTION: SPEAKING (Cardinal Red #FF4B4B) */}
           {(showSpeakingPart1 || showSpeakingPart2 || showSpeakingPart3) && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <h4 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
-                  <Mic className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                <h4 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-[#3C3C3C] dark:text-slate-200">
+                  <Mic className="h-4 w-4 text-[#FF4B4B]" />
                   <span>Speaking</span>
                 </h4>
-                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                <span className="text-xs font-black text-[#EA2B2B]">
                   {(speaking1Done ? 1 : 0) + (speaking2Done ? 1 : 0) + (speaking3Done ? 1 : 0)}/
                   {(showSpeakingPart1 ? 1 : 0) + (showSpeakingPart2 ? 1 : 0) + (showSpeakingPart3 ? 1 : 0)} phần
                 </span>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 {showSpeakingPart1 && (
                   <button
                     type="button"
                     onClick={() => onSelectSpeakingPart && onSelectSpeakingPart(0)}
-                    className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-xs font-black transition-all cursor-pointer border-2 ${
+                    className={`w-full flex items-center justify-between rounded-2xl px-3.5 py-3 text-xs font-black transition-all cursor-pointer border-2 border-b-4 active:border-b-2 active:translate-y-0.5 ${
                       activeSection === 'SPEAKING' && activeSpeakingPartIndex === 0
-                        ? 'bg-[#0D9488] text-white border-[#0F766E] ring-4 ring-amber-400 ring-offset-1 dark:ring-offset-slate-900 shadow-md scale-[1.01]'
+                        ? 'bg-[#FF4B4B] text-white border-[#EA2B2B] border-b-[#C91D1D] ring-3 ring-[#FFC800] ring-offset-1 dark:ring-offset-slate-900 shadow-sm'
                         : speaking1Done
-                        ? 'bg-[#0D9488] text-white border-[#0F766E]'
-                        : 'bg-teal-50/60 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-teal-300 dark:border-slate-700 hover:border-[#0D9488] dark:hover:border-teal-500'
+                        ? 'bg-[#FF4B4B] text-white border-[#EA2B2B] border-b-[#C91D1D]'
+                        : 'bg-[#FFDFE0]/55 dark:bg-slate-800 text-[#3C3C3C] dark:text-slate-200 border-[#FF4B4B] border-b-[#EA2B2B] hover:bg-[#FFDFE0]'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/20 dark:bg-black/25 text-[11px] font-mono">
+                    <div className="flex items-center gap-2.5 text-left">
+                      <span
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[11px] font-mono font-black ${
+                          (activeSection === 'SPEAKING' && activeSpeakingPartIndex === 0) || speaking1Done
+                            ? 'bg-black/20 text-white'
+                            : 'bg-white text-[#EA2B2B] border border-[#FF4B4B]'
+                        }`}
+                      >
                         1
                       </span>
                       <span>Speaking Part 1 (Social Interaction)</span>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-mono opacity-85">
-                        {speakingSubmission?.part1AudioDataUrl
-                          ? 'Ghi âm + '
-                          : ''}
-                        {speakingSubmission?.part1WordCount || 0} từ
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[11px] font-mono opacity-90">
+                        {renderSpeakingStatusLabel(
+                          Boolean(speakingSubmission?.part1AudioUrl || speakingSubmission?.part1AudioDataUrl),
+                          speakingSubmission?.part1WordCount || 0
+                        )}
                       </span>
-                      {speaking1Done && <CheckCircle2 className="h-4 w-4 text-teal-200" />}
+                      {speaking1Done && <CheckCircle2 className="h-4 w-4 text-white" />}
                     </div>
                   </button>
                 )}
@@ -547,28 +571,34 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
                   <button
                     type="button"
                     onClick={() => onSelectSpeakingPart && onSelectSpeakingPart(1)}
-                    className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-xs font-black transition-all cursor-pointer border-2 ${
+                    className={`w-full flex items-center justify-between rounded-2xl px-3.5 py-3 text-xs font-black transition-all cursor-pointer border-2 border-b-4 active:border-b-2 active:translate-y-0.5 ${
                       activeSection === 'SPEAKING' && activeSpeakingPartIndex === 1
-                        ? 'bg-[#0D9488] text-white border-[#0F766E] ring-4 ring-amber-400 ring-offset-1 dark:ring-offset-slate-900 shadow-md scale-[1.01]'
+                        ? 'bg-[#FF4B4B] text-white border-[#EA2B2B] border-b-[#C91D1D] ring-3 ring-[#FFC800] ring-offset-1 dark:ring-offset-slate-900 shadow-sm'
                         : speaking2Done
-                        ? 'bg-[#0D9488] text-white border-[#0F766E]'
-                        : 'bg-teal-50/60 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-teal-300 dark:border-slate-700 hover:border-[#0D9488] dark:hover:border-teal-500'
+                        ? 'bg-[#FF4B4B] text-white border-[#EA2B2B] border-b-[#C91D1D]'
+                        : 'bg-[#FFDFE0]/55 dark:bg-slate-800 text-[#3C3C3C] dark:text-slate-200 border-[#FF4B4B] border-b-[#EA2B2B] hover:bg-[#FFDFE0]'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/20 dark:bg-black/25 text-[11px] font-mono">
+                    <div className="flex items-center gap-2.5 text-left">
+                      <span
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[11px] font-mono font-black ${
+                          (activeSection === 'SPEAKING' && activeSpeakingPartIndex === 1) || speaking2Done
+                            ? 'bg-black/20 text-white'
+                            : 'bg-white text-[#EA2B2B] border border-[#FF4B4B]'
+                        }`}
+                      >
                         2
                       </span>
                       <span>Speaking Part 2 (Solution Discussion)</span>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-mono opacity-85">
-                        {speakingSubmission?.part2AudioDataUrl
-                          ? 'Ghi âm + '
-                          : ''}
-                        {speakingSubmission?.part2WordCount || 0} từ
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[11px] font-mono opacity-90">
+                        {renderSpeakingStatusLabel(
+                          Boolean(speakingSubmission?.part2AudioUrl || speakingSubmission?.part2AudioDataUrl),
+                          speakingSubmission?.part2WordCount || 0
+                        )}
                       </span>
-                      {speaking2Done && <CheckCircle2 className="h-4 w-4 text-teal-200" />}
+                      {speaking2Done && <CheckCircle2 className="h-4 w-4 text-white" />}
                     </div>
                   </button>
                 )}
@@ -577,28 +607,34 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
                   <button
                     type="button"
                     onClick={() => onSelectSpeakingPart && onSelectSpeakingPart(2)}
-                    className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-xs font-black transition-all cursor-pointer border-2 ${
+                    className={`w-full flex items-center justify-between rounded-2xl px-3.5 py-3 text-xs font-black transition-all cursor-pointer border-2 border-b-4 active:border-b-2 active:translate-y-0.5 ${
                       activeSection === 'SPEAKING' && activeSpeakingPartIndex === 2
-                        ? 'bg-[#0D9488] text-white border-[#0F766E] ring-4 ring-amber-400 ring-offset-1 dark:ring-offset-slate-900 shadow-md scale-[1.01]'
+                        ? 'bg-[#FF4B4B] text-white border-[#EA2B2B] border-b-[#C91D1D] ring-3 ring-[#FFC800] ring-offset-1 dark:ring-offset-slate-900 shadow-sm'
                         : speaking3Done
-                        ? 'bg-[#0D9488] text-white border-[#0F766E]'
-                        : 'bg-teal-50/60 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-teal-300 dark:border-slate-700 hover:border-[#0D9488] dark:hover:border-teal-500'
+                        ? 'bg-[#FF4B4B] text-white border-[#EA2B2B] border-b-[#C91D1D]'
+                        : 'bg-[#FFDFE0]/55 dark:bg-slate-800 text-[#3C3C3C] dark:text-slate-200 border-[#FF4B4B] border-b-[#EA2B2B] hover:bg-[#FFDFE0]'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/20 dark:bg-black/25 text-[11px] font-mono">
+                    <div className="flex items-center gap-2.5 text-left">
+                      <span
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[11px] font-mono font-black ${
+                          (activeSection === 'SPEAKING' && activeSpeakingPartIndex === 2) || speaking3Done
+                            ? 'bg-black/20 text-white'
+                            : 'bg-white text-[#EA2B2B] border border-[#FF4B4B]'
+                        }`}
+                      >
                         3
                       </span>
                       <span>Speaking Part 3 (Topic Development)</span>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-mono opacity-85">
-                        {speakingSubmission?.part3AudioDataUrl
-                          ? 'Ghi âm + '
-                          : ''}
-                        {speakingSubmission?.part3WordCount || 0} từ
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[11px] font-mono opacity-90">
+                        {renderSpeakingStatusLabel(
+                          Boolean(speakingSubmission?.part3AudioUrl || speakingSubmission?.part3AudioDataUrl),
+                          speakingSubmission?.part3WordCount || 0
+                        )}
                       </span>
-                      {speaking3Done && <CheckCircle2 className="h-4 w-4 text-teal-200" />}
+                      {speaking3Done && <CheckCircle2 className="h-4 w-4 text-white" />}
                     </div>
                   </button>
                 )}
@@ -607,62 +643,58 @@ export const SummaryBoardDrawer: React.FC<SummaryBoardDrawerProps> = ({
           )}
 
           {/* Legend */}
-          <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/70 p-3.5 border border-slate-200 dark:border-slate-700/80 text-xs text-slate-600 dark:text-slate-300 space-y-2">
-            <div className="font-black text-slate-800 dark:text-slate-100 uppercase text-[10px] tracking-wider mb-1">
+          <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/70 p-3.5 border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-2">
+            <div className="font-black text-[#3C3C3C] dark:text-slate-100 uppercase text-[10px] tracking-wider mb-1">
               Chú giải màu sắc theo 4 kỹ năng VSTEP
             </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="h-4 w-4 rounded-md bg-[#58CC02]" />
-                <span>Listening Part 1–3 (35 câu)</span>
+                <div className="h-4 w-4 rounded-md bg-[#1CB0F6] border-b-2 border-[#1899D6]" />
+                <span className="font-bold">Listening Part 1–3 (35 câu)</span>
               </div>
-              <span className="font-bold text-slate-800 dark:text-slate-100">
+              <span className="font-black text-[#1899D6]">
                 {activeListeningClusters.flatMap((c) => c.questionIds).filter(isAnswered).length}/
                 {activeListeningClusters.flatMap((c) => c.questionIds).length}
               </span>
             </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="h-4 w-4 rounded-md bg-[#2E7D32]" />
-                <span>Reading Passage 1–4 (40 câu)</span>
+                <div className="h-4 w-4 rounded-md bg-[#58CC02] border-b-2 border-[#46A302]" />
+                <span className="font-bold">Reading Passage 1–4 (40 câu)</span>
               </div>
-              <span className="font-bold text-slate-800 dark:text-slate-100">
+              <span className="font-black text-[#46A302]">
                 {activeReadingClusters.flatMap((c) => c.questionIds).filter(isAnswered).length}/
                 {activeReadingClusters.flatMap((c) => c.questionIds).length}
               </span>
             </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="h-4 w-4 rounded-md bg-[#65A30D]" />
-                <span>Writing Task 1–2 (2 bài viết)</span>
+                <div className="h-4 w-4 rounded-md bg-[#CE82FF] border-b-2 border-[#A560E8]" />
+                <span className="font-bold">Writing Task 1–2 (2 bài viết)</span>
               </div>
-              <span className="font-bold text-slate-800 dark:text-slate-100">
+              <span className="font-black text-[#A560E8]">
                 {(task1Done ? 1 : 0) + (task2Done ? 1 : 0)}/2
               </span>
             </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="h-4 w-4 rounded-md bg-[#0D9488]" />
-                <span>Speaking Part 1–3 (3 phần nói)</span>
+                <div className="h-4 w-4 rounded-md bg-[#FF4B4B] border-b-2 border-[#EA2B2B]" />
+                <span className="font-bold">Speaking Part 1–3 (3 phần nói)</span>
               </div>
-              <span className="font-bold text-slate-800 dark:text-slate-100">
+              <span className="font-black text-[#EA2B2B]">
                 {(speaking1Done ? 1 : 0) + (speaking2Done ? 1 : 0) + (speaking3Done ? 1 : 0)}/3
               </span>
             </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="relative h-4 w-4 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800">
-                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-500" />
+                <div className="relative h-4 w-4 rounded-md border-2 border-[#E5E5E5] bg-white dark:bg-slate-800">
+                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[#FF9600]" />
                 </div>
-                <span>Đánh dấu xem lại (Flagged)</span>
+                <span className="font-bold">Đánh dấu xem lại (Flagged)</span>
               </div>
-              <span className="font-bold text-amber-700 dark:text-amber-400">
+              <span className="font-black text-[#FF9600]">
                 {Object.values(flagged).filter(Boolean).length}
               </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="h-4 w-4 rounded-md border-2 border-amber-400 bg-white dark:bg-slate-800 ring-2 ring-amber-300 dark:ring-amber-500/60" />
-              <span>Đang chọn (Hiện viền sáng vàng)</span>
             </div>
           </div>
         </div>

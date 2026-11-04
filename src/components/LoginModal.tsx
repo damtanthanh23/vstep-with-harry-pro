@@ -4,10 +4,9 @@ import {
   LogIn,
   Mail,
   Lock,
-  Sparkles,
-  ArrowRight,
   AlertCircle,
-  CheckCircle2,
+  ExternalLink,
+  RefreshCw,
   User,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -24,26 +23,35 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   onClose,
   onSuccess,
 }) => {
-  const { signInWithGoogle, signInWithEmail, signUpWithEmail } = useAuth();
+  const { signInWithGoogle, signInWithEmail, signUpWithEmail, authError, clearAuthError } = useAuth();
   const [isSignUp, setIsSignUp] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isPopupBlocked, setIsPopupBlocked] = useState(false);
 
   if (!isOpen) return null;
+
+  const activeError = errorMessage || authError;
 
   const handleGoogleSignIn = async () => {
     try {
       setIsLoading(true);
       setErrorMessage(null);
+      setIsPopupBlocked(false);
+      clearAuthError();
       await signInWithGoogle();
       onSuccess?.();
       onClose();
     } catch (err: any) {
-      console.error(err);
-      setErrorMessage(err.message || 'Lỗi đăng nhập Google');
+      const msg = err?.message || 'Lỗi đăng nhập Google';
+      const code = err?.code || '';
+      if (code === 'auth/popup-blocked' || msg.includes('Popup') || msg.includes('popup-blocked')) {
+        setIsPopupBlocked(true);
+      }
+      setErrorMessage(msg);
     } finally {
       setIsLoading(false);
     }
@@ -59,17 +67,18 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     try {
       setIsLoading(true);
       setErrorMessage(null);
+      setIsPopupBlocked(false);
+      clearAuthError();
 
       if (isSignUp) {
-        await signUpWithEmail(email, password, displayName || 'Học viên LanguageCert');
+        await signUpWithEmail(email, password, displayName || 'Học viên VSTEP');
       } else {
         await signInWithEmail(email, password);
       }
       onSuccess?.();
       onClose();
     } catch (err: any) {
-      console.error(err);
-      setErrorMessage(err.message || 'Đăng nhập không thành công');
+      setErrorMessage(err?.message || 'Đăng nhập không thành công');
     } finally {
       setIsLoading(false);
     }
@@ -80,9 +89,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       <div className="relative w-full max-w-md rounded-3xl bg-white p-6 sm:p-8 shadow-2xl border-4 border-[#58CC02] animate-in fade-in zoom-in-95 duration-200">
         {/* Close Button */}
         <button
-          onClick={onClose}
+          onClick={() => {
+            clearAuthError();
+            setErrorMessage(null);
+            onClose();
+          }}
           disabled={isLoading}
-          className="absolute top-5 right-5 rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+          className="absolute top-5 right-5 rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors cursor-pointer"
         >
           <X className="h-5 w-5" />
         </button>
@@ -97,15 +110,39 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           </h2>
           <p className="text-xs font-semibold text-slate-500">
             {isSignUp
-              ? 'Đăng ký để lưu kết quả thi và nhận lộ trình 4 tuần'
-              : 'Đăng nhập để tiếp tục luyện thi LanguageCert B1'}
+              ? 'Đăng ký để lưu kết quả thi và nhận lộ trình VSTEP B1-B2-C1'
+              : 'Đăng nhập để tiếp tục luyện thi VSTEP B1-B2-C1'}
           </p>
         </div>
 
-        {errorMessage && (
-          <div className="mb-4 flex items-center gap-2 rounded-2xl bg-rose-50 border border-rose-200 p-3 text-xs font-bold text-rose-700">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{errorMessage}</span>
+        {activeError && (
+          <div className="mb-4 rounded-2xl bg-rose-50 border border-rose-200 p-3.5 text-xs font-bold text-rose-800 space-y-2.5">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
+              <span className="leading-relaxed">{activeError}</span>
+            </div>
+
+            {isPopupBlocked && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <a
+                  href={typeof window !== 'undefined' ? window.location.href : '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 text-[11px] font-black shadow-2xs transition-colors"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  <span>Mở ứng dụng trong Tab mới</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-white hover:bg-rose-100 text-rose-800 border border-rose-300 px-3 py-1.5 text-[11px] font-black transition-colors cursor-pointer"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  <span>Thử lại Popup</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
 

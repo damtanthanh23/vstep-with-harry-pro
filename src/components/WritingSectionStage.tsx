@@ -71,14 +71,14 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
   return (
     <div className="mx-auto max-w-6xl px-4 sm:px-6 py-8">
       {/* Official VSTEP Writing Paper Header Banner */}
-      <div className="mb-6 rounded-3xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-5 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="mb-6 rounded-3xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-5 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="text-center sm:text-left">
-          <div className="inline-block border-y-2 border-slate-800 dark:border-slate-200 px-8 py-1 mb-2">
-            <h2 className="text-xl sm:text-2xl font-black tracking-[0.2em] text-slate-900 dark:text-white uppercase">
+          <div className="inline-block rounded-2xl bg-[#F3E5FF] dark:bg-purple-950/60 border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8] px-6 py-1.5 mb-2">
+            <h2 className="text-xl sm:text-2xl font-black tracking-[0.15em] text-[#8438C8] dark:text-purple-200 uppercase">
               WRITING
             </h2>
           </div>
-          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 text-xs font-extrabold text-slate-700 dark:text-slate-300">
+          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 text-xs font-black text-[#4B4B4B] dark:text-slate-300">
             <span>Time allotted: 60 minutes</span>
             <span className="text-slate-300 dark:text-slate-700">•</span>
             <span>Number of tasks: 2</span>
@@ -87,7 +87,7 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
 
         {/* Task Selector Tabs */}
         <div className="flex flex-col sm:items-end gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             {activeTasks.map((t, idx) => {
               const words = idx === 0 ? submission.task1WordCount : submission.task2WordCount;
               const meetsCriteria = words >= t.minWords;
@@ -99,8 +99,8 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
                   onClick={() => setActiveTaskIndex(idx === 0 ? 0 : 1)}
                   className={`flex items-center gap-2 rounded-2xl px-4 py-2.5 text-xs font-black transition-all cursor-pointer ${
                     activeTaskIndex === idx
-                      ? 'bg-[#2E7D32] text-white shadow-sm'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      ? 'btn-duo-purple'
+                      : 'btn-duo-white text-[#4B4B4B] dark:text-slate-200'
                   }`}
                 >
                   <span>
@@ -109,7 +109,7 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
                   {meetsCriteria && (
                     <CheckCircle2
                       className={`h-4 w-4 ${
-                        activeTaskIndex === idx ? 'text-lime-200' : 'text-emerald-500'
+                        activeTaskIndex === idx ? 'text-white' : 'text-[#58CC02]'
                       }`}
                     />
                   )}
@@ -117,8 +117,8 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
               );
             })}
           </div>
-          <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400">
-            <Info className="h-3.5 w-3.5 text-[#58CC02]" />
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#777777] dark:text-slate-400">
+            <Info className="h-3.5 w-3.5 text-[#A560E8]" />
             <span>Công thức VSTEP Thang 10: Điểm Writing = (Task 1 + Task 2 × 2) / 3</span>
           </div>
         </div>
@@ -205,29 +205,29 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
               <button
                 type="button"
                 onClick={() => setShowSampleAnswer((prev) => !prev)}
-                className="w-full inline-flex items-center justify-between rounded-2xl border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/90 dark:bg-emerald-950/40 px-4 py-2.5 text-xs font-black text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-all cursor-pointer shadow-xs"
+                className="w-full inline-flex items-center justify-between rounded-2xl border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8] bg-[#F3E5FF]/60 dark:bg-purple-950/40 px-4 py-2.5 text-xs font-black text-[#8438C8] dark:text-purple-200 hover:bg-[#F3E5FF] active:border-b-2 active:translate-y-0.5 transition-all cursor-pointer"
               >
                 <span className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  <Sparkles className="h-4 w-4 text-[#A560E8]" />
                   <span>{showSampleAnswer ? 'Ẩn bài viết mẫu' : 'Xem bài viết mẫu chuẩn VSTEP B2–C1'}</span>
                 </span>
-                <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 underline">
+                <span className="text-[11px] font-black text-[#8438C8] dark:text-purple-300 underline">
                   {showSampleAnswer ? 'Thu gọn' : 'Bấm để xem'}
                 </span>
               </button>
 
               {showSampleAnswer && (
-                <div className="rounded-2xl border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/95 dark:bg-emerald-950/60 p-4 text-xs text-emerald-950 dark:text-emerald-100 space-y-2 shadow-xs transition-all animate-fadeIn">
-                  <div className="flex items-center justify-between font-black text-emerald-800 dark:text-emerald-300 uppercase tracking-wider text-[11px]">
+                <div className="rounded-2xl border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8] bg-[#F3E5FF]/40 dark:bg-purple-950/60 p-4 text-xs text-slate-900 dark:text-purple-100 space-y-2 shadow-xs transition-all animate-fadeIn">
+                  <div className="flex items-center justify-between font-black text-[#8438C8] dark:text-purple-300 uppercase tracking-wider text-[11px]">
                     <span className="flex items-center gap-1.5">
-                      <Sparkles className="h-4 w-4 text-emerald-600" />
+                      <Sparkles className="h-4 w-4 text-[#A560E8]" />
                       Bài viết mẫu chuẩn VSTEP (Sample Answer)
                     </span>
-                    <span className="rounded-md bg-emerald-200 dark:bg-emerald-800 px-2 py-0.5 text-[10px] font-mono text-emerald-900 dark:text-emerald-100">
+                    <span className="rounded-md bg-[#CE82FF]/30 px-2 py-0.5 text-[10px] font-mono text-[#8438C8]">
                       B2 – C1 Band
                     </span>
                   </div>
-                  <p className="whitespace-pre-line leading-relaxed font-medium bg-white/70 dark:bg-slate-900/70 p-3 rounded-xl border border-emerald-200 dark:border-emerald-800">
+                  <p className="whitespace-pre-line leading-relaxed font-medium bg-white/90 dark:bg-slate-900/70 p-3 rounded-xl border border-[#CE82FF]">
                     {task.sampleAnswer}
                   </p>
                 </div>
@@ -237,23 +237,23 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
         </div>
 
         {/* Right Column: Writing Editor & Live Word Counter */}
-        <div className="lg:col-span-7 rounded-3xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xs flex flex-col justify-between min-h-[480px]">
+        <div className="lg:col-span-7 rounded-3xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xs flex flex-col justify-between min-h-[480px]">
           <div>
             {/* Header with Live Counter */}
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
               <span className="text-xs font-black text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
-                <PenTool className="h-4 w-4 text-[#58CC02]" />
+                <PenTool className="h-4 w-4 text-[#A560E8]" />
                 <span>Bài làm Writing Task {task.partNumber} của bạn</span>
               </span>
 
               <div className="flex items-center gap-2">
                 <span
-                  className={`rounded-xl px-3 py-1 font-mono text-xs font-black ${
+                  className={`rounded-xl px-3 py-1 font-mono text-xs font-black border-2 border-b-3 ${
                     wordCount >= task.minWords
-                      ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                      ? 'bg-[#D7FFB8] text-[#2B6600] border-[#58CC02] border-b-[#46A302]'
                       : isUnder
-                      ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
-                      : 'bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                      ? 'bg-[#FFF4E5] text-[#E58700] border-[#FF9600] border-b-[#E58700]'
+                      : 'bg-[#FFDFE0] text-[#EA2B2B] border-[#FF4B4B] border-b-[#EA2B2B]'
                   }`}
                 >
                   {wordCount} / tối thiểu {task.minWords} từ
@@ -271,7 +271,7 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
                   ? 'Dear Uncle Hung,\n\nI hope you and your family are doing well. I am writing this email in response to...'
                   : 'In recent years, traffic congestion in major Vietnamese cities has become a pressing issue...'
               }
-              className="w-full rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-4 font-sans text-sm leading-relaxed text-slate-800 dark:text-slate-100 outline-hidden transition-all focus:border-[#58CC02] focus:bg-white dark:focus:bg-slate-900 resize-none"
+              className="w-full rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-4 font-sans text-sm leading-relaxed text-slate-800 dark:text-slate-100 outline-hidden transition-all focus:border-[#CE82FF] focus:bg-white dark:focus:bg-slate-900 resize-none"
             />
           </div>
 
@@ -281,24 +281,24 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveTaskIndex(1)}
-                  className="ml-auto inline-flex items-center gap-1.5 rounded-2xl bg-[#58CC02] px-5 py-2.5 text-xs font-black text-white shadow-xs hover:bg-[#46a302] active:scale-95 transition-all cursor-pointer"
+                  className="btn-duo-purple ml-auto inline-flex items-center gap-1.5 rounded-2xl px-5 py-3 text-xs font-black cursor-pointer"
                 >
                   <span>Chuyển sang Writing Task 2</span>
                   <ChevronRight className="h-4 w-4" />
                 </button>
               ) : (
-                <div className="flex items-center justify-between w-full">
+                <div className="flex items-center justify-between w-full gap-3">
                   <button
                     type="button"
                     onClick={() => setActiveTaskIndex(0)}
-                    className="rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                    className="btn-duo-white rounded-2xl px-4 py-2.5 text-xs font-black cursor-pointer"
                   >
                     Quay lại Writing Task 1
                   </button>
                   <button
                     type="button"
                     onClick={onProceedToReview}
-                    className="inline-flex items-center gap-1.5 rounded-2xl bg-[#2E7D32] px-6 py-2.5 text-xs font-black text-white shadow-xs hover:bg-[#1B5E20] active:scale-95 transition-all cursor-pointer"
+                    className="btn-duo-green inline-flex items-center gap-1.5 rounded-2xl px-6 py-3 text-xs font-black cursor-pointer"
                   >
                     <CheckCircle2 className="h-4 w-4" />
                     <span>Hoàn tất Writing / Chuyển tiếp</span>

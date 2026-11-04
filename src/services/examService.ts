@@ -14,6 +14,7 @@ import {
   UserExamAttempt,
   PartAudioMap,
   InProgressAttempt,
+  PracticeAuditEntry,
 } from '../types/exam';
 import { WritingTask, SAMPLE_B1_WRITING_TASKS } from '../types/writing';
 import { SpeakingTask, SAMPLE_VSTEP_SPEAKING_TASKS } from '../types/speaking';
@@ -573,11 +574,40 @@ export async function deleteTestFromFirestore(testId: string): Promise<void> {
 }
 
 /**
+ * Trims huge base64 audio strings (> 50KB) from the speaking submission so Firestore documents
+ * strictly stay well under the 1MB Firestore limit, while keeping metadata, transcripts, and scores intact.
+ */
+export function trimAttemptForFirestore(attempt: UserExamAttempt): UserExamAttempt {
+  const clone = { ...attempt };
+  if (clone.speakingSubmission) {
+    const spk = { ...clone.speakingSubmission };
+    if (typeof spk.part1AudioDataUrl === 'string' && spk.part1AudioDataUrl.length > 50000) {
+      delete spk.part1AudioDataUrl;
+    }
+    if (typeof spk.part2AudioDataUrl === 'string' && spk.part2AudioDataUrl.length > 50000) {
+      delete spk.part2AudioDataUrl;
+    }
+    if (typeof spk.part3AudioDataUrl === 'string' && spk.part3AudioDataUrl.length > 50000) {
+      delete spk.part3AudioDataUrl;
+    }
+    clone.speakingSubmission = spk;
+  }
+  return clone;
+}
+
+/**
  * Save user exam attempt result to Firestore and localStorage backup
  */
-export async function recordUserAttempt(userId: string, attempt: UserExamAttempt): Promise<void> {
+export async function recordUserAttempt(
+  userId: string,
+  attempt: UserExamAttempt,
+  guestInfo?: { name?: string; email?: string; phone?: string }
+): Promise<void> {
+  const isGuest = !userId || userId === 'guest';
+  const effectiveUserId = isGuest ? 'guest' : userId;
+
   try {
-    const key = `langcert_attempts_${userId}`;
+    const key = `langcert_attempts_${effectiveUserId}`;
     const raw = localStorage.getItem(key);
     const existing: UserExamAttempt[] = raw ? JSON.parse(raw) : [];
     const updated = [
@@ -592,45 +622,191 @@ export async function recordUserAttempt(userId: string, attempt: UserExamAttempt
   if (!canWriteToFirestore()) return;
 
   try {
+    const safePayload = trimAttemptForFirestore(attempt);
+    const sanitizedAttempt = sanitizeForFirestore(safePayload);
+
+    if (isGuest) {
+      // Unauthenticated student submission (e.g. Uyên or Nam submitting before login)
+      // Save directly to guest_submissions collection so Admin can see it immediately!
+      const guestDocRef = doc(db, 'guest_submissions', attempt.attemptId);
+      const studentName =
+        guestInfo?.name ||
+        localStorage.getItem('vstep_guest_student_name') ||
+        'Học viên (Khách)';
+      const studentEmail =
+        guestInfo?.email ||
+        localStorage.getItem('vstep_guest_student_email') ||
+        '';
+      const studentPhone = guestInfo?.phone || '';
+
+      const guestRecord = {
+        ...sanitizedAttempt,
+        submissionId: attempt.attemptId,
+        studentName,
+        studentEmail,
+        studentPhone,
+      };
+
+      await safeSetDoc(guestDocRef, guestRecord);
+      return;
+    }
+
     const docRef = doc(db, 'users', userId, 'attempts', attempt.attemptId);
-    const sanitizedAttempt = sanitizeForFirestore(attempt);
     await safeSetDoc(docRef, sanitizedAttempt);
 
-    // Also sync summary stats to top-level user doc for instant real-time leaderboard & admin cards
-    if (userId && userId !== 'guest') {
-      try {
-        const userDocRef = doc(db, 'users', userId);
-        const userSnap = await getDoc(userDocRef);
-        const userData = userSnap.exists() ? userSnap.data() : {};
-        const prevBestBand = Number(userData?.bestVstepBandScore) || 0;
-        const prevBestRaw = Number(userData?.bestRawScore) || 0;
-        const currentAttemptsCount = Number(userData?.totalExamAttempts) || 0;
-        const attemptBand =
-          typeof attempt.vstepBandScore === 'number' && attempt.vstepBandScore > 0
-            ? attempt.vstepBandScore
-            : Number((attempt.percentage / 10).toFixed(1));
-        const attemptRaw = Number(attempt.score) || 0;
+    // Also sync summary stats, recentAttempts, and leaderboardStats to top-level user doc for instant real-time leaderboard & admin cards
+    try {
+      const userDocRef = doc(db, 'users', userId);
+      const userSnap = await getDoc(userDocRef);
+      const userData = userSnap.exists() ? userSnap.data() : {};
+      const prevBestBand = Number(userData?.bestVstepBandScore) || 0;
+      const prevBestRaw = Number(userData?.bestRawScore) || 0;
+      const currentAttemptsCount = Number(userData?.totalExamAttempts) || 0;
+      const attemptBand =
+        typeof attempt.vstepBandScore === 'number' && attempt.vstepBandScore > 0
+          ? attempt.vstepBandScore
+          : Number((attempt.percentage / 10).toFixed(1));
+      const attemptRaw = Number(attempt.score) || 0;
+      const newBestBand = Math.max(prevBestBand, attemptBand);
+      const newBestRaw = Math.max(prevBestRaw, attemptRaw);
+      const newTotalAttempts = Math.max(currentAttemptsCount + 1, 1);
 
-        await safeSetDoc(
-          userDocRef,
-          {
-            bestVstepBandScore: Math.max(prevBestBand, attemptBand),
-            bestRawScore: Math.max(prevBestRaw, attemptRaw),
-            totalExamAttempts: currentAttemptsCount + 1,
-            lastAttemptAt: attempt.completedAt || Date.now(),
-            lastTestTitle: attempt.testTitle || 'Bài thi VSTEP',
-            activeDraftSummary: null,
-            lastActiveAt: Date.now(),
+      const prevRecent: UserExamAttempt[] = Array.isArray(userData?.recentAttempts)
+        ? userData.recentAttempts
+        : [];
+      const lightAttempt: UserExamAttempt = {
+        ...sanitizedAttempt,
+        // Keep answers and writingSubmission so admin cards & instant modal have full review data immediately
+      };
+      const updatedRecent = [
+        lightAttempt,
+        ...prevRecent.filter((a) => a.attemptId !== attempt.attemptId),
+      ].slice(0, 15);
+
+      const prevLeaderboard = userData?.leaderboardStats || {};
+      const bestPct = Math.max(Number(prevLeaderboard.bestPercentage) || 0, attempt.percentage || 0);
+
+      await safeSetDoc(
+        userDocRef,
+        sanitizeForFirestore({
+          bestVstepBandScore: newBestBand,
+          bestRawScore: newBestRaw,
+          totalExamAttempts: newTotalAttempts,
+          lastAttemptAt: attempt.completedAt || Date.now(),
+          lastTestTitle: attempt.testTitle || 'Bài thi VSTEP',
+          recentAttempts: updatedRecent,
+          leaderboardStats: {
+            bestPercentage: bestPct,
+            bestScale100Score: Math.round(bestPct),
+            bestScale10Score: newBestBand,
+            bestVstepBandScore: newBestBand,
+            bestRawScore: newBestRaw,
+            bestTotalQuestions: attempt.totalQuestions || 75,
+            bestGrade:
+              newBestBand >= 8.5
+                ? 'C1 (Bậc 5)'
+                : newBestBand >= 6.0
+                ? 'B2 (Bậc 4)'
+                : newBestBand >= 4.0
+                ? 'B1 (Bậc 3)'
+                : attempt.grade || 'Chưa đạt',
+            bestTestTitle: attempt.testTitle || userData?.lastTestTitle || 'Bài thi VSTEP',
+            totalAttempts: newTotalAttempts,
+            totalCorrectAnswers:
+              (Number(prevLeaderboard.totalCorrectAnswers) || 0) + attemptRaw,
+            xp: (Number(prevLeaderboard.xp) || 0) + attemptRaw * 10,
+            streakDays: Number(userData?.currentStreak || prevLeaderboard.streakDays) || 1,
+            lastCompletedAt: attempt.completedAt || Date.now(),
           },
-          { merge: true }
-        );
-      } catch (err) {
-        console.warn('Notice updating user summary stats for leaderboard:', err);
-      }
+          activeDraftSummary: null,
+          inProgressSummary: [],
+          lastActiveAt: Date.now(),
+        }),
+        { merge: true }
+      );
+    } catch (err) {
+      console.warn('Notice updating user summary stats for leaderboard:', err);
     }
   } catch (error) {
     console.warn('Saved attempt locally; Firestore sync notice:', error);
   }
+}
+
+/**
+ * Automatically migrates any guest attempts or unsynced offline submissions to Cloud Firestore
+ * whenever a student logs in or opens the app.
+ */
+export async function syncLocalAttemptsToFirestore(userId: string): Promise<number> {
+  if (!userId || userId === 'guest' || !canWriteToFirestore()) return 0;
+  let count = 0;
+  try {
+    const userKey = `langcert_attempts_${userId}`;
+    const guestKey = 'langcert_attempts_guest';
+    const localUserRaw = localStorage.getItem(userKey);
+    const guestRaw = localStorage.getItem(guestKey);
+
+    const userList: UserExamAttempt[] = localUserRaw ? JSON.parse(localUserRaw) : [];
+    const guestList: UserExamAttempt[] = guestRaw ? JSON.parse(guestRaw) : [];
+
+    const allLocal = [...userList, ...guestList];
+    if (allLocal.length === 0) return 0;
+
+    // Check remote attempts
+    const attSnap = await getDocs(collection(db, 'users', userId, 'attempts'));
+    const remoteIds = new Set<string>();
+    attSnap.forEach((d) => remoteIds.add(d.id));
+
+    for (const att of allLocal) {
+      if (att && att.attemptId && !remoteIds.has(att.attemptId)) {
+        const safePayload = trimAttemptForFirestore(att);
+        await safeSetDoc(
+          doc(db, 'users', userId, 'attempts', att.attemptId),
+          sanitizeForFirestore(safePayload)
+        );
+        count++;
+      }
+    }
+
+    if (guestList.length > 0) {
+      const mergedLocal = [
+        ...userList,
+        ...guestList.filter((g) => !userList.some((u) => u.attemptId === g.attemptId)),
+      ];
+      localStorage.setItem(userKey, JSON.stringify(mergedLocal));
+      localStorage.removeItem(guestKey);
+    }
+
+    const totalCount = attSnap.size + count;
+    if (totalCount > 0) {
+      let bestBand = 0;
+      let bestRaw = 0;
+      allLocal.forEach((att) => {
+        const raw = Number(att.score) || 0;
+        const tot = Number(att.totalQuestions) || 75;
+        const band =
+          typeof att.vstepBandScore === 'number' && att.vstepBandScore > 0
+            ? att.vstepBandScore
+            : Math.round(((raw / Math.max(1, tot)) * 10) * 2) / 2;
+        if (band > bestBand) bestBand = band;
+        if (raw > bestRaw) bestRaw = raw;
+      });
+
+      await safeSetDoc(
+        doc(db, 'users', userId),
+        {
+          totalExamAttempts: totalCount,
+          bestVstepBandScore: bestBand,
+          bestRawScore: bestRaw,
+          lastAttemptAt: Date.now(),
+          lastActiveAt: Date.now(),
+        },
+        { merge: true }
+      );
+    }
+  } catch (err) {
+    console.warn('Notice syncing local attempts to Firestore:', err);
+  }
+  return count;
 }
 
 /**
@@ -809,12 +985,15 @@ export async function saveInProgressAttemptToFirestore(
 ): Promise<void> {
   if (!canWriteToFirestore() || !userId || userId === 'guest') return;
   try {
+    const now = Date.now();
     const docRef = doc(db, 'users', userId, 'inProgress', attempt.testId);
-    const enrichedAttempt = {
+    const enrichedAttempt: InProgressAttempt = {
       ...attempt,
-      writingDraft: attempt.writingSubmission,
-      speakingDraft: attempt.speakingSubmission,
-      lastUpdatedAt: attempt.savedAt || Date.now(),
+      writingDraft: attempt.writingSubmission || attempt.writingDraft,
+      speakingDraft: attempt.speakingSubmission || attempt.speakingDraft,
+      timeRemainingSeconds: attempt.timeRemainingSeconds ?? attempt.remainingSeconds,
+      savedAt: attempt.savedAt || now,
+      lastUpdatedAt: attempt.savedAt || now,
     };
     await safeSetDoc(docRef, sanitizeForFirestore(enrichedAttempt));
 
@@ -823,8 +1002,8 @@ export async function saveInProgressAttemptToFirestore(
     ).length;
 
     const writingWordCount =
-      (attempt.writingSubmission?.task1WordCount || 0) +
-      (attempt.writingSubmission?.task2WordCount || 0);
+      (attempt.writingSubmission?.task1WordCount || attempt.writingDraft?.task1WordCount || 0) +
+      (attempt.writingSubmission?.task2WordCount || attempt.writingDraft?.task2WordCount || 0);
     const speakingWordCount =
       (attempt.speakingSubmission?.part1WordCount || 0) +
       (attempt.speakingSubmission?.part2WordCount || 0) +
@@ -836,15 +1015,18 @@ export async function saveInProgressAttemptToFirestore(
         activeDraftSummary: {
           testId: attempt.testId,
           testTitle: attempt.testTitle || '',
-          mode: attempt.mode,
+          mode: attempt.mode || 'exam',
           answeredCount,
           totalQuestions: 75,
           writingWordCount: writingWordCount > 0 ? writingWordCount : undefined,
           speakingWordCount: speakingWordCount > 0 ? speakingWordCount : undefined,
+          activeQuestionId: attempt.activeQuestionId,
           elapsedSeconds: attempt.elapsedSeconds || 0,
-          updatedAt: Date.now(),
+          timeRemainingSeconds: attempt.timeRemainingSeconds ?? attempt.remainingSeconds,
+          updatedAt: now,
         },
-        lastActiveAt: Date.now(),
+        inProgressSummary: [enrichedAttempt],
+        lastActiveAt: now,
       }),
       { merge: true }
     );
@@ -865,8 +1047,8 @@ export async function fetchUserInProgressMap(
     const map: Record<string, InProgressAttempt> = {};
     snap.forEach((d) => {
       const data = d.data() as InProgressAttempt;
-      if (data && data.testId) {
-        map[data.testId] = data;
+      if (data && (data.testId || d.id)) {
+        map[data.testId || d.id] = { ...data, testId: data.testId || d.id };
       }
     });
     return map;
@@ -891,6 +1073,7 @@ export async function clearInProgressAttemptFromFirestore(
       doc(db, 'users', userId),
       {
         activeDraftSummary: null,
+        inProgressSummary: [],
         lastActiveAt: Date.now(),
       },
       { merge: true }
@@ -1474,3 +1657,182 @@ export function getSampleTestJsonTemplate(): string {
 
   return JSON.stringify(masterGuideAndTemplate, null, 2);
 }
+
+/**
+ * Saves a student's practice answer immediately upon selection to Firestore and localStorage.
+ * Anti-cheat protection: locks first answer, records timestamp, and syncs silently without any UI interruption.
+ */
+export async function savePracticeAnswerImmediately(
+  userId: string,
+  testId: string,
+  qId: number,
+  answer: string,
+  isCorrect: boolean
+): Promise<void> {
+  if (!testId || !qId || !answer) return;
+  const safeUid = userId || 'guest';
+  const now = Date.now();
+
+  const auditEntry: PracticeAuditEntry = {
+    qId,
+    selectedAnswer: answer,
+    isCorrect,
+    practicedAt: now,
+  };
+
+  // 1. Instant local persistence for anti-cheat audit cache
+  try {
+    const localAuditKey = `langcert_practice_audit_${safeUid}_${testId}`;
+    const rawAudit = localStorage.getItem(localAuditKey);
+    const existingAudit: PracticeAuditEntry[] = rawAudit ? JSON.parse(rawAudit) : [];
+    const updatedAudit = existingAudit.filter((item) => item.qId !== qId);
+    updatedAudit.push(auditEntry);
+    localStorage.setItem(localAuditKey, JSON.stringify(updatedAudit));
+
+    // Also update inProgressMap in localStorage immediately
+    const inProgressKey = `langcert_in_progress_map_${safeUid}`;
+    const rawInProg = localStorage.getItem(inProgressKey);
+    const inProgMap = rawInProg ? JSON.parse(rawInProg) : {};
+    const currentInProg = inProgMap[testId] || {
+      testId,
+      mode: 'practice',
+      answers: {},
+      practiceAuditLogs: [],
+      practiceLockedAnswers: {},
+      elapsedSeconds: 0,
+      totalPausedSeconds: 0,
+      savedAt: now,
+    };
+    currentInProg.answers = { ...currentInProg.answers, [qId]: answer };
+    currentInProg.practiceLockedAnswers = {
+      ...(currentInProg.practiceLockedAnswers || {}),
+      [qId]: true,
+    };
+    currentInProg.practiceAuditLogs = updatedAudit;
+    currentInProg.lastUpdatedAt = now;
+    inProgMap[testId] = currentInProg;
+    localStorage.setItem(inProgressKey, JSON.stringify(inProgMap));
+    localStorage.setItem('langcert_in_progress_map', JSON.stringify(inProgMap));
+  } catch {
+    // Ignore localStorage errors
+  }
+
+  // 2. Silent Cloud Firestore Persistence
+  if (!canWriteToFirestore() || !safeUid || safeUid === 'guest') return;
+
+  try {
+    // A. Write to dedicated practiceAudit document for teacher cross-reference
+    const auditDocRef = doc(db, 'users', safeUid, 'practiceAudit', testId);
+    const auditSnap = await getDoc(auditDocRef);
+    const prevAuditData = auditSnap.exists() ? auditSnap.data() : {};
+    const prevAnswers = prevAuditData?.answers || {};
+    const prevIsCorrect = prevAuditData?.isCorrect || {};
+    const prevTimestamps = prevAuditData?.timestamps || {};
+
+    await safeSetDoc(
+      auditDocRef,
+      sanitizeForFirestore({
+        testId,
+        updatedAt: now,
+        answers: {
+          ...prevAnswers,
+          [qId]: answer,
+        },
+        isCorrect: {
+          ...prevIsCorrect,
+          [qId]: isCorrect,
+        },
+        timestamps: {
+          ...prevTimestamps,
+          [qId]: now,
+        },
+      }),
+      { merge: true }
+    );
+
+    // B. Merge into user's inProgress attempt silently
+    const inProgDocRef = doc(db, 'users', safeUid, 'inProgress', testId);
+    const inProgSnap = await getDoc(inProgDocRef);
+    const prevInProgData = inProgSnap.exists() ? inProgSnap.data() : {};
+    const prevInProgAnswers = prevInProgData?.answers || {};
+    const prevLocked = prevInProgData?.practiceLockedAnswers || {};
+
+    await safeSetDoc(
+      inProgDocRef,
+      sanitizeForFirestore({
+        testId,
+        mode: 'practice',
+        answers: {
+          ...prevInProgAnswers,
+          [qId]: answer,
+        },
+        practiceLockedAnswers: {
+          ...prevLocked,
+          [qId]: true,
+        },
+        lastUpdatedAt: now,
+        savedAt: now,
+      }),
+      { merge: true }
+    );
+  } catch (err) {
+    // Completely silent to avoid interrupting student
+    console.warn('Silent practice answer sync notice:', err);
+  }
+}
+
+/**
+ * Fetches practice audit log for a given user and test
+ */
+export async function fetchPracticeAuditLogs(
+  userId: string,
+  testId: string
+): Promise<PracticeAuditEntry[]> {
+  const safeUid = userId || 'guest';
+  let localEntries: PracticeAuditEntry[] = [];
+  try {
+    const raw = localStorage.getItem(`langcert_practice_audit_${safeUid}_${testId}`);
+    if (raw) {
+      localEntries = JSON.parse(raw);
+    }
+  } catch {
+    // Ignore
+  }
+
+  if (!canWriteToFirestore() || !safeUid || safeUid === 'guest') {
+    return localEntries;
+  }
+
+  try {
+    const docRef = doc(db, 'users', safeUid, 'practiceAudit', testId);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      const remoteEntries: PracticeAuditEntry[] = [];
+      const answers = data?.answers || {};
+      const isCorrectMap = data?.isCorrect || {};
+      const timestamps = data?.timestamps || {};
+
+      Object.keys(answers).forEach((qIdStr) => {
+        const qId = Number(qIdStr);
+        if (!isNaN(qId)) {
+          remoteEntries.push({
+            qId,
+            selectedAnswer: answers[qIdStr],
+            isCorrect: Boolean(isCorrectMap[qIdStr]),
+            practicedAt: Number(timestamps[qIdStr]) || Date.now(),
+          });
+        }
+      });
+
+      if (remoteEntries.length > 0) {
+        return remoteEntries;
+      }
+    }
+  } catch (err) {
+    console.warn('Notice fetching practice audit logs from Firestore:', err);
+  }
+
+  return localEntries;
+}
+

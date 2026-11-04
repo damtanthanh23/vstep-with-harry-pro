@@ -103,8 +103,10 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
 
   return (
     <div
-      className={`relative flex items-center gap-2 sm:gap-2.5 rounded-2xl bg-white/95 px-3 py-1.5 shadow-sm border-2 ${
-        hasMissingAudioError ? 'border-amber-500' : 'border-lime-500'
+      className={`relative flex items-center gap-2 sm:gap-2.5 rounded-2xl bg-white/95 px-3 py-1.5 shadow-sm border-2 border-b-4 ${
+        hasMissingAudioError
+          ? 'border-[#FF9600] border-b-[#E58700]'
+          : 'border-[#46A302] border-b-[#2B6600]'
       } text-slate-800 ${isCompact ? 'text-xs' : 'text-sm'}`}
     >
       {/* Play / Pause Button */}
@@ -112,12 +114,12 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
         type="button"
         onClick={() => examAudioManager.togglePlay()}
         disabled={isLoadingAudio}
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white shadow border-b-2 active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer ${
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white border-2 border-b-4 active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer ${
           isLoadingAudio
-            ? 'bg-sky-500 border-sky-700 opacity-85 cursor-wait'
+            ? 'bg-[#1CB0F6] border-[#1899D6] border-b-[#0E74A5] opacity-85 cursor-wait'
             : hasMissingAudioError
-            ? 'bg-amber-500 hover:bg-amber-600 border-amber-700'
-            : 'bg-lime-500 hover:bg-lime-600 border-lime-700'
+            ? 'bg-[#FF9600] hover:bg-[#FFA826] border-[#E58700] border-b-[#B86B00]'
+            : 'bg-[#58CC02] hover:bg-[#61E002] border-[#46A302] border-b-[#2B6600]'
         }`}
         title={
           isLoadingAudio
@@ -141,7 +143,7 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
       {/* Audio Track Mode Badge (if per-part or named) */}
       {(audioBadgeLabel || customAudioName) && (
         <span
-          className="hidden xl:inline-flex items-center gap-1 rounded-lg bg-lime-50 border border-lime-200 px-2 py-0.5 text-[10px] font-black text-lime-800 max-w-[125px] truncate"
+          className="hidden xl:inline-flex items-center gap-1 rounded-lg bg-[#D7FFB8]/60 border border-[#58CC02] px-2 py-0.5 text-[10px] font-black text-[#2B6600] max-w-[125px] truncate"
           title={customAudioName || audioBadgeLabel}
         >
           <Headphones className="h-3 w-3 shrink-0 text-[#58CC02]" />
@@ -151,23 +153,23 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
 
       {/* Status Notice when Loading from Cloud or Missing on Cloud */}
       {isLoadingAudio ? (
-        <div className="flex items-center gap-1.5 rounded-lg bg-sky-50 border border-sky-200 px-2.5 py-1 text-[11px] font-bold text-sky-700">
-          <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0 text-sky-600" />
+        <div className="flex items-center gap-1.5 rounded-lg bg-[#DDF4FF] border border-[#1CB0F6] px-2.5 py-1 text-[11px] font-black text-[#1899D6]">
+          <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0 text-[#1CB0F6]" />
           <span className="truncate">Đang tải MP3 từ Cloud...</span>
         </div>
       ) : hasMissingAudioError ? (
         <div
-          className="flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-300 px-2.5 py-1 text-[11px] font-bold text-amber-800"
+          className="flex items-center gap-1.5 rounded-lg bg-[#FFF4E5] border border-[#FF9600] px-2.5 py-1 text-[11px] font-bold text-amber-900"
           title="File MP3 của phần này chưa được đồng bộ lên Cloud. Giáo viên cần mở bộ đề trong Trình soạn thảo và bấm Lưu Bản Nháp / Xuất Bản Chính Thức để đồng bộ MP3 lên Cloud cho học sinh."
         >
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[#FF9600]" />
           <span className="truncate max-w-[180px] sm:max-w-[250px]">
             Chưa có MP3 trên Cloud (Cần GV bấm Lưu lại đề)
           </span>
           <button
             type="button"
             onClick={() => examAudioManager.retryLoadAudio(true)}
-            className="inline-flex items-center gap-1 rounded-md bg-amber-600 hover:bg-amber-700 px-1.5 py-0.5 text-[10px] font-black text-white transition-colors cursor-pointer shrink-0"
+            className="btn-duo-orange inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-black cursor-pointer shrink-0"
             title="Thử tải lại file MP3 từ Cloud"
           >
             <RefreshCw className="h-2.5 w-2.5" />
@@ -180,7 +182,7 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
           <button
             type="button"
             onClick={() => examAudioManager.seekRelative(-5)}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-lime-50 hover:text-lime-700 transition-colors cursor-pointer"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-lime-50 hover:text-[#46A302] transition-colors cursor-pointer"
             title="Lùi 5 giây"
           >
             <RotateCcw className="h-3.5 w-3.5" />
@@ -190,7 +192,7 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
           <button
             type="button"
             onClick={() => examAudioManager.seekRelative(5)}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-lime-50 hover:text-lime-700 transition-colors cursor-pointer"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-lime-50 hover:text-[#46A302] transition-colors cursor-pointer"
             title="Tiến 5 giây"
           >
             <RotateCw className="h-3.5 w-3.5" />
@@ -198,7 +200,7 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
 
           {/* Progress Bar & Time */}
           <div className="flex flex-1 items-center gap-2 min-w-[110px] max-w-[240px]">
-            <span className="font-mono text-[11px] font-bold text-slate-500 shrink-0">
+            <span className="font-mono text-[11px] font-black text-slate-600 shrink-0">
               {formatTime(currentTime)}
             </span>
             <input
@@ -208,7 +210,7 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
               value={currentTime}
               onChange={handleSeek}
               disabled={!duration}
-              className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-slate-200 accent-lime-500 disabled:opacity-50"
+              className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-slate-200 accent-[#58CC02] disabled:opacity-50"
               title="Tua thanh tiến trình"
             />
             <span className="font-mono text-[11px] font-bold text-slate-400 shrink-0">
@@ -218,12 +220,12 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
         </>
       )}
 
-      {/* Speed Selector opening DOWNWARD so it is never clipped by the top viewport */}
+      {/* Speed Selector opening DOWNWARD */}
       <div className="relative" ref={speedMenuRef}>
         <button
           type="button"
           onClick={() => setIsSpeedMenuOpen((prev) => !prev)}
-          className="flex items-center gap-1 rounded-lg bg-lime-50 hover:bg-lime-100 px-2.5 py-1 text-xs font-black text-lime-700 border border-lime-300 transition-colors cursor-pointer"
+          className="flex items-center gap-1 rounded-xl bg-[#D7FFB8]/60 hover:bg-[#D7FFB8] px-2.5 py-1 text-xs font-black text-[#2B6600] border-2 border-[#58CC02] border-b-3 border-b-[#46A302] active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer"
           title="Tốc độ phát (bước nhảy 0.1x)"
         >
           <Gauge className="h-3 w-3" />
@@ -231,7 +233,7 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
         </button>
 
         {isSpeedMenuOpen && (
-          <div className="absolute right-0 top-full mt-2 z-[80] w-32 rounded-2xl bg-white p-1.5 shadow-2xl border-2 border-lime-500 flex flex-col gap-0.5 max-h-72 overflow-y-auto">
+          <div className="absolute right-0 top-full mt-2 z-[80] w-32 rounded-2xl bg-white p-1.5 shadow-2xl border-2 border-[#58CC02] border-b-4 border-b-[#46A302] flex flex-col gap-0.5 max-h-72 overflow-y-auto">
             <div className="px-2 py-1 text-[10px] font-black uppercase text-slate-400 border-b border-slate-100 mb-1">
               Tốc độ nghe (±0.1)
             </div>
@@ -240,7 +242,7 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
                 key={rate}
                 type="button"
                 onClick={() => handleSpeedSelect(rate)}
-                className={`flex items-center justify-between rounded-xl px-2.5 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                className={`flex items-center justify-between rounded-xl px-2.5 py-1.5 text-xs font-black transition-colors cursor-pointer ${
                   Math.abs(playbackRate - rate) < 0.01
                     ? 'bg-[#58CC02] text-white shadow-2xs'
                     : 'text-slate-700 hover:bg-lime-50'
@@ -262,13 +264,13 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
         title="Bật / Tắt âm thanh"
       >
         {volume === 0 ? (
-          <VolumeX className="h-4 w-4 text-rose-500" />
+          <VolumeX className="h-4 w-4 text-[#FF4B4B]" />
         ) : (
           <Volume2 className="h-4 w-4 text-slate-600" />
         )}
       </button>
 
-      {/* Quick Upload Local Audio File Button (Temporary in-session fallback only, does not modify database audio) */}
+      {/* Quick Upload Local Audio File Button */}
       {onUploadFile && (
         <>
           <input
@@ -281,7 +283,7 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
           <button
             type="button"
             onClick={() => uploadInputRef.current?.click()}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 transition-colors cursor-pointer"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#DDF4FF] hover:bg-sky-100 text-[#1899D6] border border-[#1CB0F6] transition-colors cursor-pointer"
             title="Mạng yếu / lỗi kết nối? Chọn file MP3 có sẵn trên máy tính để nghe tạm thời ở mục này (không thay đổi bộ audio gốc của đề)"
           >
             <Upload className="h-3.5 w-3.5" />

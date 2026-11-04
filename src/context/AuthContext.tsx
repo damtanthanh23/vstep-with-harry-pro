@@ -18,6 +18,7 @@ import { auth, googleProvider, db, safeSetDoc, handleFirestoreError, OperationTy
 import { UserProfile } from '../types/exam';
 import { saveUserNickname as saveStudyQuoteNickname } from '../data/vietnameseStudyQuotes';
 import { fetchUserVocabStateFromCloud } from '../services/vocabCloudService';
+import { syncLocalAttemptsToFirestore } from '../services/examService';
 
 const LOCAL_PROFILE_CACHE_KEY = 'langcert_user_profile_cache_v1';
 
@@ -195,6 +196,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Background sync of vocabulary partition state so users/{uid}.vocabStats is always up-to-date
           fetchUserVocabStateFromCloud(user.uid).catch(() => {});
 
+          // Auto-migrate any guest attempts or offline attempts to Cloud Firestore
+          syncLocalAttemptsToFirestore(user.uid).catch(() => {});
+
           // Real-time listener on users/{uid} so changes from any device or modal stay unified
           unsubProfileDoc = onSnapshot(
             userDocRef,
@@ -296,42 +300,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [currentUser]);
 
+  const formatFirebaseAuthError = (err: unknown, fallbackMsg: string): string => {
+    const code = (err as { code?: string })?.code || '';
+    const message = err instanceof Error ? err.message : '';
+    if (code === 'auth/popup-blocked' || message.includes('auth/popup-blocked')) {
+      return 'Trình duyệt đã chặn cửa sổ bật lên (Popup). Vui lòng cho phép Popup trên thanh địa chỉ trình duyệt, mở ứng dụng trong Tab mới, hoặc đăng nhập bằng Email & Mật khẩu bên dưới.';
+    }
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      return 'Cửa sổ đăng nhập Google đã được đóng trước khi hoàn tất. Vui lòng thử lại.';
+    }
+    if (code === 'auth/unauthorized-domain') {
+      return 'Tên miền hiện tại chưa được thêm vào Authorized Domains trong Firebase Console. Bạn có thể đăng nhập bằng Email & Mật khẩu bên dưới.';
+    }
+    if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+      return 'Email hoặc mật khẩu không chính xác. Nếu chưa có tài khoản, vui lòng chọn "Đăng ký miễn phí".';
+    }
+    if (code === 'auth/email-already-in-use') {
+      return 'Email này đã được đăng ký. Vui lòng chuyển sang chế độ Đăng nhập.';
+    }
+    if (code === 'auth/weak-password') {
+      return 'Mật khẩu cần có tối thiểu 6 ký tự.';
+    }
+    return message || fallbackMsg;
+  };
+
   const signInWithGoogle = async () => {
     setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err: unknown) {
-      console.error('Google Sign-In Error:', err);
-      const msg = err instanceof Error ? err.message : 'Đăng nhập Google thất bại';
-      setAuthError(msg);
-      throw err;
+      const friendlyMsg = formatFirebaseAuthError(err, 'Đăng nhập Google thất bại');
+      setAuthError(friendlyMsg);
+      const wrappedErr = new Error(friendlyMsg) as Error & { code?: string };
+      wrappedErr.code = (err as { code?: string })?.code;
+      throw wrappedErr;
     }
   };
 
   const signInWithEmail = async (email: string, pass: string) => {
     setAuthError(null);
     try {
-      await signInWithEmailAndPassword(auth, email, pass);
+      await signInWithEmailAndPassword(auth, email.trim(), pass);
     } catch (err: unknown) {
-      console.error('Email Sign-In Error:', err);
-      const msg = err instanceof Error ? err.message : 'Đăng nhập Email thất bại';
-      setAuthError(msg);
-      throw err;
+      const friendlyMsg = formatFirebaseAuthError(err, 'Đăng nhập Email thất bại');
+      setAuthError(friendlyMsg);
+      throw new Error(friendlyMsg);
     }
   };
 
   const signUpWithEmail = async (email: string, pass: string, name?: string) => {
     setAuthError(null);
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email, pass);
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
       if (name && cred.user) {
-        await updateProfile(cred.user, { displayName: name });
+        await updateProfile(cred.user, { displayName: name.trim() });
       }
     } catch (err: unknown) {
-      console.error('Email Sign-Up Error:', err);
-      const msg = err instanceof Error ? err.message : 'Đăng ký Email thất bại';
-      setAuthError(msg);
-      throw err;
+      const friendlyMsg = formatFirebaseAuthError(err, 'Đăng ký Email thất bại');
+      setAuthError(friendlyMsg);
+      throw new Error(friendlyMsg);
     }
   };
 
@@ -340,8 +367,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await signOut(auth);
     } catch (err: unknown) {
-      console.error('Sign Out Error:', err);
-      throw err;
+      const friendlyMsg = formatFirebaseAuthError(err, 'Đăng xuất thất bại');
+      setAuthError(friendlyMsg);
     }
   };
 

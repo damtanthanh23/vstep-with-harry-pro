@@ -125,16 +125,16 @@ const ScrollRevealSection: React.FC<ScrollRevealSectionProps> = ({
     <section
       id={id}
       ref={sectionRef}
-      className={`scroll-mt-24 rounded-3xl bg-white dark:bg-slate-900 border-2 border-slate-200/90 dark:border-slate-800 shadow-xl p-6 sm:p-8 lg:p-10 transition-all duration-700 ease-out transform ${
+      className={`scroll-mt-24 rounded-3xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 border-b-4 border-b-slate-300 dark:border-b-slate-950 shadow-xl p-6 sm:p-8 lg:p-10 transition-all duration-700 ease-out transform ${
         isVisible
           ? 'opacity-100 translate-y-0 scale-100'
           : 'opacity-0 translate-y-12 scale-[0.97]'
       }`}
     >
       {/* Top Section Ribbon */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-5 mb-6 border-b border-slate-100 dark:border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-5 mb-6 border-b-2 border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-2.5">
-          <span className="rounded-xl bg-[#58CC02] px-3 py-1 text-xs font-black text-white shadow-2xs border-b-2 border-[#3C8C02]">
+          <span className="rounded-xl bg-[#58CC02] px-3 py-1 text-xs font-black text-white shadow-2xs border-2 border-[#58CC02] border-b-3 border-b-[#46A302]">
             {partLabel}
           </span>
           <span className="text-xs sm:text-sm font-extrabold text-slate-600 dark:text-slate-300">
@@ -238,11 +238,11 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
       : 'Không xét bậc (< 4.0)';
 
   return (
-    <div className="min-h-screen bg-[#FAFBF8] dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-lime-200 selection:text-slate-950 transition-colors">
+    <div className="min-h-screen bg-[#F7F9F4] dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-lime-200 selection:text-slate-950 transition-colors">
       {/* ===================================================================== */}
       {/* 1. STICKY TOP NAVBAR (No Part Pill Row; 3-Mode Theme; Admin Check)    */}
       {/* ===================================================================== */}
-      <header className="sticky top-0 z-40 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 shadow-2xs transition-colors">
+      <header className="sticky top-0 z-40 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b-2 border-slate-200 dark:border-slate-800 shadow-2xs transition-colors">
         <div className="mx-auto flex h-18 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8 gap-3">
           {/* Brand Identity + Author Signature */}
           <div className="flex items-center gap-3">
@@ -259,7 +259,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 <span className="text-lg font-black tracking-tight text-slate-900 dark:text-white leading-none">
                   VSTEP <span className="text-[#58CC02]">Tutor</span>
                 </span>
-                <span className="hidden sm:inline-flex items-center gap-1 rounded-md bg-lime-100 dark:bg-lime-950/80 px-2 py-0.5 text-[10px] font-black text-[#2B6601] dark:text-[#78E014]">
+                <span className="hidden sm:inline-flex items-center gap-1 rounded-lg bg-[#D7FFB8] dark:bg-lime-950/80 px-2 py-0.5 text-[10px] font-black text-[#2B6601] dark:text-[#78E014] border border-[#58CC02]/40">
                   Luyện thi VSTEP B1-B2-C1
                 </span>
               </div>
@@ -273,7 +273,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
           <div className="flex items-center gap-2 sm:gap-2.5">
             {/* 3-Mode Theme Switcher (Sáng | Tối | Hệ thống) */}
             <div
-              className="hidden md:inline-flex items-center rounded-xl bg-slate-100 dark:bg-slate-800 p-1 border border-slate-200/80 dark:border-slate-700 shrink-0"
+              className="hidden md:inline-flex items-center rounded-2xl bg-slate-100 dark:bg-slate-800 p-1 border-2 border-slate-200 dark:border-slate-700 shrink-0"
               role="group"
               aria-label="Chọn giao diện Sáng, Tối hoặc Hệ thống"
             >
@@ -288,9 +288,9 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                     key={mode}
                     type="button"
                     onClick={() => setThemeMode(mode)}
-                    className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-black transition-all cursor-pointer whitespace-nowrap ${
+                    className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1 text-[11px] font-black transition-all cursor-pointer whitespace-nowrap ${
                       active
-                        ? 'bg-[#58CC02] text-white shadow-2xs'
+                        ? 'bg-[#58CC02] text-white shadow-2xs border-b-2 border-[#46A302]'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
@@ -306,10 +306,10 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               <button
                 type="button"
                 onClick={onOpenFeedbackModal}
-                className="inline-flex items-center gap-1.5 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-[#58CC02] hover:bg-lime-50/40 dark:hover:bg-slate-700 px-3 py-2 text-xs font-extrabold text-slate-700 dark:text-slate-200 transition-all cursor-pointer whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-1.5 rounded-2xl border-2 border-slate-200 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 bg-white dark:bg-slate-800 hover:border-[#58CC02] hover:border-b-[#46A302] active:border-b-0 active:translate-y-1 px-3 py-2 text-xs font-extrabold text-slate-700 dark:text-slate-200 transition-all cursor-pointer whitespace-nowrap shrink-0"
                 title="Báo lỗi câu hỏi hoặc góp ý trực tiếp cho Mr.Harry"
               >
-                <MessageSquareWarning className="h-4 w-4 text-[#58CC02] shrink-0" />
+                <MessageSquareWarning className="h-4 w-4 text-[#FF9600] shrink-0" />
                 <span className="hidden sm:inline">Báo lỗi / Góp ý</span>
               </button>
             )}
@@ -319,13 +319,13 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               <button
                 type="button"
                 onClick={onOpenAdminFeedbackModal}
-                className="relative inline-flex items-center gap-1.5 rounded-xl border-2 border-lime-300 dark:border-lime-800 bg-lime-50 dark:bg-lime-950/60 hover:bg-lime-100 px-3 py-2 text-xs font-black text-[#2B6601] dark:text-[#78E014] transition-all cursor-pointer whitespace-nowrap shrink-0"
+                className="relative inline-flex items-center gap-1.5 rounded-2xl border-2 border-[#58CC02] border-b-4 border-b-[#46A302] bg-[#E5F9D6] dark:bg-lime-950/60 hover:bg-[#D7FFB8] active:border-b-0 active:translate-y-1 px-3 py-2 text-xs font-black text-[#2B6601] dark:text-[#78E014] transition-all cursor-pointer whitespace-nowrap shrink-0"
                 title="Mở Trung tâm thông báo Báo lỗi & Góp ý của học viên"
               >
                 <Bell className="h-4 w-4 text-[#3C8C02] dark:text-[#78E014] shrink-0" />
                 <span className="hidden xl:inline">Hòm thư Admin</span>
                 {unreadFeedbackCount > 0 && (
-                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-black text-white tabular-nums">
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF4B4B] px-1 text-[10px] font-black text-white tabular-nums">
                     {unreadFeedbackCount}
                   </span>
                 )}
@@ -335,9 +335,9 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             <button
               type="button"
               onClick={onDirectEnterSystem}
-              className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-[#58CC02] px-3.5 py-2 text-xs font-black text-slate-800 dark:text-slate-100 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-2xl border-2 border-slate-200 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 bg-white dark:bg-slate-800 hover:border-[#1CB0F6] hover:border-b-[#1899D6] active:border-b-0 active:translate-y-1 px-3.5 py-2 text-xs font-black text-slate-800 dark:text-slate-100 transition-all cursor-pointer whitespace-nowrap shrink-0"
             >
-              <LayoutGrid className="h-4 w-4 text-[#58CC02] shrink-0" />
+              <LayoutGrid className="h-4 w-4 text-[#1CB0F6] shrink-0" />
               <span>Kho đề ({totalPublishedExams})</span>
             </button>
 
@@ -345,7 +345,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               <button
                 type="button"
                 onClick={onDirectEnterSystem}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#58CC02] hover:bg-[#46A302] px-4 sm:px-5 py-2.5 text-xs font-black text-white shadow-sm border-b-4 border-[#3C8C02] active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer whitespace-nowrap shrink-0"
+                className="btn-duo-green inline-flex items-center gap-2 px-4 sm:px-5 py-2.5 text-xs font-black text-white whitespace-nowrap shrink-0"
               >
                 <span>Vào phòng thi</span>
                 <ArrowRight className="h-4 w-4 shrink-0" />
@@ -354,7 +354,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               <button
                 type="button"
                 onClick={onOpenLoginModal}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#58CC02] hover:bg-[#46A302] px-4 sm:px-5 py-2.5 text-xs font-black text-white shadow-sm border-b-4 border-[#3C8C02] active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer whitespace-nowrap shrink-0"
+                className="btn-duo-green inline-flex items-center gap-2 px-4 sm:px-5 py-2.5 text-xs font-black text-white whitespace-nowrap shrink-0"
               >
                 <LogIn className="h-3.5 w-3.5 shrink-0" />
                 <span>Đăng nhập</span>
@@ -385,7 +385,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                   isVisible ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-10'
                 }`}
               >
-                <div className="inline-flex flex-wrap items-center gap-2 rounded-xl bg-lime-50 dark:bg-lime-950/60 px-3.5 py-1.5 text-xs font-extrabold text-[#2B6601] dark:text-[#78E014] border border-lime-200 dark:border-lime-800">
+                <div className="inline-flex flex-wrap items-center gap-2 rounded-2xl bg-[#E5F9D6]/80 dark:bg-lime-950/60 px-3.5 py-1.5 text-xs font-extrabold text-[#2B6601] dark:text-[#78E014] border-2 border-[#58CC02] border-b-3 border-b-[#46A302]">
                   <ShieldCheck className="h-4 w-4 text-[#58CC02] shrink-0" />
                   <span>
                     CHUẨN ĐỊNH DẠNG BỘ GIÁO DỤC &amp; ĐÀO TẠO (VSTEP B1–B2–C1) · BY MR.HARRY
@@ -414,7 +414,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                   <button
                     type="button"
                     onClick={handleProtectedTestAction}
-                    className="inline-flex items-center justify-center gap-2.5 rounded-2xl bg-[#58CC02] hover:bg-[#46A302] px-7 py-4 text-sm sm:text-base font-black text-white shadow-lg shadow-lime-600/20 border-b-4 border-[#3C8C02] active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer whitespace-nowrap"
+                    className="btn-duo-green inline-flex items-center justify-center gap-2.5 px-7 py-4 text-sm sm:text-base font-black text-white shadow-lg shadow-lime-600/20 whitespace-nowrap"
                   >
                     {currentUser ? (
                       <Play className="h-5 w-5 fill-white shrink-0" />
@@ -429,9 +429,9 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                   <button
                     type="button"
                     onClick={onDirectEnterSystem}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white dark:bg-slate-800 hover:bg-lime-50 dark:hover:bg-slate-700 border-2 border-[#58CC02] px-6 py-4 text-sm sm:text-base font-black text-[#2B6601] dark:text-[#78E014] shadow-xs border-b-4 border-b-[#3C8C02] active:border-b-2 active:translate-y-0.5 transition-all cursor-pointer whitespace-nowrap"
+                    className="btn-duo-blue inline-flex items-center justify-center gap-2 px-6 py-4 text-sm sm:text-base font-black text-white whitespace-nowrap"
                   >
-                    <BookOpen className="h-5 w-5 text-[#58CC02] shrink-0" />
+                    <BookOpen className="h-5 w-5 text-white shrink-0" />
                     <span>Khám phá kho đề VSTEP ({countExams} bộ đề)</span>
                   </button>
                 </div>

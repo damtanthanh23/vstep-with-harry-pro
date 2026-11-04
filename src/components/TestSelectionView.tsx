@@ -84,6 +84,7 @@ interface TestSelectionViewProps {
   onBackToLanding?: () => void;
   onOpenFeedback?: () => void;
   onOpenAdminFeedback?: () => void;
+  isAdminFeedbackOpen?: boolean;
   unreadFeedbackCount?: number;
   onDeleteCustomTest?: (testId: string) => void;
   onPublishDraftTest?: (testId: string) => void;
@@ -110,6 +111,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
   onBackToLanding,
   onOpenFeedback,
   onOpenAdminFeedback,
+  isAdminFeedbackOpen = false,
   unreadFeedbackCount = 0,
   onDeleteCustomTest,
   onPublishDraftTest,
@@ -508,6 +510,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
         onBackToLanding={onBackToLanding}
         onOpenFeedback={onOpenFeedback}
         onOpenAdminFeedback={onOpenAdminFeedback}
+        isAdminFeedbackOpen={isAdminFeedbackOpen}
         unreadFeedbackCount={unreadFeedbackCount}
         userPoints={650}
       />
@@ -528,6 +531,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
           onBackToLanding={onBackToLanding}
           onOpenFeedback={onOpenFeedback}
           onOpenAdminFeedback={onOpenAdminFeedback}
+          isAdminFeedbackOpen={isAdminFeedbackOpen}
           unreadFeedbackCount={unreadFeedbackCount}
           streakDays={streakDays}
         />
@@ -560,7 +564,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
           {activeTab === 'tests' && (
             <div className="space-y-6 pb-20">
               {/* Header Title & Intro Banner */}
-              <div className="rounded-3xl bg-gradient-to-r from-[#58CC02] to-[#3C8C02] p-6 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="rounded-3xl bg-gradient-to-r from-[#58CC02] to-[#3C8C02] border-2 border-[#46A302] border-b-4 border-b-[#2B6600] p-6 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 text-white font-black text-xs mb-2 backdrop-blur-xs">
                     <BookOpen className="h-3.5 w-3.5" />
@@ -579,7 +583,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                     <button
                       type="button"
                       onClick={onOpenCreateExam}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white text-[#3C8C02] hover:bg-lime-50 text-xs font-black shadow-md border-b-2 border-slate-200 transition-all cursor-pointer"
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white text-[#2B6600] hover:bg-lime-50 text-xs font-black shadow-md border-2 border-lime-200 border-b-4 border-b-lime-400 active:border-b-0 active:translate-y-1 transition-all cursor-pointer"
                     >
                       <PlusCircle className="h-4 w-4 text-[#58CC02]" />
                       <span>Tạo đề thủ công (Trắng 100%)</span>
@@ -587,9 +591,9 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                     <button
                       type="button"
                       onClick={onOpenAiPdfModal}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-black/25 hover:bg-black/35 text-white text-xs font-black shadow-sm transition-all cursor-pointer"
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-[#1CB0F6] hover:bg-[#1899D6] text-white text-xs font-black border-2 border-[#1899D6] border-b-4 border-b-[#1480B3] active:border-b-0 active:translate-y-1 shadow-sm transition-all cursor-pointer"
                     >
-                      <Sparkles className="h-4 w-4 text-lime-200" />
+                      <Sparkles className="h-4 w-4 text-white" />
                       <span>Nhập đề bằng AI (PDF)</span>
                     </button>
                   </div>
@@ -597,20 +601,20 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
               </div>
 
               {/* Mode & Skill Packages Toolbar */}
-              <div className="rounded-3xl bg-white dark:bg-slate-800/80 p-5 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-4">
+              <div className="rounded-3xl bg-white dark:bg-slate-800/90 p-5 border-2 border-slate-200 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 shadow-2xs space-y-4">
                 {/* Mode Selector */}
                 <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                    <span className="text-xs font-extrabold text-slate-500 dark:text-slate-400">
                       Chế độ mặc định:
                     </span>
-                    <div className="inline-flex rounded-2xl bg-slate-100 dark:bg-slate-700 p-1">
+                    <div className="inline-flex rounded-2xl bg-slate-100 dark:bg-slate-700/80 p-1 border border-slate-200/80 dark:border-slate-600 gap-1">
                       <button
                         type="button"
                         onClick={() => onSelectMode('exam')}
                         className={`rounded-xl px-3.5 py-1.5 text-xs font-black transition-all cursor-pointer ${
                           selectedMode === 'exam'
-                            ? 'bg-[#58CC02] text-white shadow-xs'
+                            ? 'bg-[#58CC02] text-white border-b-2 border-[#46A302] shadow-xs'
                             : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
                         }`}
                       >
@@ -621,7 +625,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                         onClick={() => onSelectMode('practice')}
                         className={`rounded-xl px-3.5 py-1.5 text-xs font-black transition-all cursor-pointer ${
                           selectedMode === 'practice'
-                            ? 'bg-amber-500 text-white shadow-xs'
+                            ? 'bg-[#FF9600] text-white border-b-2 border-[#E58700] shadow-xs'
                             : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
                         }`}
                       >
@@ -642,7 +646,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 hover:border-[#58CC02] transition-colors cursor-pointer"
+                      className="inline-flex items-center gap-1.5 rounded-xl border-2 border-slate-200 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 text-xs font-black text-slate-700 dark:text-slate-300 hover:border-[#58CC02] hover:border-b-[#46A302] active:border-b-2 active:translate-y-0.5 transition-all cursor-pointer"
                     >
                       <Upload className="h-3.5 w-3.5 text-[#58CC02]" />
                       <span>
@@ -654,11 +658,11 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
 
                 {/* Skill Package Selector */}
                 <div>
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  <div className="flex items-center justify-between gap-2 mb-2.5">
+                    <span className="text-xs font-black text-slate-700 dark:text-slate-300">
                       Gói kỹ năng làm bài VSTEP:
                     </span>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
                       Thang chuẩn 10.0 điểm Bộ GD&ĐT (B1: ≥ 4.0 · B2: ≥ 6.0 · C1: ≥ 8.5)
                     </span>
                   </div>
@@ -667,10 +671,10 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onSelectSkillPackage('LRWS')}
-                      className={`flex flex-col text-left rounded-2xl p-3.5 transition-all border cursor-pointer ${
+                      className={`flex flex-col text-left rounded-2xl p-3.5 transition-all border-2 border-b-4 active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                         selectedSkillPackage === 'LRWS'
-                          ? 'border-[#58CC02] bg-[#E5F9D6]/60 dark:bg-emerald-950/40 ring-2 ring-[#58CC02]/30 shadow-xs'
-                          : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-100/70'
+                          ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/55 dark:bg-emerald-950/40 shadow-xs'
+                          : 'border-slate-200 dark:border-slate-700 border-b-slate-300 dark:border-b-slate-950 bg-slate-50/50 dark:bg-slate-800/40 hover:border-[#58CC02]'
                       }`}
                     >
                       <div className="flex items-center justify-between mb-1">
@@ -679,10 +683,10 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                           <span>Đủ 4 Kỹ năng (L-R-W-S)</span>
                         </span>
                         {selectedSkillPackage === 'LRWS' && (
-                          <CheckCircle2 className="h-4 w-4 text-[#58CC02]" />
+                          <CheckCircle2 className="h-4 w-4 text-[#46A302]" />
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
                         75 câu + 2 Writing + 3 Speaking · 172p
                       </p>
                     </button>
@@ -690,22 +694,22 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onSelectSkillPackage('LRW')}
-                      className={`flex flex-col text-left rounded-2xl p-3.5 transition-all border cursor-pointer ${
+                      className={`flex flex-col text-left rounded-2xl p-3.5 transition-all border-2 border-b-4 active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                         selectedSkillPackage === 'LRW'
-                          ? 'border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/40 ring-2 ring-emerald-500/30 shadow-xs'
-                          : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-100/70'
+                          ? 'border-[#1CB0F6] border-b-[#1899D6] bg-[#DDF4FF]/65 dark:bg-sky-950/40 shadow-xs'
+                          : 'border-slate-200 dark:border-slate-700 border-b-slate-300 dark:border-b-slate-950 bg-slate-50/50 dark:bg-slate-800/40 hover:border-[#1CB0F6]'
                       }`}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <span className="flex items-center gap-1.5 text-xs font-black text-slate-800 dark:text-white">
-                          <Headphones className="h-4 w-4 text-emerald-500" />
+                          <Headphones className="h-4 w-4 text-[#1CB0F6]" />
                           <span>3 Kỹ năng (Nghe-Đọc-Viết)</span>
                         </span>
                         {selectedSkillPackage === 'LRW' && (
-                          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                          <CheckCircle2 className="h-4 w-4 text-[#1899D6]" />
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
                         75 câu trắc nghiệm + 2 Task Viết · 160p
                       </p>
                     </button>
@@ -713,22 +717,22 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onSelectSkillPackage('S')}
-                      className={`flex flex-col text-left rounded-2xl p-3.5 transition-all border cursor-pointer ${
+                      className={`flex flex-col text-left rounded-2xl p-3.5 transition-all border-2 border-b-4 active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                         selectedSkillPackage === 'S'
-                          ? 'border-rose-500 bg-rose-50/70 dark:bg-rose-950/40 ring-2 ring-rose-500/30 shadow-xs'
-                          : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-100/70'
+                          ? 'border-[#FF4B4B] border-b-[#EA2B2B] bg-[#FFDFE0]/65 dark:bg-rose-950/40 shadow-xs'
+                          : 'border-slate-200 dark:border-slate-700 border-b-slate-300 dark:border-b-slate-950 bg-slate-50/50 dark:bg-slate-800/40 hover:border-[#FF4B4B]'
                       }`}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <span className="flex items-center gap-1.5 text-xs font-black text-slate-800 dark:text-white">
-                          <Mic className="h-4 w-4 text-rose-500" />
+                          <Mic className="h-4 w-4 text-[#FF4B4B]" />
                           <span>Luyện Nói Riêng (Speaking)</span>
                         </span>
                         {selectedSkillPackage === 'S' && (
-                          <CheckCircle2 className="h-4 w-4 text-rose-500" />
+                          <CheckCircle2 className="h-4 w-4 text-[#EA2B2B]" />
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
                         Part 1, 2 & Part 3 Mind-map · 12 phút
                       </p>
                     </button>
@@ -736,22 +740,22 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onSelectSkillPackage('W')}
-                      className={`flex flex-col text-left rounded-2xl p-3.5 transition-all border cursor-pointer ${
+                      className={`flex flex-col text-left rounded-2xl p-3.5 transition-all border-2 border-b-4 active:border-b-2 active:translate-y-0.5 cursor-pointer ${
                         selectedSkillPackage === 'W'
-                          ? 'border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/40 ring-2 ring-indigo-500/30 shadow-xs'
-                          : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-100/70'
+                          ? 'border-[#CE82FF] border-b-[#A560E8] bg-[#F3E5FF]/70 dark:bg-purple-950/40 shadow-xs'
+                          : 'border-slate-200 dark:border-slate-700 border-b-slate-300 dark:border-b-slate-950 bg-slate-50/50 dark:bg-slate-800/40 hover:border-[#CE82FF]'
                       }`}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <span className="flex items-center gap-1.5 text-xs font-black text-slate-800 dark:text-white">
-                          <PenTool className="h-4 w-4 text-indigo-500" />
+                          <PenTool className="h-4 w-4 text-[#A560E8]" />
                           <span>Luyện Viết Riêng (Writing)</span>
                         </span>
                         {selectedSkillPackage === 'W' && (
-                          <CheckCircle2 className="h-4 w-4 text-indigo-500" />
+                          <CheckCircle2 className="h-4 w-4 text-[#A560E8]" />
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
                         Task 1 (≥120 từ) & Task 2 (≥250 từ) · 60p
                       </p>
                     </button>
@@ -766,7 +770,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                 </div>
               )}
 
-              {/* Search + Sort + Admin Reorder + View Mode Switcher Bar (Matching image_353a9b31.png & image_5713125d.png) */}
+              {/* Search + Sort + Admin Reorder + View Mode Switcher Bar */}
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                 {/* Left: Search Input */}
                 <div className="relative flex-1 max-w-xl">
@@ -776,7 +780,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                     value={searchTestQuery}
                     onChange={(e) => setSearchTestQuery(e.target.value)}
                     placeholder="Tìm kiếm bộ đề theo tên..."
-                    className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 text-xs sm:text-sm font-medium text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#6D28D9]/30 focus:border-[#6D28D9]"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 border-b-4 border-b-slate-300 dark:border-b-slate-950 text-xs sm:text-sm font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#58CC02]/30 focus:border-[#58CC02] focus:border-b-[#46A302]"
                   />
                 </div>
 
@@ -784,11 +788,11 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                 <div className="flex flex-wrap items-center gap-2">
                   {/* Quick Sort Dropdown */}
                   <div className="relative inline-flex items-center">
-                    <ArrowUpDown className="h-3.5 w-3.5 text-slate-400 absolute left-3 pointer-events-none" />
+                    <ArrowUpDown className="h-3.5 w-3.5 text-[#58CC02] absolute left-3 pointer-events-none" />
                     <select
                       value={sortMode}
                       onChange={(e) => setSortMode(e.target.value as ExamSortMode)}
-                      className="pl-8 pr-7 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 text-xs font-extrabold text-slate-700 dark:text-slate-200 focus:outline-hidden focus:border-[#6D28D9] cursor-pointer"
+                      className="pl-8 pr-7 py-2 rounded-2xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 border-b-4 border-b-slate-300 dark:border-b-slate-950 text-xs font-extrabold text-slate-700 dark:text-slate-200 focus:outline-hidden focus:border-[#58CC02] cursor-pointer"
                       title="Chọn cách sắp xếp bộ đề"
                     >
                       <option value="custom">Thứ tự chuẩn GV (Cloud)</option>
@@ -807,10 +811,10 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                         setIsReorderMode((prev) => !prev);
                         setSortMode('custom');
                       }}
-                      className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-extrabold border transition-all cursor-pointer ${
+                      className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-black border-2 border-b-4 transition-all active:border-b-0 active:translate-y-1 cursor-pointer ${
                         isReorderMode
-                          ? 'bg-[#6D28D9] text-white border-[#6D28D9] shadow-xs'
-                          : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200/90 dark:border-slate-800 hover:border-[#6D28D9]'
+                          ? 'bg-[#58CC02] text-white border-[#58CC02] border-b-[#46A302] shadow-xs'
+                          : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-800 border-b-slate-300 dark:border-b-slate-950 hover:border-[#58CC02] hover:border-b-[#46A302]'
                       }`}
                       title="Bật chế độ kéo thả hoặc bấm nút đổi vị trí đề và đồng bộ Cloud cho toàn bộ học viên"
                     >
@@ -820,13 +824,13 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                   )}
 
                   {/* Lưới | Danh sách View Mode Switcher */}
-                  <div className="inline-flex items-center p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700">
+                  <div className="inline-flex items-center p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 border-2 border-slate-200/80 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950">
                     <button
                       type="button"
                       onClick={() => handleSelectViewMode('grid')}
                       className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                         viewMode === 'grid'
-                          ? 'bg-white dark:bg-slate-900 text-[#6D28D9] dark:text-purple-300 shadow-2xs border border-purple-200/80 dark:border-purple-800'
+                          ? 'bg-[#58CC02] text-white shadow-2xs border-b-2 border-[#46A302]'
                           : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                       }`}
                     >
@@ -838,7 +842,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                       onClick={() => handleSelectViewMode('list')}
                       className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                         viewMode === 'list'
-                          ? 'bg-white dark:bg-slate-900 text-[#6D28D9] dark:text-purple-300 shadow-2xs border border-purple-200/80 dark:border-purple-800'
+                          ? 'bg-[#58CC02] text-white shadow-2xs border-b-2 border-[#46A302]'
                           : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                       }`}
                     >
@@ -851,14 +855,14 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
 
               {/* Admin Active Reorder Helper Bar */}
               {canManageExams && isReorderMode && (
-                <div className="rounded-2xl bg-purple-50/90 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="text-xs text-purple-950 dark:text-purple-200 font-semibold">
+                <div className="rounded-2xl bg-[#D7FFB8]/60 dark:bg-emerald-950/40 border-2 border-[#58CC02] border-b-4 border-b-[#46A302] p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="text-xs text-[#2B6600] dark:text-lime-200 font-bold">
                     <strong className="font-black">Chế độ Sắp xếp đề (Đồng bộ Cloud):</strong> Kéo thả trực tiếp thẻ đề, bấm nút mũi tên <span className="font-black">← / →</span> để đổi vị trí hoặc bấm <span className="font-black">📌 Ghim</span> để cố định đề lên đầu trang cho mọi học viên.
                   </div>
                   <button
                     type="button"
                     onClick={handleAutoSortNaturalOrderToCloud}
-                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 hover:bg-purple-100/60 text-[#6D28D9] dark:text-purple-300 border border-purple-300 dark:border-purple-700 text-xs font-black shadow-2xs transition-all cursor-pointer shrink-0"
+                    className="btn-duo-green px-3.5 py-2 rounded-xl text-xs shrink-0"
                     title="Tự động xếp theo tên Test 1 -> Test 2 -> Test 3... và lưu lên Cloud"
                   >
                     <ArrowUpDown className="h-3.5 w-3.5" />
@@ -868,13 +872,13 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
               )}
 
               {/* Dynamic Category Tag Filter Bar */}
-              <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200/70 dark:border-slate-800 rounded-2xl">
+              <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100/90 dark:bg-slate-800/90 border-2 border-slate-200/80 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 rounded-2xl">
                 <button
                   type="button"
                   onClick={() => setFilterTag('all')}
                   className={`px-3.5 py-1.5 text-xs font-black rounded-xl transition-all cursor-pointer ${
                     filterTag === 'all'
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs border border-slate-200/80 dark:border-slate-700'
+                      ? 'bg-[#58CC02] text-white shadow-2xs border-b-2 border-[#46A302]'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
@@ -893,15 +897,15 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
                       className={`px-3.5 py-1.5 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
                         filterTag === cat
                           ? isDraftTab
-                            ? 'bg-amber-500 text-white shadow-2xs'
-                            : 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs border border-slate-200/80 dark:border-slate-700'
+                            ? 'bg-[#FF9600] text-white shadow-2xs border-b-2 border-[#E58700]'
+                            : 'bg-[#58CC02] text-white shadow-2xs border-b-2 border-[#46A302]'
                           : isDraftTab
                           ? 'text-amber-700 dark:text-amber-400 hover:bg-amber-100/60 dark:hover:bg-amber-950/40'
                           : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                       }`}
                     >
                       <span>{cat}</span>
-                      <span className="text-[11px] opacity-75">({count})</span>
+                      <span className="text-[11px] opacity-85">({count})</span>
                     </button>
                   );
                 })}
