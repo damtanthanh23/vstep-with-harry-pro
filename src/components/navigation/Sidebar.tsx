@@ -20,6 +20,8 @@ import {
   GraduationCap,
   Users,
   LogOut,
+  RotateCcw,
+  PenTool,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -30,6 +32,8 @@ export type NavTabType =
   | 'tests'
   | 'listening'
   | 'reading'
+  | 'writing_speaking'
+  | 'mistakes'
   | 'vocab'
   | 'leaderboard'
   | 'students'
@@ -93,6 +97,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Luyện đọc',
       icon: FileText,
       iconColor: 'text-[#FF9600]',
+    },
+    {
+      id: 'writing_speaking' as NavTabType,
+      label: 'Viết & Nói',
+      icon: PenTool,
+      iconColor: 'text-[#CE82FF]',
+    },
+    {
+      id: 'mistakes' as NavTabType,
+      label: 'Câu hay sai',
+      icon: RotateCcw,
+      iconColor: 'text-[#FF4B4B]',
     },
     {
       id: 'vocab' as NavTabType,

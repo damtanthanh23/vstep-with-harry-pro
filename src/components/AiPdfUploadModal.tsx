@@ -119,14 +119,15 @@ export const AiPdfUploadModal: React.FC<AiPdfUploadModalProps> = ({
         title: normalized.title || examTitle,
         subtitle:
           normalized.subtitle ||
-          'Đề thi VSTEP B1-B2-C1 trích xuất tự động qua Gemini AI (35 câu Nghe, 40 câu Đọc & 2 bài Viết)',
+          'Đề thi VSTEP B1-B2-C1 trích xuất tự động qua Gemini AI (35 câu Nghe, 40 câu Đọc, 2 bài Viết & 3 phần Nói)',
         totalQuestions: 75,
-        durationMinutes: normalized.durationMinutes || 100,
+        durationMinutes: normalized.durationMinutes || 172,
         isAvailable: true,
         isCustom: true,
         createdAt: Date.now(),
         questions: normalized.questions,
         writingTasks: normalized.writingTasks,
+        speakingTasks: normalized.speakingTasks,
       };
 
       onExamExtracted(newTestMetadata, normalized.questions);

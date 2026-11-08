@@ -176,7 +176,9 @@ export interface UserExamAttempt {
     overallBand?: number;
   };
   aiWritingEvaluation?: any;
+  aiSpeakingEvaluation?: any;
   aiDiagnosticReport?: any;
+  tabSwitchCount?: number;
 }
 
 export interface InProgressAttempt {

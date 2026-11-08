@@ -26,13 +26,15 @@ import {
   ArrowUpDown,
   GripVertical,
 } from 'lucide-react';
-import { TestMetadata, ExamSection, InProgressAttempt, isDraftTest } from '../types/exam';
+import { TestMetadata, ExamSection, InProgressAttempt, Question, isDraftTest } from '../types/exam';
 import { Sidebar, NavTabType } from './navigation/Sidebar';
 import { MobileBottomNav } from './navigation/MobileBottomNav';
 import { TopBarHeader } from './navigation/TopBarHeader';
 import { DashboardHomeView } from './views/DashboardHomeView';
 import { ListeningPracticeView } from './views/ListeningPracticeView';
 import { ReadingPracticeView } from './views/ReadingPracticeView';
+import { WritingSpeakingPracticeView } from './views/WritingSpeakingPracticeView';
+import { MistakeNotebookView } from './views/MistakeNotebookView';
 import { VocabularyB1View } from './views/VocabularyB1View';
 import { LeaderboardView } from './views/LeaderboardView';
 import { StudentManagementView } from './views/admin/StudentManagementView';
@@ -90,6 +92,7 @@ interface TestSelectionViewProps {
   onPublishDraftTest?: (testId: string) => void;
   inProgressMap?: Record<string, InProgressAttempt>;
   completedScoresMap?: Record<string, number>;
+  customQuestionsMap?: Record<string, Question[]>;
 }
 
 export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
@@ -117,6 +120,7 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
   onPublishDraftTest,
   inProgressMap = {},
   completedScoresMap = {},
+  customQuestionsMap = {},
 }) => {
   const { canManageExams } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -207,6 +211,10 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
         return 'Luyện nghe';
       case 'reading':
         return 'Luyện đọc';
+      case 'writing_speaking':
+        return 'Luyện Viết & Nói';
+      case 'mistakes':
+        return 'Câu hay sai';
       case 'vocab':
         return 'Từ vựng B1';
       case 'leaderboard':
@@ -349,6 +357,10 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
         return 'Luyện nghe (Listening · 35 câu)';
       case 'reading':
         return 'Luyện đọc (Reading · 40 câu)';
+      case 'writing_speaking':
+        return 'Luyện Viết & Nói (Writing Task 1–2 · Speaking Part 1–3)';
+      case 'mistakes':
+        return 'Sổ Tay Câu Hỏi Hay Sai & Làm Lại';
       case 'vocab':
         if (vocabWorkspace === 'study_hub') {
           return 'Phòng Luyện Tập Từ Vựng';
@@ -373,6 +385,10 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
         return 'Luyện nghe 3 Part (35 câu) với trình phát audio đa tốc độ và transcript song ngữ';
       case 'reading':
         return 'Luyện đọc 4 Passages (40 câu) với giao diện chia đôi màn hình đối chiếu';
+      case 'writing_speaking':
+        return 'Kho đề Writing (Task 1 & 2) và Speaking (Part 1, 2 & Mind-map Part 3) kèm bài mẫu B2–C1 và chấm chữa AI';
+      case 'mistakes':
+        return 'Tự động tổng hợp các câu Listening & Reading bạn từng chọn sai để làm lại kèm giải thích chi tiết';
       case 'vocab':
         return 'Hệ thống học từ vựng VSTEP đồng bộ Cloud Firestore + Lặp lại ngắt quãng Anki (SM-2)';
       case 'leaderboard':
@@ -998,6 +1014,24 @@ export const TestSelectionView: React.FC<TestSelectionViewProps> = ({
               tests={tests}
               onStartTest={onStartTest}
               onSelectMode={onSelectMode}
+            />
+          )}
+
+          {/* TAB 4A: Luyện Viết & Nói (Writing & Speaking Hub) */}
+          {activeTab === 'writing_speaking' && (
+            <WritingSpeakingPracticeView
+              tests={tests}
+              onStartTest={onStartTest}
+              onSelectMode={onSelectMode}
+            />
+          )}
+
+          {/* TAB 4B: Sổ tay câu hỏi hay sai (Mistake Notebook & Redo) */}
+          {activeTab === 'mistakes' && (
+            <MistakeNotebookView
+              tests={tests}
+              customQuestionsMap={customQuestionsMap}
+              onStartTest={(testId, section, part) => onStartTest(testId, section, part)}
             />
           )}
 

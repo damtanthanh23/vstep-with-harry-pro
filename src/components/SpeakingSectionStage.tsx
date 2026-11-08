@@ -59,15 +59,60 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
   const [sttSupported, setSttSupported] = useState(true);
   const [micError, setMicError] = useState<string | null>(null);
 
-  // VSTEP Part Prep / Speak Timer
+  // VSTEP Part Prep / Speak Timer & Auto Exam Flow
   const [timerPhase, setTimerPhase] = useState<'idle' | 'prep' | 'speak'>('idle');
   const [phaseSecondsLeft, setPhaseSecondsLeft] = useState<number>(0);
+  const [autoRecordOnSpeak, setAutoRecordOnSpeak] = useState<boolean>(true);
+  const [soundBeepEnabled, setSoundBeepEnabled] = useState<boolean>(true);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const speechRecRef = useRef<any>(null);
   const recordIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const submissionRef = useRef<SpeakingSubmission>(submission);
+
+  const playExamBeep = (type: 'tick' | 'start_record' | 'stop_record') => {
+    if (!soundBeepEnabled) return;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      const now = ctx.currentTime;
+      if (type === 'tick') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, now);
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+        osc.start(now);
+        osc.stop(now + 0.12);
+      } else if (type === 'start_record') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1046.5, now); // C6 official exam room start beep
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+        osc.start(now);
+        osc.stop(now + 0.5);
+      } else {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(784, now);
+        osc.frequency.setValueAtTime(587.33, now + 0.18);
+        gain.gain.setValueAtTime(0.22, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+        osc.start(now);
+        osc.stop(now + 0.42);
+      }
+      setTimeout(() => {
+        ctx.close().catch(() => {});
+      }, 650);
+    } catch {
+      // Ignore Web Audio API restrictions
+    }
+  };
 
   useEffect(() => {
     submissionRef.current = submission;
@@ -200,24 +245,40 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
     }
   };
 
-  // Phase countdown timer (Prep 1m / Speak 3-4m)
+  // Phase countdown timer (Prep 1m / Speak 3-4m) with Exam Beep & Auto-Recording
   useEffect(() => {
     if (timerPhase === 'idle') return;
     const interval = setInterval(() => {
       setPhaseSecondsLeft((prev) => {
+        if (prev >= 2 && prev <= 4) {
+          playExamBeep('tick');
+        }
         if (prev <= 1) {
           if (timerPhase === 'prep') {
+            playExamBeep('start_record');
             setTimerPhase('speak');
+            if (autoRecordOnSpeak && !isRecording && !isReviewMode) {
+              setTimeout(() => {
+                startRecordingSession();
+              }, 120);
+            }
             return task.speakSeconds || 180;
           }
+          playExamBeep('stop_record');
           setTimerPhase('idle');
+          if (isRecording) {
+            setTimeout(() => {
+              stopRecordingSession();
+            }, 80);
+          }
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [timerPhase, task.speakSeconds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timerPhase, task.speakSeconds, autoRecordOnSpeak, soundBeepEnabled, isRecording, isReviewMode]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -701,59 +762,97 @@ export const SpeakingSectionStage: React.FC<SpeakingSectionStageProps> = ({
 
             {/* VSTEP Preparation (1m) & Speaking (3-4m) Timer Bar */}
             {!isReviewMode && (
-              <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/70 border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-700 p-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs font-black text-slate-700 dark:text-slate-200">
-                  <Clock className="h-4 w-4 text-[#1CB0F6]" />
-                  {timerPhase === 'idle' ? (
-                    <span>
-                      Đồng hồ luyện phản xạ:{' '}
-                      {task.prepSeconds > 0
-                        ? `1 phút chuẩn bị + ${Math.round(task.speakSeconds / 60)} phút nói`
-                        : `${task.durationMinutes} phút trả lời trực tiếp`}
-                    </span>
-                  ) : (
-                    <span className="font-black text-[#1899D6] dark:text-sky-300">
-                      {timerPhase === 'prep'
-                        ? `⏳ Thời gian chuẩn bị dàn ý: ${formatTimer(phaseSecondsLeft)}`
-                        : `🎙️ Thời gian trình bày bài nói: ${formatTimer(phaseSecondsLeft)}`}
-                    </span>
-                  )}
-                </div>
+              <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/70 border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-700 p-3.5 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-black text-slate-700 dark:text-slate-200">
+                    <Clock className="h-4 w-4 text-[#1CB0F6] shrink-0" />
+                    {timerPhase === 'idle' ? (
+                      <span>
+                        Đồng hồ chuẩn phòng thi:{' '}
+                        {task.prepSeconds > 0
+                          ? `1 phút chuẩn bị → Tiếng Bíp → ${Math.round(task.speakSeconds / 60)} phút thu âm`
+                          : `${task.durationMinutes} phút trả lời trực tiếp`}
+                      </span>
+                    ) : (
+                      <span
+                        className={`font-mono tabular-nums font-black text-sm px-2.5 py-0.5 rounded-lg ${
+                          timerPhase === 'prep'
+                            ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300'
+                            : 'bg-rose-100 dark:bg-rose-950/80 text-[#EA2B2B] dark:text-rose-300'
+                        }`}
+                      >
+                        {timerPhase === 'prep'
+                          ? `⏳ Chuẩn bị dàn ý: ${formatTimer(phaseSecondsLeft)}`
+                          : `🎙️ Trình bày bài nói: ${formatTimer(phaseSecondsLeft)}`}
+                      </span>
+                    )}
+                  </div>
 
-                <div className="flex items-center gap-2">
-                  {task.prepSeconds > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {task.prepSeconds > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAutoRecordOnSpeak(true);
+                          setTimerPhase('prep');
+                          setPhaseSecondsLeft(task.prepSeconds);
+                        }}
+                        className="btn-duo-orange rounded-xl px-3 py-1.5 text-[11px] font-black cursor-pointer inline-flex items-center gap-1"
+                        title="Đếm ngược 1 phút chuẩn bị, phát tiếng bíp và tự động bật Micro thu âm bài nói"
+                      >
+                        <Play className="h-3 w-3 fill-white" />
+                        <span>Thi tự động (1&apos; Chuẩn bị → Tự thu âm)</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => {
-                        setTimerPhase('prep');
-                        setPhaseSecondsLeft(task.prepSeconds);
+                        playExamBeep('start_record');
+                        setTimerPhase('speak');
+                        setPhaseSecondsLeft(task.speakSeconds || 180);
+                        if (autoRecordOnSpeak && !isRecording) {
+                          startRecordingSession();
+                        }
                       }}
-                      className="btn-duo-orange rounded-xl px-3 py-1.5 text-[11px] font-black cursor-pointer"
+                      className="btn-duo-blue rounded-xl px-3 py-1.5 text-[11px] font-black cursor-pointer inline-flex items-center gap-1"
                     >
-                      Bấm giờ Chuẩn bị (1&apos;)
+                      <Play className="h-3 w-3 fill-white" />
+                      <span>Bấm giờ Nói ({Math.round((task.speakSeconds || 180) / 60)}&apos;)</span>
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTimerPhase('speak');
-                      setPhaseSecondsLeft(task.speakSeconds || 180);
-                    }}
-                    className="btn-duo-blue rounded-xl px-3 py-1.5 text-[11px] font-black cursor-pointer inline-flex items-center gap-1"
-                  >
-                    <Play className="h-3 w-3 fill-white" />
-                    <span>Bấm giờ Nói ({Math.round((task.speakSeconds || 180) / 60)}&apos;)</span>
-                  </button>
-                  {timerPhase !== 'idle' && (
-                    <button
-                      type="button"
-                      onClick={() => setTimerPhase('idle')}
-                      className="btn-duo-white rounded-xl p-1.5 text-[11px] font-black cursor-pointer"
-                      title="Đặt lại đồng hồ"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                    </button>
-                  )}
+                    {timerPhase !== 'idle' && (
+                      <button
+                        type="button"
+                        onClick={() => setTimerPhase('idle')}
+                        className="btn-duo-white rounded-xl p-1.5 text-[11px] font-black cursor-pointer"
+                        title="Đặt lại đồng hồ"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Auto-Record & Sound Beep Toggles */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70 dark:border-slate-700/70 text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={autoRecordOnSpeak}
+                      onChange={(e) => setAutoRecordOnSpeak(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded accent-[#58CC02]"
+                    />
+                    <span>Tự động bật/tắt Micro khi hết giờ chuẩn bị &amp; giờ nói</span>
+                  </label>
+
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={soundBeepEnabled}
+                      onChange={(e) => setSoundBeepEnabled(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded accent-[#1CB0F6]"
+                    />
+                    <span>Âm báo tiếng Bíp chuẩn phòng thi (3s cuối &amp; chuyển pha)</span>
+                  </label>
                 </div>
               </div>
             )}

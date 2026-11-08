@@ -27,6 +27,7 @@ import {
   List,
   ArrowUpDown,
   GripVertical,
+  AlertTriangle,
 } from 'lucide-react';
 import { TestMetadata, InProgressAttempt, isDraftTest, UserTargetScores } from '../../types/exam';
 import { NavTabType } from '../navigation/Sidebar';
@@ -37,6 +38,12 @@ import {
   STREAK_UPDATED_EVENT,
   ComputedStreakStatus,
 } from '../../services/streakService';
+import { loadUserVocabState } from '../../services/vocabStorageService';
+import {
+  getMistakeRecords,
+  MISTAKES_UPDATED_EVENT,
+  syncMistakesWithCloud,
+} from '../../services/mistakeService';
 import {
   getDailyQuote,
   getRandomDifferentQuote,
@@ -202,6 +209,53 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
     loadSavedTargetScores(currentUser?.uid, userProfile?.targetScores)
   );
   const [isEditingGoals, setIsEditingGoals] = useState<boolean>(false);
+
+  // Daily Study Mission real-time metrics (SRS Due, Unmastered Mistakes)
+  const [dueSrsCount, setDueSrsCount] = useState<number>(0);
+  const [enrolledSrsCount, setEnrolledSrsCount] = useState<number>(0);
+  const [unmasteredMistakesCount, setUnmasteredMistakesCount] = useState<number>(0);
+  const [masteredMistakesCount, setMasteredMistakesCount] = useState<number>(0);
+
+  useEffect(() => {
+    const uid = currentUser?.uid || 'guest';
+    const refreshDailyMissionData = () => {
+      try {
+        const vocabState = loadUserVocabState(uid);
+        const now = Date.now();
+        const srsRecords = Object.values(vocabState.srsMap || {}).filter(
+          (r) => r && r.enrolled && !r.suspended
+        );
+        setEnrolledSrsCount(srsRecords.length);
+        setDueSrsCount(
+          srsRecords.filter((r) => r.dueAt !== null && r.dueAt <= now).length
+        );
+      } catch {
+        setDueSrsCount(0);
+      }
+
+      try {
+        const mistakes = getMistakeRecords(uid);
+        setUnmasteredMistakesCount(mistakes.filter((m) => !m.mastered).length);
+        setMasteredMistakesCount(mistakes.filter((m) => m.mastered).length);
+      } catch {
+        setUnmasteredMistakesCount(0);
+      }
+    };
+
+    refreshDailyMissionData();
+    if (uid !== 'guest') {
+      syncMistakesWithCloud({ uid, tests }).then(() => {
+        refreshDailyMissionData();
+      }).catch(() => {});
+    }
+
+    window.addEventListener(MISTAKES_UPDATED_EVENT, refreshDailyMissionData);
+    window.addEventListener(STREAK_UPDATED_EVENT, refreshDailyMissionData);
+    return () => {
+      window.removeEventListener(MISTAKES_UPDATED_EVENT, refreshDailyMissionData);
+      window.removeEventListener(STREAK_UPDATED_EVENT, refreshDailyMissionData);
+    };
+  }, [currentUser?.uid, tests]);
 
   useEffect(() => {
     const resolved =
@@ -797,12 +851,193 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
         </div>
       </div>
 
+      {/* Bảng Nhiệm Vụ Học Tập Hôm Nay (Daily VSTEP Study Mission) */}
+      {(() => {
+        const inProgressList = Object.values(inProgressMap || {}).sort(
+          (a, b) => (b.savedAt || 0) - (a.savedAt || 0)
+        );
+        const latestDraft = inProgressList[0];
+        const nextRecommendedTest =
+          tests.find((t) => completedScoresMap[t.id] === undefined) || tests[0];
+
+        const srsTaskDone = enrolledSrsCount > 0 && dueSrsCount === 0;
+        const mistakeTaskDone = unmasteredMistakesCount === 0 && masteredMistakesCount > 0;
+        const practiceTaskDone = Boolean(streakStatus.studiedToday);
+
+        const completedMissions =
+          (srsTaskDone ? 1 : 0) + (mistakeTaskDone ? 1 : 0) + (practiceTaskDone ? 1 : 0);
+        const missionProgressPct = Math.round((completedMissions / 3) * 100);
+
+        return (
+          <div className="rounded-3xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 border-b-4 border-b-slate-300 dark:border-b-slate-950 p-5 sm:p-6 shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-[#1899D6] dark:text-[#1CB0F6]">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>LỘ TRÌNH TỰ ĐỘNG HẰNG NGÀY</span>
+                </div>
+                <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5">
+                  Nhiệm Vụ Học Tập Hôm Nay (3 Bước Tăng Band VSTEP)
+                </h3>
+              </div>
+
+              <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/80 px-3.5 py-2 rounded-2xl border border-slate-200 dark:border-slate-700">
+                <div className="text-right">
+                  <div className="text-[10px] font-black uppercase text-slate-400">
+                    Tiến độ hôm nay
+                  </div>
+                  <div className="font-mono text-xs sm:text-sm font-black tabular-nums text-slate-800 dark:text-white">
+                    {completedMissions}/3 nhiệm vụ ({missionProgressPct}%)
+                  </div>
+                </div>
+                <div className="w-20 h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-[#58CC02] transition-all duration-300"
+                    style={{ width: `${missionProgressPct}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+              {/* Mission 1: SRS Vocabulary Review */}
+              <div
+                className={`rounded-2xl border-2 border-b-4 p-4 flex flex-col justify-between gap-3 transition-all ${
+                  dueSrsCount > 0
+                    ? 'border-[#CE82FF] border-b-[#A560E8] bg-purple-50/40 dark:bg-purple-950/25'
+                    : 'border-slate-200 dark:border-slate-800 border-b-slate-300 dark:border-b-slate-950 bg-slate-50/60 dark:bg-slate-800/40'
+                }`}
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-black text-[#A560E8] dark:text-purple-300">
+                      <BookmarkCheck className="h-4 w-4" />
+                      <span>1. Ôn từ vựng SRS đến hạn</span>
+                    </span>
+                    <span className="font-mono text-xs font-black tabular-nums px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800 text-[#A560E8] dark:text-purple-300">
+                      {dueSrsCount} từ cần ôn
+                    </span>
+                  </div>
+                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 leading-relaxed">
+                    {dueSrsCount > 0
+                      ? `Bạn có ${dueSrsCount} từ vựng đã đến lịch lặp lại ngắt quãng (SRS) hôm nay.`
+                      : enrolledSrsCount > 0
+                      ? `Tuyệt vời! Bạn đã ôn hết toàn bộ ${enrolledSrsCount} từ vựng đến hạn hôm nay.`
+                      : 'Khởi động kho 450+ từ vựng B1-B2 theo 15 chủ đề để nạp vào lịch SRS.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab('vocab')}
+                  className={`${
+                    dueSrsCount > 0 ? 'btn-duo-purple' : 'btn-duo-white'
+                  } w-full py-2.5 px-3.5 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer`}
+                >
+                  <span>
+                    {dueSrsCount > 0 ? `Ôn ngay ${dueSrsCount} từ đến hạn` : 'Mở Kho Từ Vựng SRS'}
+                  </span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {/* Mission 2: Mistake Notebook Redo */}
+              <div
+                className={`rounded-2xl border-2 border-b-4 p-4 flex flex-col justify-between gap-3 transition-all ${
+                  unmasteredMistakesCount > 0
+                    ? 'border-[#FF9600] border-b-[#E58700] bg-amber-50/40 dark:bg-amber-950/25'
+                    : 'border-slate-200 dark:border-slate-800 border-b-slate-300 dark:border-b-slate-950 bg-slate-50/60 dark:bg-slate-800/40'
+                }`}
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-black text-[#E58700] dark:text-amber-300">
+                      <AlertTriangle className="h-4 w-4 text-[#FF9600]" />
+                      <span>2. Khắc phục câu từng sai</span>
+                    </span>
+                    <span className="font-mono text-xs font-black tabular-nums px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 text-[#E58700] dark:text-amber-300">
+                      {unmasteredMistakesCount} câu cần sửa
+                    </span>
+                  </div>
+                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 leading-relaxed">
+                    {unmasteredMistakesCount > 0
+                      ? `Có ${unmasteredMistakesCount} câu Listening/Reading từng chọn nhầm cần làm lại để nắm chắc bẫy đề.`
+                      : masteredMistakesCount > 0
+                      ? `Đã khắc phục 100% (${masteredMistakesCount} câu từng sai)! Sổ tay câu sai đã sạch bóng.`
+                      : 'Chưa có câu sai tồn đọng. Mọi câu làm nhầm khi luyện đề sẽ tự động lưu vào đây.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab('mistakes')}
+                  className={`${
+                    unmasteredMistakesCount > 0 ? 'btn-duo-orange' : 'btn-duo-white'
+                  } w-full py-2.5 px-3.5 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer`}
+                >
+                  <span>
+                    {unmasteredMistakesCount > 0
+                      ? `Làm lại ${unmasteredMistakesCount} câu hay sai`
+                      : 'Xem Sổ Tay Câu Sai'}
+                  </span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {/* Mission 3: Resume In-Progress Draft or Start Next Recommended Exam */}
+              <div className="rounded-2xl border-2 border-[#58CC02] border-b-4 border-b-[#46A302] bg-lime-50/40 dark:bg-emerald-950/25 p-4 flex flex-col justify-between gap-3 transition-all">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-black text-[#3C8C02] dark:text-lime-300">
+                      <Play className="h-4 w-4 fill-[#58CC02] text-[#58CC02]" />
+                      <span>
+                        {latestDraft ? '3. Làm tiếp bài đang dở' : '3. Luyện đề gợi ý hôm nay'}
+                      </span>
+                    </span>
+                    <span className="font-mono text-[11px] font-black tabular-nums px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border border-lime-300 dark:border-emerald-800 text-[#3C8C02] dark:text-lime-300">
+                      {latestDraft ? 'Đang lưu Cloud' : 'Đề xuất'}
+                    </span>
+                  </div>
+                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 leading-relaxed">
+                    {latestDraft
+                      ? `Tiếp tục "${latestDraft.testTitle}" (${
+                          Object.values(latestDraft.answers || {}).filter(
+                            (v) => v && v.trim().length > 0
+                          ).length
+                        }/75 câu đã chọn).`
+                      : `Luyện tập "${
+                          nextRecommendedTest?.title || 'Test 1'
+                        }" để rèn phản xạ 4 kỹ năng chuẩn VSTEP.`}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (latestDraft && onResumeInProgress) {
+                      onResumeInProgress(latestDraft.testId);
+                    } else {
+                      handleStartPracticeMode(nextRecommendedTest?.id || 'test-1');
+                    }
+                  }}
+                  className="btn-duo-green w-full py-2.5 px-3.5 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>
+                    {latestDraft
+                      ? `Làm tiếp ${latestDraft.testTitle}`
+                      : `Luyện ngay ${nextRecommendedTest?.title || 'Test 1'}`}
+                  </span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Truy Cập Nhanh */}
       <div className="space-y-3">
         <h3 className="text-sm font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 text-center sm:text-left">
           Truy cập nhanh
         </h3>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
           <div
             onClick={() => onNavigateTab('tests')}
             className="group cursor-pointer rounded-3xl bg-white dark:bg-slate-800/90 p-4 border-2 border-slate-200 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 hover:border-[#58CC02] hover:border-b-[#46A302] dark:hover:border-[#58CC02] shadow-2xs hover:-translate-y-0.5 active:translate-y-0.5 transition-all"
@@ -852,14 +1087,30 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
           </div>
 
           <div
-            onClick={() => onNavigateTab('vocab')}
+            onClick={() => onNavigateTab('writing_speaking')}
             className="group cursor-pointer rounded-3xl bg-white dark:bg-slate-800/90 p-4 border-2 border-slate-200 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 hover:border-[#CE82FF] hover:border-b-[#A560E8] dark:hover:border-[#CE82FF] shadow-2xs hover:-translate-y-0.5 active:translate-y-0.5 transition-all"
           >
             <div className="flex items-center justify-between mb-3">
               <div className="h-11 w-11 rounded-2xl bg-[#F3E5FF] dark:bg-purple-950/60 border-b-2 border-[#CE82FF]/40 flex items-center justify-center text-[#A560E8] dark:text-[#CE82FF] group-hover:scale-110 transition-transform">
-                <BookmarkCheck className="h-5 w-5" />
+                <PenTool className="h-5 w-5" />
               </div>
               <ArrowRight className="h-4 w-4 text-slate-400 group-hover:translate-x-1 transition-transform group-hover:text-[#CE82FF]" />
+            </div>
+            <div className="font-black text-sm text-slate-800 dark:text-white">Viết & Nói</div>
+            <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
+              Task 1–2, Mind-map & Chấm chữa AI
+            </div>
+          </div>
+
+          <div
+            onClick={() => onNavigateTab('vocab')}
+            className="group cursor-pointer rounded-3xl bg-white dark:bg-slate-800/90 p-4 border-2 border-slate-200 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 hover:border-[#FF4B4B] hover:border-b-[#EA2B2B] dark:hover:border-[#FF4B4B] shadow-2xs hover:-translate-y-0.5 active:translate-y-0.5 transition-all"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div className="h-11 w-11 rounded-2xl bg-[#FFDFE0] dark:bg-rose-950/60 border-b-2 border-[#FF4B4B]/40 flex items-center justify-center text-[#EA2B2B] dark:text-[#FF4B4B] group-hover:scale-110 transition-transform">
+                <BookmarkCheck className="h-5 w-5" />
+              </div>
+              <ArrowRight className="h-4 w-4 text-slate-400 group-hover:translate-x-1 transition-transform group-hover:text-[#FF4B4B]" />
             </div>
             <div className="font-black text-sm text-slate-800 dark:text-white">Từ vựng VSTEP</div>
             <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">

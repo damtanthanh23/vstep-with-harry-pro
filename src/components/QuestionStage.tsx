@@ -17,11 +17,54 @@ import {
   GripVertical,
   Check,
   Lock,
+  Highlighter,
+  Eraser,
+  EyeOff,
+  BookmarkPlus,
+  Keyboard,
+  Loader2,
+  X,
 } from 'lucide-react';
 import { Question, StimulusCard, getPartRelativeNumber } from '../types/exam';
 import { examAudioManager } from '../utils/audioManager';
 import { StructuredExplanationBox } from './StructuredExplanationBox';
 import { InteractiveScriptPanel, ScriptSectionItem } from './InteractiveTranscriptModal';
+import { QuickSaveVocabModal, QuickSaveVocabPayload } from './QuickSaveVocabModal';
+import { B1_VOCAB_LIST } from '../data/b1VocabData';
+import { ExtendedVocabItem, UserVocabDeck } from '../types/vocab';
+import {
+  loadUserVocabState,
+  enrollWordInSrsManual,
+  saveUserVocabState,
+} from '../services/vocabStorageService';
+import {
+  savePersonalDecksToCloud,
+  syncUserVocabStateToCloud,
+} from '../services/vocabCloudService';
+import { useAuth } from '../context/AuthContext';
+
+interface UserPassageHighlight {
+  id: string;
+  partKey: string;
+  text: string;
+  color: 'yellow' | 'green' | 'pink';
+}
+
+interface SelectionPopoverState {
+  text: string;
+  contextSentence: string;
+  sourceLabel: string;
+  x: number;
+  y: number;
+  placeBelow: boolean;
+  meaningVi?: string;
+  phonetic?: string;
+  partOfSpeech?: 'n' | 'v' | 'adj' | 'adv' | 'phr';
+  exampleVi?: string;
+  collocations?: string;
+  isLoadingMeaning?: boolean;
+  isSavedSrs?: boolean;
+}
 
 interface QuestionStageProps {
   questions: Question[];
@@ -84,6 +127,37 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
   const [liveTranslations, setLiveTranslations] = useState<Record<string, string>>({});
   const [loadingTransKey, setLoadingTransKey] = useState<string | null>(null);
 
+  const { currentUser } = useAuth();
+  const uid = currentUser?.uid || 'guest';
+
+  // Reading Passage User Highlighter & MCQ Option Elimination (Strikethrough)
+  const [highlightPenColor, setHighlightPenColor] = useState<'yellow' | 'green' | 'pink' | null>(null);
+  const [userHighlights, setUserHighlights] = useState<UserPassageHighlight[]>(() => {
+    try {
+      const saved =
+        localStorage.getItem('vstep_user_passage_highlights') ||
+        sessionStorage.getItem('vstep_user_passage_highlights');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [eliminatedOptions, setEliminatedOptions] = useState<Record<number, string[]>>({});
+  const [quickSavePayload, setQuickSavePayload] = useState<QuickSaveVocabPayload | null>(null);
+
+  // Floating Text Selection Popover & Keyboard Shortcut States
+  const [selectionPopover, setSelectionPopover] = useState<SelectionPopoverState | null>(null);
+  const [keyboardShortcutsEnabled, setKeyboardShortcutsEnabled] = useState<boolean>(true);
+  const [lastShortcutHint, setLastShortcutHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('vstep_user_passage_highlights', JSON.stringify(userHighlights));
+    } catch {
+      // Ignore
+    }
+  }, [userHighlights]);
+
   // Track active part key to automatically close transcript & translation columns when switching parts
   const activeQuestion = questions.find((q) => q.id === activeQuestionId) || questions[0];
   const currentPartKey = activeQuestion ? `${activeQuestion.section}_${activeQuestion.partNumber}` : '';
@@ -95,8 +169,481 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
       setIsScriptPanelOpen(false);
       setShowReadingTranslation(false);
       setActiveHighlightQuote(null);
+      setSelectionPopover(null);
     }
   }, [currentPartKey]);
+
+  const currentPartHighlights = useMemo(
+    () => userHighlights.filter((h) => h.partKey === currentPartKey),
+    [userHighlights, currentPartKey]
+  );
+
+  const addSelectionHighlight = (color: 'yellow' | 'green' | 'pink', explicitText?: string) => {
+    const sel = window.getSelection();
+    const rawText = explicitText || (sel ? sel.toString() : '');
+    const selectedText = rawText.trim().replace(/\s+/g, ' ');
+    if (selectedText.length < 2 || selectedText.length > 350) return false;
+
+    setUserHighlights((prev) => {
+      const exists = prev.some(
+        (h) => h.partKey === currentPartKey && h.text.toLowerCase() === selectedText.toLowerCase()
+      );
+      if (exists) {
+        return prev.map((h) =>
+          h.partKey === currentPartKey && h.text.toLowerCase() === selectedText.toLowerCase()
+            ? { ...h, color }
+            : h
+        );
+      }
+      return [
+        ...prev,
+        {
+          id: `hl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          partKey: currentPartKey,
+          text: selectedText,
+          color,
+        },
+      ];
+    });
+    if (!explicitText && sel) {
+      sel.removeAllRanges();
+    }
+    return true;
+  };
+
+  const handlePassageMouseUp = () => {
+    if (highlightPenColor) {
+      addSelectionHighlight(highlightPenColor);
+    }
+  };
+
+  // Global Selection Listener for Floating Word/Phrase Lookup & SRS Popover
+  useEffect(() => {
+    const findLocalDictMatch = (rawWord: string) => {
+      const lower = rawWord.toLowerCase().trim();
+      const candidates = [
+        lower,
+        lower.replace(/(?:s|es|ed|ing|ly)$/i, ''),
+        lower.replace(/ies$/i, 'y'),
+      ];
+      return B1_VOCAB_LIST.find((item) => candidates.includes(item.word.toLowerCase()));
+    };
+
+    const handleDocumentMouseUp = (e: MouseEvent) => {
+      const targetEl = e.target as HTMLElement | null;
+      if (!targetEl) return;
+
+      // Ignore clicks inside the floating popover itself or inside modals/inputs
+      if (
+        targetEl.closest('.vstep-selection-popover') ||
+        targetEl.closest('button') ||
+        targetEl.closest('input') ||
+        targetEl.closest('textarea') ||
+        targetEl.closest('select')
+      ) {
+        return;
+      }
+
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) {
+        setSelectionPopover(null);
+        return;
+      }
+
+      const selectedText = sel.toString().trim().replace(/\s+/g, ' ');
+      if (
+        selectedText.length < 2 ||
+        selectedText.length > 80 ||
+        !/[a-zA-Z]/.test(selectedText)
+      ) {
+        setSelectionPopover(null);
+        return;
+      }
+
+      let range: Range;
+      try {
+        range = sel.getRangeAt(0);
+      } catch {
+        return;
+      }
+
+      const rect = range.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) return;
+
+      // Extract surrounding context sentence
+      let matchedSentence = '';
+      const anchorBlock =
+        (sel.anchorNode?.nodeType === Node.ELEMENT_NODE
+          ? (sel.anchorNode as HTMLElement)
+          : sel.anchorNode?.parentElement)?.closest('p, div, li') || null;
+      if (anchorBlock && anchorBlock.textContent) {
+        const blockClean = anchorBlock.textContent.replace(/^Đoạn\s+\d+\s*/i, '').trim();
+        const sentences = blockClean.split(/(?<=[.?!])\s+/);
+        const found = sentences.find((s) =>
+          s.toLowerCase().includes(selectedText.toLowerCase())
+        );
+        matchedSentence = (found || blockClean).slice(0, 300);
+      }
+
+      const clampedX = Math.max(165, Math.min(window.innerWidth - 165, rect.left + rect.width / 2));
+      const placeBelow = rect.top < 155;
+      const posY = placeBelow ? rect.bottom + 10 : rect.top - 10;
+
+      const sourceLabel =
+        activeQuestion?.section === 'LISTENING'
+          ? `Listening Part ${activeQuestion.partNumber}`
+          : `Reading Part ${activeQuestion?.partNumber || 1}`;
+
+      const localMatch = findLocalDictMatch(selectedText);
+      if (localMatch) {
+        setSelectionPopover({
+          text: selectedText,
+          contextSentence: matchedSentence || localMatch.exampleEn,
+          sourceLabel,
+          x: clampedX,
+          y: posY,
+          placeBelow,
+          meaningVi: localMatch.meaningVi,
+          phonetic: localMatch.phonetic,
+          partOfSpeech: localMatch.partOfSpeech,
+          exampleVi: localMatch.exampleVi,
+          isLoadingMeaning: false,
+          isSavedSrs: false,
+        });
+        return;
+      }
+
+      setSelectionPopover({
+        text: selectedText,
+        contextSentence: matchedSentence,
+        sourceLabel,
+        x: clampedX,
+        y: posY,
+        placeBelow,
+        isLoadingMeaning: true,
+        isSavedSrs: false,
+      });
+
+      fetch('/api/ai/quick-vocab-lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          word: selectedText,
+          contextSentence: matchedSentence,
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data) {
+            setSelectionPopover((prev) =>
+              prev && prev.text === selectedText
+                ? { ...prev, isLoadingMeaning: false }
+                : prev
+            );
+            return;
+          }
+          setSelectionPopover((prev) => {
+            if (!prev || prev.text !== selectedText) return prev;
+            const validPos = ['n', 'v', 'adj', 'adv', 'phr'].includes(data.partOfSpeech)
+              ? (data.partOfSpeech as 'n' | 'v' | 'adj' | 'adv' | 'phr')
+              : prev.text.includes(' ')
+              ? 'phr'
+              : 'n';
+            return {
+              ...prev,
+              meaningVi: data.meaningVi || prev.meaningVi,
+              phonetic: data.phonetic || prev.phonetic,
+              partOfSpeech: validPos,
+              exampleVi: data.exampleVi || prev.exampleVi,
+              collocations: data.collocations || prev.collocations,
+              isLoadingMeaning: false,
+            };
+          });
+        })
+        .catch(() => {
+          setSelectionPopover((prev) =>
+            prev && prev.text === selectedText ? { ...prev, isLoadingMeaning: false } : prev
+          );
+        });
+    };
+
+    document.addEventListener('mouseup', handleDocumentMouseUp);
+    return () => {
+      document.removeEventListener('mouseup', handleDocumentMouseUp);
+    };
+  }, [activeQuestion]);
+
+  // Direct 1-Click SRS Save from Floating Popover
+  const handleDirectSaveFromPopover = () => {
+    if (!selectionPopover) return;
+    if (!selectionPopover.meaningVi) {
+      // Open detailed modal if meaning is not yet loaded
+      setQuickSavePayload({
+        initialWord: selectionPopover.text,
+        contextSentence: selectionPopover.contextSentence,
+        sourceLabel: selectionPopover.sourceLabel,
+      });
+      setSelectionPopover(null);
+      return;
+    }
+
+    const decksStorageKey = `langcert_personal_decks_v3_${uid}`;
+    let personalDecks: UserVocabDeck[] = [];
+    try {
+      const raw = localStorage.getItem(decksStorageKey);
+      if (raw) personalDecks = JSON.parse(raw);
+    } catch {
+      personalDecks = [];
+    }
+
+    const targetDeckId = `exam_saved_general_${uid}`;
+    const targetDeckName = 'Từ vựng lưu từ Phòng thi & Giải thích';
+    const now = Date.now();
+    const newWordId = `qsave_${now}_${Math.random().toString(36).slice(2, 6)}`;
+    const cleanWord = selectionPopover.text.trim();
+
+    const newVocabItem: ExtendedVocabItem = {
+      id: newWordId,
+      word: cleanWord,
+      phonetic: selectionPopover.phonetic || '/.../',
+      partOfSpeech:
+        selectionPopover.partOfSpeech ||
+        (cleanWord.includes(' ') ? 'phr' : 'n'),
+      meaningVi: selectionPopover.meaningVi,
+      exampleEn:
+        selectionPopover.contextSentence ||
+        `This term appears in ${selectionPopover.sourceLabel}.`,
+      exampleVi: selectionPopover.exampleVi || selectionPopover.meaningVi,
+      topic: selectionPopover.sourceLabel,
+      cefr: 'B1',
+      collocations: selectionPopover.collocations || undefined,
+      note: `Lưu trực tiếp từ ${selectionPopover.sourceLabel}`,
+      addedAt: now,
+    };
+
+    let deck = personalDecks.find((d) => d.id === targetDeckId);
+    if (!deck) {
+      deck = {
+        id: targetDeckId,
+        name: targetDeckName,
+        title: targetDeckName,
+        description:
+          'Bộ thẻ tổng hợp các từ vựng và cấu trúc hay được bạn bôi đen lưu nhanh trong lúc luyện đề Nghe & Đọc.',
+        icon: '🔖',
+        isCustom: true,
+        categoryType: 'exam_test',
+        createdAt: now,
+        updatedAt: now,
+        itemCount: 1,
+        items: [newVocabItem],
+      };
+      personalDecks = [deck, ...personalDecks];
+    } else {
+      const existingItems = Array.isArray(deck.items) ? deck.items : [];
+      const existingIdx = existingItems.findIndex(
+        (it) => it.word.trim().toLowerCase() === cleanWord.toLowerCase()
+      );
+      let updatedItems: ExtendedVocabItem[];
+      let finalWordId = newWordId;
+      if (existingIdx !== -1) {
+        finalWordId = existingItems[existingIdx].id;
+        updatedItems = existingItems.map((it, idx) =>
+          idx === existingIdx ? { ...it, ...newVocabItem, id: finalWordId } : it
+        );
+      } else {
+        updatedItems = [newVocabItem, ...existingItems];
+      }
+      deck = {
+        ...deck,
+        updatedAt: now,
+        itemCount: updatedItems.length,
+        items: updatedItems,
+      };
+      personalDecks = personalDecks.map((d) => (d.id === targetDeckId ? deck! : d));
+      newVocabItem.id = finalWordId;
+    }
+
+    try {
+      localStorage.setItem(decksStorageKey, JSON.stringify(personalDecks));
+    } catch {
+      // Ignore storage quota
+    }
+
+    const currentState = loadUserVocabState(uid);
+    const updatedState = enrollWordInSrsManual(currentState, targetDeckId, newVocabItem.id, 1);
+    saveUserVocabState(updatedState);
+
+    if (currentUser?.uid) {
+      savePersonalDecksToCloud(currentUser.uid, personalDecks).catch(() => {});
+      syncUserVocabStateToCloud(currentUser.uid, updatedState).catch(() => {});
+    }
+
+    setSelectionPopover((prev) => (prev ? { ...prev, isSavedSrs: true } : null));
+  };
+
+  // VSTEP Computer-Based Exam Keyboard Shortcuts (A/B/C/D, 1/2/3/4, Left/Right Arrows, F to Flag)
+  useEffect(() => {
+    if (!keyboardShortcutsEnabled || Boolean(quickSavePayload)) return;
+
+    const showHint = (msg: string) => {
+      setLastShortcutHint(msg);
+      window.setTimeout(() => {
+        setLastShortcutHint((prev) => (prev === msg ? null : prev));
+      }, 1600);
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const activeEl = document.activeElement as HTMLElement | null;
+      const tag = activeEl?.tagName?.toUpperCase() || '';
+      if (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        activeEl?.isContentEditable
+      ) {
+        return;
+      }
+
+      if (!questions || questions.length === 0) return;
+      const currentIdx = Math.max(
+        0,
+        questions.findIndex((q) => q.id === activeQuestionId)
+      );
+      const currentQ = questions[currentIdx] || questions[0];
+
+      if (e.key === 'ArrowLeft') {
+        if (currentIdx > 0) {
+          e.preventDefault();
+          const prevQ = questions[currentIdx - 1];
+          setOpenAccordionIds((prev) => ({ ...prev, [prevQ.id]: true }));
+          onSelectQuestion(prevQ.id);
+          const rel = getPartRelativeNumber(prevQ.id, questions);
+          showHint(`← Chuyển sang Câu ${rel}`);
+          window.setTimeout(() => {
+            document
+              .getElementById(`question-card-${prevQ.id}`)
+              ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 40);
+        }
+        return;
+      }
+
+      if (e.key === 'ArrowRight') {
+        if (currentIdx < questions.length - 1) {
+          e.preventDefault();
+          const nextQ = questions[currentIdx + 1];
+          setOpenAccordionIds((prev) => ({ ...prev, [nextQ.id]: true }));
+          onSelectQuestion(nextQ.id);
+          const rel = getPartRelativeNumber(nextQ.id, questions);
+          showHint(`→ Chuyển sang Câu ${rel}`);
+          window.setTimeout(() => {
+            document
+              .getElementById(`question-card-${nextQ.id}`)
+              ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 40);
+        }
+        return;
+      }
+
+      if (e.key.toLowerCase() === 'f') {
+        if (!isReviewMode && onToggleFlag && currentQ) {
+          e.preventDefault();
+          onToggleFlag(currentQ.id);
+          const rel = getPartRelativeNumber(currentQ.id, questions);
+          showHint(
+            flagged[currentQ.id] ? `Đã bỏ cờ Câu ${rel}` : `⚑ Đã gắn cờ Câu ${rel}`
+          );
+        }
+        return;
+      }
+
+      const keyMap: Record<string, string> = {
+        a: 'A',
+        b: 'B',
+        c: 'C',
+        d: 'D',
+        '1': 'A',
+        '2': 'B',
+        '3': 'C',
+        '4': 'D',
+      };
+      const mappedOption = keyMap[e.key.toLowerCase()];
+      if (mappedOption && currentQ) {
+        const currentAns = answers[currentQ.id] || '';
+        const isAnswered = Boolean(currentAns && currentAns.trim().length > 0);
+        const isLocked = isReviewMode || (mode === 'practice' && isAnswered);
+        if (isLocked) return;
+
+        if (currentQ.type === 'multi_text_match') {
+          e.preventDefault();
+          onAnswerChange(currentQ.id, mappedOption);
+          const rel = getPartRelativeNumber(currentQ.id, questions);
+          showHint(`Câu ${rel}: Đã chọn Text ${mappedOption}`);
+          return;
+        }
+
+        if (Array.isArray(currentQ.options) && currentQ.options.length > 0) {
+          const matchedOpt = currentQ.options.find(
+            (o) => o.id.toUpperCase() === mappedOption
+          );
+          if (matchedOpt) {
+            e.preventDefault();
+            if (isOptionEliminated(currentQ.id, matchedOpt.id)) {
+              toggleEliminateOption(currentQ.id, matchedOpt.id);
+            }
+            onAnswerChange(currentQ.id, matchedOpt.id);
+            const rel = getPartRelativeNumber(currentQ.id, questions);
+            showHint(`Câu ${rel}: Đã chọn đáp án ${matchedOpt.id}`);
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [
+    keyboardShortcutsEnabled,
+    quickSavePayload,
+    questions,
+    activeQuestionId,
+    answers,
+    flagged,
+    mode,
+    isReviewMode,
+    onAnswerChange,
+    onSelectQuestion,
+    onToggleFlag,
+  ]);
+
+  const removeUserHighlight = (id: string) => {
+    setUserHighlights((prev) => prev.filter((h) => h.id !== id));
+  };
+
+  const clearCurrentPartHighlights = () => {
+    setUserHighlights((prev) => prev.filter((h) => h.partKey !== currentPartKey));
+  };
+
+  const toggleEliminateOption = (qId: number, optId: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    setEliminatedOptions((prev) => {
+      const list = prev[qId] || [];
+      const exists = list.includes(optId);
+      return {
+        ...prev,
+        [qId]: exists ? list.filter((id) => id !== optId) : [...list, optId],
+      };
+    });
+  };
+
+  const isOptionEliminated = (qId: number, optId: string): boolean => {
+    return (eliminatedOptions[qId] || []).includes(optId);
+  };
 
   // Listen to external header "Xem Script & Dịch" button clicks
   useEffect(() => {
@@ -304,6 +851,344 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
     </div>
   );
 
+  const renderHighlightToolbar = () => {
+    const colors: Array<{
+      id: 'yellow' | 'green' | 'pink';
+      label: string;
+      dotClass: string;
+      activeClass: string;
+    }> = [
+      {
+        id: 'yellow',
+        label: 'Tô vàng',
+        dotClass: 'bg-yellow-300 border-yellow-500',
+        activeClass: 'bg-yellow-100 dark:bg-yellow-950/80 border-yellow-400 text-amber-900 dark:text-yellow-200',
+      },
+      {
+        id: 'green',
+        label: 'Tô xanh',
+        dotClass: 'bg-lime-400 border-lime-600',
+        activeClass: 'bg-lime-100 dark:bg-lime-950/80 border-[#58CC02] text-[#2B6600] dark:text-lime-200',
+      },
+      {
+        id: 'pink',
+        label: 'Tô hồng',
+        dotClass: 'bg-pink-300 border-pink-500',
+        activeClass: 'bg-pink-100 dark:bg-pink-950/80 border-pink-400 text-pink-900 dark:text-pink-200',
+      },
+    ];
+
+    return (
+      <div className="inline-flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 p-1 border border-slate-200 dark:border-slate-700">
+        <span
+          className="inline-flex items-center gap-1 px-1.5 text-[10px] font-black text-slate-600 dark:text-slate-300 select-none"
+          title="Chọn màu bút rồi bôi đen văn bản trong bài đọc để tô sáng (Highlight)"
+        >
+          <Highlighter className="h-3.5 w-3.5 text-amber-500" />
+          <span className="hidden sm:inline">Bút tô:</span>
+        </span>
+        {colors.map((c) => {
+          const isActive = highlightPenColor === c.id;
+          return (
+            <button
+              key={c.id}
+              type="button"
+              onMouseDown={(e) => {
+                // Prevent losing current text selection when clicking color button
+                e.preventDefault();
+                if (!addSelectionHighlight(c.id)) {
+                  setHighlightPenColor((prev) => (prev === c.id ? null : c.id));
+                } else {
+                  setHighlightPenColor(c.id);
+                }
+              }}
+              title={`${c.label} (Bôi đen từ khóa trong bài đọc để tô sáng)`}
+              className={`inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[10px] font-black border transition-all cursor-pointer ${
+                isActive
+                  ? c.activeClass
+                  : 'border-transparent text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700'
+              }`}
+            >
+              <span className={`h-2.5 w-2.5 rounded-full border ${c.dotClass}`} />
+              <span className="hidden xl:inline">{c.label}</span>
+            </button>
+          );
+        })}
+        {currentPartHighlights.length > 0 && (
+          <button
+            type="button"
+            onClick={clearCurrentPartHighlights}
+            title="Xóa toàn bộ vết tô sáng trong bài đọc này"
+            className="inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[10px] font-black text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 transition-colors cursor-pointer"
+          >
+            <Eraser className="h-3 w-3" />
+            <span>Xóa ({currentPartHighlights.length})</span>
+          </button>
+        )}
+        <button
+          type="button"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const selText = window.getSelection()?.toString().trim().replace(/\s+/g, ' ') || '';
+            const firstQWithArticle = questions.find((q) => q.readingArticle);
+            const rawParagraphs = firstQWithArticle?.readingArticle?.paragraphs || [];
+            let matchedSentence = '';
+            if (selText.length >= 2) {
+              for (const para of rawParagraphs) {
+                const cleanPara = para.replace(/<\/?(?:u|b|strong|mark)>/gi, '');
+                if (cleanPara.toLowerCase().includes(selText.toLowerCase())) {
+                  const sentences = cleanPara.split(/(?<=[.?!])\s+/);
+                  const found = sentences.find((s) =>
+                    s.toLowerCase().includes(selText.toLowerCase())
+                  );
+                  matchedSentence = (found || cleanPara).slice(0, 320);
+                  break;
+                }
+              }
+            }
+            setQuickSavePayload({
+              initialWord: selText.length >= 2 && selText.length <= 75 ? selText : '',
+              contextSentence: matchedSentence,
+              sourceLabel: `Reading Passage ${activeQuestion?.partNumber || 1}`,
+            });
+          }}
+          title="Bôi đen từ mới trong bài đọc rồi bấm để lưu nhanh vào Kho Flashcard SRS"
+          className="inline-flex items-center gap-1 rounded-lg bg-[#F3E5FF] dark:bg-purple-950/80 border border-[#CE82FF] px-2 py-0.5 text-[10px] font-black text-[#A560E8] dark:text-purple-300 hover:bg-purple-200 transition-colors cursor-pointer"
+        >
+          <BookmarkPlus className="h-3 w-3" />
+          <span>+ Lưu SRS</span>
+        </button>
+      </div>
+    );
+  };
+
+  const renderFloatingSelectionPopover = () => (
+    <>
+      <QuickSaveVocabModal
+        isOpen={Boolean(quickSavePayload)}
+        onClose={() => setQuickSavePayload(null)}
+        payload={quickSavePayload}
+      />
+
+      {selectionPopover && (
+        <div
+          style={{
+            left: `${selectionPopover.x}px`,
+            top: `${selectionPopover.y}px`,
+            transform: selectionPopover.placeBelow
+              ? 'translate(-50%, 0)'
+              : 'translate(-50%, -100%)',
+          }}
+          className="vstep-selection-popover fixed z-50 w-[330px] max-w-[92vw] rounded-2xl border-2 border-slate-800 dark:border-slate-600 bg-slate-900/95 dark:bg-slate-900 text-white p-3 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-150"
+        >
+          {/* Top Action Row: Selected Word, Pronounce, Highlight Colors & SRS Save */}
+          <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-700/80">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <button
+                type="button"
+                onClick={() => examAudioManager.speakText(selectionPopover.text)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-[#58CC02] hover:bg-[#46A302] text-white transition-colors cursor-pointer"
+                title="Nghe phát âm chuẩn"
+              >
+                <Volume2 className="h-3.5 w-3.5" />
+              </button>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-black text-xs text-white truncate">
+                    {selectionPopover.text}
+                  </span>
+                  {selectionPopover.partOfSpeech && (
+                    <span className="rounded bg-slate-700 px-1.5 py-0.2 text-[10px] font-mono font-bold text-lime-300 shrink-0">
+                      {selectionPopover.partOfSpeech}
+                    </span>
+                  )}
+                </div>
+                {selectionPopover.phonetic && (
+                  <span className="block text-[10px] font-mono text-slate-300 truncate">
+                    {selectionPopover.phonetic}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {/* 3 Quick Highlight Color Dots */}
+              {(
+                [
+                  { id: 'yellow', cls: 'bg-yellow-300 border-yellow-500', label: 'Tô vàng' },
+                  { id: 'green', cls: 'bg-lime-400 border-lime-600', label: 'Tô xanh' },
+                  { id: 'pink', cls: 'bg-pink-300 border-pink-500', label: 'Tô hồng' },
+                ] as const
+              ).map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => addSelectionHighlight(c.id, selectionPopover.text)}
+                  title={`${c.label} cụm từ này`}
+                  className={`h-5 w-5 rounded-full border-2 ${c.cls} hover:scale-110 transition-transform cursor-pointer`}
+                />
+              ))}
+
+              <button
+                type="button"
+                onClick={() => setSelectionPopover(null)}
+                className="ml-1 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                title="Đóng"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Middle Row: Instant Dictionary / Contextual AI Translation */}
+          <div className="py-2 text-xs">
+            {selectionPopover.isLoadingMeaning ? (
+              <div className="flex items-center gap-2 text-slate-300 font-semibold">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-[#58CC02]" />
+                <span>Đang dịch nghĩa theo ngữ cảnh bài đọc...</span>
+              </div>
+            ) : selectionPopover.meaningVi ? (
+              <div className="space-y-1">
+                <p className="font-bold text-lime-300 leading-snug">
+                  {selectionPopover.meaningVi}
+                </p>
+                {selectionPopover.exampleVi && (
+                  <p className="text-[11px] text-slate-300 italic line-clamp-2">
+                    “{selectionPopover.exampleVi}”
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-300">
+                Bấm <strong>Lưu vào Sổ từ SRS</strong> để AI phân tích chi tiết từ vựng này.
+              </p>
+            )}
+          </div>
+
+          {/* Bottom Row: 1-Click Direct SRS Save + Open Full Modal */}
+          <div className="pt-1.5 border-t border-slate-700/80 flex items-center justify-between gap-2">
+            {selectionPopover.isSavedSrs ? (
+              <span className="inline-flex items-center gap-1 text-[11px] font-black text-[#58CC02]">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                <span>Đã lưu vào Sổ từ SRS!</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={handleDirectSaveFromPopover}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#A560E8] hover:bg-[#8B3FD9] px-3 py-1.5 text-[11px] font-black text-white transition-colors cursor-pointer"
+              >
+                <BookmarkPlus className="h-3.5 w-3.5" />
+                <span>+ Lưu nhanh vào SRS</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setQuickSavePayload({
+                  initialWord: selectionPopover.text,
+                  contextSentence: selectionPopover.contextSentence,
+                  sourceLabel: selectionPopover.sourceLabel,
+                });
+                setSelectionPopover(null);
+              }}
+              className="rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 px-2.5 py-1.5 text-[11px] font-bold text-slate-200 transition-colors cursor-pointer"
+            >
+              Chi tiết
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  const renderKeyboardShortcutsBar = () => (
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-100/90 dark:bg-slate-800/70 px-3.5 py-2 border border-slate-200/80 dark:border-slate-700/80 text-[11px]">
+      <div className="flex flex-wrap items-center gap-2 text-slate-600 dark:text-slate-300 font-bold">
+        <span className="inline-flex items-center gap-1 font-black text-slate-800 dark:text-slate-100">
+          <Keyboard className="h-3.5 w-3.5 text-[#58CC02]" />
+          <span>Phím tắt phòng thi:</span>
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded bg-white dark:bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-black border border-slate-300 dark:border-slate-700 shadow-2xs">
+            A–D
+          </kbd>
+          <span>hoặc</span>
+          <kbd className="rounded bg-white dark:bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-black border border-slate-300 dark:border-slate-700 shadow-2xs">
+            1–4
+          </kbd>
+          <span>Chọn đáp án</span>
+        </span>
+        <span className="text-slate-300 dark:text-slate-600">·</span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded bg-white dark:bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-black border border-slate-300 dark:border-slate-700 shadow-2xs">
+            ←
+          </kbd>
+          <kbd className="rounded bg-white dark:bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-black border border-slate-300 dark:border-slate-700 shadow-2xs">
+            →
+          </kbd>
+          <span>Chuyển câu</span>
+        </span>
+        {!isReviewMode && (
+          <>
+            <span className="text-slate-300 dark:text-slate-600">·</span>
+            <span className="inline-flex items-center gap-1">
+              <kbd className="rounded bg-white dark:bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-black border border-slate-300 dark:border-slate-700 shadow-2xs">
+                F
+              </kbd>
+              <span>Gắn cờ</span>
+            </span>
+          </>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        {lastShortcutHint && (
+          <span className="rounded-lg bg-[#58CC02] px-2 py-0.5 text-[10px] font-black text-white animate-in fade-in duration-150">
+            {lastShortcutHint}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => setKeyboardShortcutsEnabled((prev) => !prev)}
+          className={`rounded-lg px-2 py-0.5 text-[10px] font-black border transition-colors cursor-pointer ${
+            keyboardShortcutsEnabled
+              ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+              : 'bg-slate-200 dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400'
+          }`}
+        >
+          {keyboardShortcutsEnabled ? 'Phím tắt: BẬT' : 'Phím tắt: TẮT'}
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderEliminateOptionButton = (qId: number, optId: string, disabled = false) => {
+    if (disabled || isReviewMode) return null;
+    const eliminated = isOptionEliminated(qId, optId);
+    return (
+      <span
+        role="button"
+        tabIndex={-1}
+        onClick={(e) => toggleEliminateOption(qId, optId, e)}
+        title={
+          eliminated
+            ? 'Khôi phục phương án này (Hoặc nhấn chuột phải)'
+            : 'Gạch loại trừ phương án nhiễu (Hoặc nhấn chuột phải)'
+        }
+        className={`ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-black border transition-all shrink-0 ${
+          eliminated
+            ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800'
+            : 'bg-slate-100/80 dark:bg-slate-800/80 text-slate-400 hover:text-rose-600 hover:border-rose-300 border-transparent'
+        }`}
+      >
+        <EyeOff className="h-3 w-3" />
+        <span className="hidden sm:inline">{eliminated ? 'Bỏ gạch' : 'Loại trừ'}</span>
+      </span>
+    );
+  };
+
   const renderFlagButton = (qId: number, stopProp = false) => {
     if (!onToggleFlag || isReviewMode) return null;
     const isFlagged = !!flagged[qId];
@@ -314,15 +1199,19 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
           if (stopProp) e.stopPropagation();
           onToggleFlag(qId);
         }}
-        title={isFlagged ? 'Bỏ đánh dấu câu này' : 'Đánh dấu xem lại sau (Flag)'}
-        className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1 text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+        title={
           isFlagged
-            ? 'bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 shadow-2xs'
-            : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:text-amber-700 dark:hover:text-amber-300'
+            ? 'Bỏ gắn cờ câu hỏi này (Phím tắt: F)'
+            : 'Gắn cờ câu hỏi cần xem lại sau (Phím tắt: F)'
+        }
+        className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[11px] font-black border-2 border-b-3 active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+          isFlagged
+            ? 'bg-[#FFF3D6] dark:bg-amber-950/80 text-[#D97706] dark:text-amber-300 border-[#FFC800] border-b-[#E5B400] shadow-2xs'
+            : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 border-b-slate-300 dark:border-b-slate-900 hover:border-[#FFC800] hover:text-[#D97706]'
         }`}
       >
-        <Flag className={`h-3 w-3 ${isFlagged ? 'fill-amber-500 text-amber-600' : ''}`} />
-        <span className="hidden sm:inline">{isFlagged ? 'Đã đánh dấu' : 'Đánh dấu'}</span>
+        <Flag className={`h-3.5 w-3.5 ${isFlagged ? 'fill-[#FF9600] text-[#FF9600]' : ''}`} />
+        <span>{isFlagged ? 'Đã gắn cờ' : 'Gắn cờ'}</span>
       </button>
     );
   };
@@ -403,6 +1292,52 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
             {part}
           </span>
         );
+      }
+      // Apply any user-created passage highlights on plain text segments
+      if (currentPartHighlights.length > 0 && part.trim().length > 1) {
+        let nodes: React.ReactNode[] = [part];
+        currentPartHighlights.forEach((hl) => {
+          const nextNodes: React.ReactNode[] = [];
+          nodes.forEach((node, nIdx) => {
+            if (typeof node !== 'string') {
+              nextNodes.push(node);
+              return;
+            }
+            const lowerNode = node.toLowerCase();
+            const lowerTarget = hl.text.toLowerCase();
+            const pos = lowerNode.indexOf(lowerTarget);
+            if (pos === -1) {
+              nextNodes.push(node);
+              return;
+            }
+            const before = node.slice(0, pos);
+            const match = node.slice(pos, pos + hl.text.length);
+            const after = node.slice(pos + hl.text.length);
+            if (before) nextNodes.push(before);
+            const bgClass =
+              hl.color === 'green'
+                ? 'bg-lime-300/80 dark:bg-lime-800/80 text-slate-950 dark:text-lime-100'
+                : hl.color === 'pink'
+                ? 'bg-pink-200/90 dark:bg-pink-900/80 text-slate-950 dark:text-pink-100'
+                : 'bg-yellow-200/90 dark:bg-yellow-800/80 text-slate-950 dark:text-yellow-100';
+            nextNodes.push(
+              <mark
+                key={`${keyPrefix}-${idx}-hl-${hl.id}-${nIdx}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeUserHighlight(hl.id);
+                }}
+                title="Bấm để xóa vết tô sáng (Highlight) này"
+                className={`rounded px-0.5 cursor-pointer transition-opacity hover:opacity-75 ${bgClass}`}
+              >
+                {match}
+              </mark>
+            );
+            if (after) nextNodes.push(after);
+          });
+          nodes = nextNodes;
+        });
+        return <React.Fragment key={`${keyPrefix}-${idx}`}>{nodes}</React.Fragment>;
       }
       return <React.Fragment key={`${keyPrefix}-${idx}`}>{part}</React.Fragment>;
     });
@@ -675,11 +1610,17 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
               {notesContent}
             </div>
           </div>
+          {renderFloatingSelectionPopover()}
         </div>
       );
     }
 
-    return <div className="mx-auto max-w-4xl px-4 py-8">{notesContent}</div>;
+    return (
+      <div className="mx-auto max-w-4xl px-4 py-8">
+        {notesContent}
+        {renderFloatingSelectionPopover()}
+      </div>
+    );
   }
 
   // =========================================================================
@@ -818,14 +1759,18 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
           {/* Right Column: Article with Inline Compact Dropdowns */}
           <div className="flex-1 min-w-0 lg:h-full flex flex-col overflow-hidden rounded-3xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
             {/* Solid Top Header */}
-            <div className="shrink-0 z-20 bg-white dark:bg-slate-900 px-6 sm:px-8 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <div className="shrink-0 z-20 bg-white dark:bg-slate-900 px-6 sm:px-8 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">
                 Reading Part 2 · Điền câu vào ô trống (Câu 1 – {questions.length})
               </span>
+              {renderHighlightToolbar()}
             </div>
 
             {/* Scrollable Body */}
-            <div className="flex-1 lg:overflow-y-auto p-6 sm:p-8">
+            <div
+              onMouseUp={handlePassageMouseUp}
+              className="flex-1 lg:overflow-y-auto p-6 sm:p-8 select-text"
+            >
               <h3 className="mb-4 text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
                 {article.title}
               </h3>
@@ -1020,6 +1965,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
             </div>
           </div>
         </div>
+        {renderFloatingSelectionPopover()}
       </div>
     );
   }
@@ -1064,7 +2010,8 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                 <FileText className="h-4 w-4" /> 4 Đoạn Văn Bản (A - D)
               </span>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {renderHighlightToolbar()}
                 {canShowSolution && (
                   <button
                     type="button"
@@ -1083,7 +2030,10 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 lg:overflow-y-auto p-5 sm:p-6">
+            <div
+              onMouseUp={handlePassageMouseUp}
+              className="flex-1 lg:overflow-y-auto p-5 sm:p-6 select-text"
+            >
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {cards.map((card) => {
                   const cardTransKey = `r3-card-${card.id}`;
@@ -1173,6 +2123,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
             </div>
 
             <div className="flex-1 lg:overflow-y-auto p-5 sm:p-6 space-y-3">
+              {renderKeyboardShortcutsBar()}
               {questions.map((q) => {
                 const relNum = getPartRelativeNumber(q.id);
                 const isOpen = openAccordionIds[q.id] ?? true;
@@ -1186,6 +2137,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                 return (
                   <div
                     key={q.id}
+                    id={`question-card-${q.id}`}
                     className={`overflow-hidden rounded-2xl border-2 transition-all ${
                       isOpen
                         ? 'border-[#58CC02] bg-white dark:bg-slate-900 shadow-sm ring-2 ring-lime-100 dark:ring-lime-950'
@@ -1289,6 +2241,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
             </div>
           </div>
         </div>
+        {renderFloatingSelectionPopover()}
       </div>
     );
   }
@@ -1329,7 +2282,8 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                 Reading Part 4 · Bài Đọc
               </span>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {renderHighlightToolbar()}
                 {canShowSolution && (
                   <button
                     type="button"
@@ -1348,7 +2302,10 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 lg:overflow-y-auto p-6 sm:p-8">
+            <div
+              onMouseUp={handlePassageMouseUp}
+              className="flex-1 lg:overflow-y-auto p-6 sm:p-8 select-text"
+            >
               <h3 className="mb-1 text-2xl font-black text-slate-900 dark:text-white">
                 {article.title}
               </h3>
@@ -1515,6 +2472,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
             </div>
           </div>
         </div>
+        {renderFloatingSelectionPopover()}
       </div>
     );
   }
@@ -1575,7 +2533,8 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                 </span>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {renderHighlightToolbar()}
                 {canShowSolution && (
                   <button
                     type="button"
@@ -1594,7 +2553,10 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 lg:overflow-y-auto p-6 sm:p-8">
+            <div
+              onMouseUp={handlePassageMouseUp}
+              className="flex-1 lg:overflow-y-auto p-6 sm:p-8 select-text"
+            >
               <h3 className="mb-1 text-xl sm:text-2xl font-black text-slate-900 dark:text-white leading-snug">
                 {article.title}
               </h3>
@@ -1677,6 +2639,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
             </div>
 
             <div className="flex-1 lg:overflow-y-auto p-4 sm:p-6 space-y-4">
+              {renderKeyboardShortcutsBar()}
               {questions.map((q) => {
                 const relNum = getPartRelativeNumber(q.id, questions);
                 const currentAnswer = answers[q.id] || '';
@@ -1691,6 +2654,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                 return (
                   <div
                     key={q.id}
+                    id={`question-card-${q.id}`}
                     onClick={() => onSelectQuestion(q.id)}
                     className={`rounded-3xl border-2 p-5 transition-all ${
                       isFocused
@@ -1723,15 +2687,24 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                       {q.options?.map((opt) => {
                         const selected = isChecked(q, opt.id);
                         const isCorrectOpt = q.correctAnswer === opt.id;
+                        const eliminated = !selected && isOptionEliminated(q.id, opt.id);
                         return (
                           <button
                             key={opt.id}
                             type="button"
                             disabled={isQLocked}
+                            onContextMenu={(e) => {
+                              if (!isQLocked) toggleEliminateOption(q.id, opt.id, e);
+                            }}
                             onClick={(e) => {
                               e.stopPropagation();
                               onSelectQuestion(q.id);
-                              if (!isQLocked) onAnswerChange(q.id, opt.id);
+                              if (!isQLocked) {
+                                if (isOptionEliminated(q.id, opt.id)) {
+                                  toggleEliminateOption(q.id, opt.id);
+                                }
+                                onAnswerChange(q.id, opt.id);
+                              }
                             }}
                             className={`flex w-full items-center gap-3.5 rounded-2xl border-2 border-b-4 p-3.5 text-left text-xs sm:text-sm font-bold transition-all active:border-b-2 active:translate-y-0.5 ${
                               isQLocked ? 'cursor-not-allowed' : 'cursor-pointer'
@@ -1742,6 +2715,8 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                                 ? 'border-[#FF4B4B] border-b-[#EA2B2B] bg-[#FFDFE0]/70 dark:bg-rose-950/50 text-rose-950 dark:text-rose-200'
                                 : selected
                                 ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/55 dark:bg-lime-950/40 text-lime-950 dark:text-lime-200 shadow-xs'
+                                : eliminated
+                                ? 'border-slate-200/70 dark:border-slate-800 border-b-slate-300/70 bg-slate-50/60 dark:bg-slate-900/40 text-slate-400 dark:text-slate-500'
                                 : 'border-slate-200 dark:border-slate-700 border-b-slate-300 dark:border-b-slate-950 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-[#58CC02] hover:border-b-[#46A302]'
                             }`}
                           >
@@ -1749,12 +2724,21 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                               className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border-b-2 text-xs font-black transition-colors ${
                                 selected
                                   ? 'bg-[#58CC02] border-[#46A302] text-white'
+                                  : eliminated
+                                  ? 'bg-slate-200/60 dark:bg-slate-800 border-slate-300 text-slate-400 line-through'
                                   : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                               }`}
                             >
                               {opt.id}
                             </div>
-                            <span className="flex-1">{renderRichFormattedTokens(opt.text, `opt-${q.id}-${opt.id}`)}</span>
+                            <span
+                              className={`flex-1 ${
+                                eliminated ? 'line-through opacity-55 decoration-2 decoration-rose-400' : ''
+                              }`}
+                            >
+                              {renderRichFormattedTokens(opt.text, `opt-${q.id}-${opt.id}`)}
+                            </span>
+                            {renderEliminateOptionButton(q.id, opt.id, isQLocked)}
                           </button>
                         );
                       })}
@@ -1849,6 +2833,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
             </div>
           </div>
         </div>
+        {renderFloatingSelectionPopover()}
       </div>
     );
   }
@@ -1923,6 +2908,8 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
         </div>
       )}
 
+      {renderKeyboardShortcutsBar()}
+
       {questions.map((q) => {
         const relNum = getPartRelativeNumber(q.id);
         const isOpen = openAccordionIds[q.id] ?? false;
@@ -1948,6 +2935,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
             )}
 
             <div
+              id={`question-card-${q.id}`}
               className={`overflow-hidden rounded-3xl border-2 transition-all duration-200 ${
                 isOpen
                   ? 'border-[#58CC02] bg-white dark:bg-slate-900 shadow-md ring-2 ring-lime-100 dark:ring-lime-950'
@@ -2166,12 +3154,23 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                         {q.options?.map((opt) => {
                           const selected = isChecked(q, opt.id);
                           const isCorrectOpt = q.correctAnswer === opt.id;
+                          const eliminated = !selected && isOptionEliminated(q.id, opt.id);
                           return (
                             <button
                               key={opt.id}
                               type="button"
                               disabled={isQLocked}
-                              onClick={() => !isQLocked && onAnswerChange(q.id, opt.id)}
+                              onContextMenu={(e) => {
+                                if (!isQLocked) toggleEliminateOption(q.id, opt.id, e);
+                              }}
+                              onClick={() => {
+                                if (!isQLocked) {
+                                  if (isOptionEliminated(q.id, opt.id)) {
+                                    toggleEliminateOption(q.id, opt.id);
+                                  }
+                                  onAnswerChange(q.id, opt.id);
+                                }
+                              }}
                               className={`flex w-full items-center gap-3.5 rounded-2xl border-2 border-b-4 p-3.5 text-left text-xs sm:text-sm font-bold transition-all active:border-b-2 active:translate-y-0.5 ${
                                 isQLocked ? 'cursor-not-allowed' : 'cursor-pointer'
                               } ${
@@ -2181,6 +3180,8 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                                   ? 'border-[#FF4B4B] border-b-[#EA2B2B] bg-[#FFDFE0]/70 dark:bg-rose-950/50 text-rose-950 dark:text-rose-200'
                                   : selected
                                   ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/55 dark:bg-lime-950/40 text-lime-950 dark:text-lime-200 shadow-sm'
+                                  : eliminated
+                                  ? 'border-slate-200/70 dark:border-slate-800 border-b-slate-300/70 bg-slate-50/60 dark:bg-slate-900/40 text-slate-400 dark:text-slate-500'
                                   : 'border-slate-200 dark:border-slate-700 border-b-slate-300 dark:border-b-slate-950 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-[#58CC02] hover:border-b-[#46A302]'
                               }`}
                             >
@@ -2188,12 +3189,21 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                                 className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border-b-2 text-xs font-black transition-colors ${
                                   selected
                                     ? 'bg-[#58CC02] border-[#46A302] text-white'
+                                    : eliminated
+                                    ? 'bg-slate-200/60 dark:bg-slate-800 border-slate-300 text-slate-400 line-through'
                                     : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                                 }`}
                               >
                                 {opt.id}
                               </div>
-                              <span className="flex-1">{opt.text}</span>
+                              <span
+                                className={`flex-1 ${
+                                  eliminated ? 'line-through opacity-55 decoration-2 decoration-rose-400' : ''
+                                }`}
+                              >
+                                {opt.text}
+                              </span>
+                              {renderEliminateOptionButton(q.id, opt.id, isQLocked)}
                             </button>
                           );
                         })}
@@ -2361,9 +3371,15 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
             {mcqQuestionsList}
           </div>
         </div>
+        {renderFloatingSelectionPopover()}
       </div>
     );
   }
 
-  return <div className="mx-auto max-w-4xl px-4 py-8">{mcqQuestionsList}</div>;
+  return (
+    <div className="mx-auto max-w-4xl px-4 py-8">
+      {mcqQuestionsList}
+      {renderFloatingSelectionPopover()}
+    </div>
+  );
 };

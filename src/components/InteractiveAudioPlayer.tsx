@@ -160,17 +160,17 @@ export const InteractiveAudioPlayer: React.FC<InteractiveAudioPlayerProps> = ({
       ) : hasMissingAudioError ? (
         <div
           className="flex items-center gap-1.5 rounded-lg bg-[#FFF4E5] border border-[#FF9600] px-2.5 py-1 text-[11px] font-bold text-amber-900"
-          title="File MP3 của phần này chưa được đồng bộ lên Cloud. Giáo viên cần mở bộ đề trong Trình soạn thảo và bấm Lưu Bản Nháp / Xuất Bản Chính Thức để đồng bộ MP3 lên Cloud cho học sinh."
+          title="Chưa tìm thấy file Audio MP3 cho phần thi này trên Cloud. Giáo viên có thể tải file MP3 hoặc dán link ngoài trong mục Quản lý đề thi."
         >
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[#FF9600]" />
           <span className="truncate max-w-[180px] sm:max-w-[250px]">
-            Chưa có MP3 trên Cloud (Cần GV bấm Lưu lại đề)
+            Chưa có file Audio MP3 cho phần thi này
           </span>
           <button
             type="button"
             onClick={() => examAudioManager.retryLoadAudio(true)}
             className="btn-duo-orange inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-black cursor-pointer shrink-0"
-            title="Thử tải lại file MP3 từ Cloud"
+            title="Thử dò tìm và tải lại file MP3 từ Cloud/Server"
           >
             <RefreshCw className="h-2.5 w-2.5" />
             <span>Tải lại</span>

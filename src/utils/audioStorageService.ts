@@ -3,6 +3,7 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import {
   db,
   storage,
+  storageAppspot,
   safeSetDoc,
   canWriteToFirestore,
   APP_SITE_ID,
@@ -74,7 +75,7 @@ try {
     if (raw) {
       const parsed = JSON.parse(raw) as Record<string, string>;
       Object.entries(parsed).forEach(([k, v]) => {
-        if (k && typeof v === 'string' && v.startsWith('http')) {
+        if (k && typeof v === 'string' && (v.startsWith('http') || v.startsWith('/api/audio/'))) {
           storageCdnUrlCache.set(k, v);
         }
       });
@@ -85,7 +86,7 @@ try {
 }
 
 function recordFirebaseStorageUrl(keys: string[], storageUrl: string): void {
-  if (!storageUrl || !storageUrl.startsWith('http')) return;
+  if (!storageUrl || (!storageUrl.startsWith('http') && !storageUrl.startsWith('/api/audio/'))) return;
   keys.forEach((k) => {
     const cleaned = cleanAudioStorageKey(k);
     if (cleaned) {
@@ -755,16 +756,18 @@ export async function resolveFirebaseStorageCdnUrl(
   );
 
   for (const sPath of storageCandidatePaths) {
-    try {
-      const fileRef = ref(storage, sPath);
-      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500));
-      const url = await Promise.race([getDownloadURL(fileRef), timeoutPromise]);
-      if (url && typeof url === 'string' && url.startsWith('http')) {
-        recordFirebaseStorageUrl([vstepKey, legacyKey, vstepFileKey], url);
-        return url;
+    for (const bucketInstance of [storage, storageAppspot]) {
+      try {
+        const fileRef = ref(bucketInstance, sPath);
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500));
+        const url = await Promise.race([getDownloadURL(fileRef), timeoutPromise]);
+        if (url && typeof url === 'string' && url.startsWith('http')) {
+          recordFirebaseStorageUrl([vstepKey, legacyKey, vstepFileKey], url);
+          return url;
+        }
+      } catch {
+        // Object does not exist at this path or Storage rules restricted
       }
-    } catch {
-      // Object does not exist at this path or Storage rules restricted
     }
   }
 
@@ -956,6 +959,111 @@ export async function checkAudioExistsOnCloud(
 }
 
 /**
+ * Automatically patches the resolved audio URL & fileName onto the test document
+ * in both `/api/tests/:id/audio-patch` and Firestore `tests/{testId}` (when the test doc exists)
+ * so students on any device immediately receive the real MP3 link even if background upload finishes after Save.
+ */
+export async function patchTestAudioMetadataEverywhere(params: {
+  testId: string;
+  partScope: 'full' | 1 | 2 | 3 | 4;
+  audioUrl: string;
+  fileName?: string;
+  audioMode?: 'single' | 'per_part';
+}): Promise<void> {
+  const cleanTestId = (params.testId || '').trim();
+  const cleanUrl = (params.audioUrl || '').trim();
+  if (!cleanTestId || !cleanUrl) return;
+
+  const patchBody: {
+    audioMode?: 'single' | 'per_part';
+    audioUrl?: string;
+    audioFileName?: string;
+    partAudioUrls?: Record<string, string>;
+    partAudioFileNames?: Record<string, string>;
+  } = {};
+
+  if (params.audioMode) {
+    patchBody.audioMode = params.audioMode;
+  }
+
+  if (params.partScope === 'full') {
+    patchBody.audioUrl = cleanUrl;
+    if (params.fileName) patchBody.audioFileName = params.fileName;
+  } else {
+    const pKey = `part${params.partScope}`;
+    patchBody.partAudioUrls = { [pKey]: cleanUrl };
+    if (params.fileName) {
+      patchBody.partAudioFileNames = { [pKey]: params.fileName };
+    }
+  }
+
+  // 1. Patch on Express Server `/api/tests/:id/audio-patch`
+  try {
+    await fetch(`/api/tests/${encodeURIComponent(cleanTestId)}/audio-patch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patchBody),
+    });
+  } catch {
+    // Ignore network error
+  }
+
+  // 2. Patch on Firestore `tests/{testId}` if document exists
+  if (canWriteToFirestore()) {
+    try {
+      const testRef = doc(db, 'tests', cleanTestId);
+      const snap = await getDocWithTimeout(testRef, 3500);
+      if (snap && snap.exists()) {
+        const existingData = snap.data() as Record<string, any>;
+        const updatedDoc: Record<string, any> = {
+          ...existingData,
+          id: cleanTestId,
+          title: existingData.title || `VSTEP Test ${cleanTestId}`,
+          updatedAt: Date.now(),
+        };
+        if (params.audioMode) {
+          updatedDoc.audioMode = params.audioMode;
+        }
+        if (params.partScope === 'full') {
+          updatedDoc.audioUrl = cleanUrl;
+          if (params.fileName) updatedDoc.audioFileName = params.fileName;
+        } else {
+          const pKey = `part${params.partScope}`;
+          updatedDoc.partAudioUrls = {
+            ...(existingData.partAudioUrls || {}),
+            [pKey]: cleanUrl,
+          };
+          if (params.fileName) {
+            updatedDoc.partAudioFileNames = {
+              ...(existingData.partAudioFileNames || {}),
+              [pKey]: params.fileName,
+            };
+          }
+        }
+        await safeSetDoc(testRef, updatedDoc, { merge: true }, 6000);
+      }
+    } catch {
+      // Ignore Firestore patch notice
+    }
+  }
+}
+
+function parseCanonicalTestSlotFromKey(
+  vstepKey: string
+): { testId: string; partScope: 'full' | 1 | 2 | 3 | 4 } | null {
+  const withoutPrefix = vstepKey.replace(/^vstep_/, '');
+  const match = withoutPrefix.match(/^(.+)_(full|part([1-4]))$/);
+  if (!match) return null;
+  const testId = match[1];
+  const slot = match[2];
+  if (slot === 'full') {
+    return { testId, partScope: 'full' };
+  }
+  const pNum = Number(match[3]) as 1 | 2 | 3 | 4;
+  return { testId, partScope: pNum };
+}
+
+/**
  * Primary Upload Pipeline:
  * 1. Uploads binary MP3 directly to Firebase Cloud Storage (`vstep/exam_audio/vstep_{cleanKey}.mp3`)
  *    via `uploadBytesResumable`, retrieves CDN `storageUrl` via `getDownloadURL`, and saves `storageUrl`
@@ -970,6 +1078,7 @@ export async function saveAudioBlobToCloudChunks(
   onProgress?: (uploaded: number, total: number) => void
 ): Promise<boolean> {
   const vstepKey = ensureVstepAudioKey(rawKey);
+  const parsedSlot = parseCanonicalTestSlotFromKey(vstepKey);
   onProgress?.(5, 100);
 
   // 1. Primary: Upload binary Blob directly to Firebase Cloud Storage (`vstep/exam_audio/vstep_{cleanKey}.mp3`)
@@ -978,8 +1087,16 @@ export async function saveAudioBlobToCloudChunks(
   });
 
   if (storageUrl) {
-    // Also mirror in background to Express server for local preview redundancy (non-blocking)
+    // Mirror in background to Express server for local preview redundancy (non-blocking)
     uploadAudioBlobToServer(vstepKey, blob, fileName).catch(() => {});
+    if (parsedSlot) {
+      patchTestAudioMetadataEverywhere({
+        testId: parsedSlot.testId,
+        partScope: parsedSlot.partScope,
+        audioUrl: storageUrl,
+        fileName,
+      }).catch(() => {});
+    }
     return true;
   }
 
@@ -987,6 +1104,19 @@ export async function saveAudioBlobToCloudChunks(
   const uploadedToServer = await uploadAudioBlobToServer(vstepKey, blob, fileName, (pct) => {
     onProgress?.(pct, 100);
   });
+
+  if (uploadedToServer) {
+    const serverStreamUrl = `/api/audio/stream/${encodeURIComponent(vstepKey)}`;
+    recordFirebaseStorageUrl([vstepKey, cleanAudioStorageKey(rawKey)], serverStreamUrl);
+    if (parsedSlot) {
+      patchTestAudioMetadataEverywhere({
+        testId: parsedSlot.testId,
+        partScope: parsedSlot.partScope,
+        audioUrl: `idb-audio://${vstepKey}`,
+        fileName,
+      }).catch(() => {});
+    }
+  }
 
   // 3. Fallback B: If Firebase Storage Rules were not yet opened, split into Firestore chunks (`test_audio_chunks`)
   if (!canWriteToFirestore()) {
@@ -1059,6 +1189,15 @@ export async function saveAudioBlobToCloudChunks(
       undefined,
       6500
     );
+
+    if (metaSaved && parsedSlot) {
+      patchTestAudioMetadataEverywhere({
+        testId: parsedSlot.testId,
+        partScope: parsedSlot.partScope,
+        audioUrl: `idb-audio://${vstepKey}`,
+        fileName,
+      }).catch(() => {});
+    }
 
     return metaSaved || uploadedToServer;
   } catch (err) {
@@ -1513,17 +1652,21 @@ export function startBackgroundTestAudioCloudSync(
 }
 
 /**
- * Normalizes Google Drive / Dropbox share URLs into direct audio stream URLs
+ * Normalizes Google Drive / Dropbox share URLs into guaranteed playable audio stream URLs.
+ * Routes Google Drive links through `/api/audio-proxy` to bypass virus-scan HTML pages,
+ * 303 redirect blocks, and third-party cookie restrictions in modern browsers.
  */
 export function normalizeExternalAudioUrl(url: string): string {
   const trimmed = (url || '').trim();
   if (!trimmed) return '';
 
-  const gdriveMatch =
-    trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/) ||
-    trimmed.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
-  if (gdriveMatch && gdriveMatch[1]) {
-    return `https://docs.google.com/uc?export=download&id=${gdriveMatch[1]}`;
+  const isGoogleDrive =
+    trimmed.includes('drive.google.com/') ||
+    trimmed.includes('docs.google.com/uc') ||
+    trimmed.includes('drive.usercontent.google.com/');
+
+  if (isGoogleDrive) {
+    return `/api/audio-proxy?url=${encodeURIComponent(trimmed)}`;
   }
 
   if (trimmed.includes('dropbox.com') && trimmed.includes('?dl=0')) {
@@ -1552,8 +1695,11 @@ export async function resolvePlayableAudioUrl(
     return activeObjectUrlCache.get(trimmed)!;
   }
 
-  // 2. If `rawUrl` is already a Firebase Storage CDN link or remote HTTP URL, check if we have a 0ms local blob first, otherwise return the CDN URL immediately
-  if (trimmed.startsWith('https://firebasestorage.googleapis.com/') || trimmed.startsWith('https://storage.googleapis.com/')) {
+  // 2. If `rawUrl` is already a Firebase Storage CDN link, return the CDN URL immediately
+  if (
+    trimmed.startsWith('https://firebasestorage.googleapis.com/') ||
+    trimmed.startsWith('https://storage.googleapis.com/')
+  ) {
     return trimmed;
   }
 
@@ -1588,7 +1734,6 @@ export async function resolvePlayableAudioUrl(
     }
 
     // 3b. Direct Firebase Cloud Storage CDN URL (`vstep/exam_audio/vstep_{cleanKey}.mp3` or `test_audio_chunks/vstep_{cleanKey}_meta`)
-    // Students on any device play directly from Firebase Storage CDN without downloading/reassembling base64 chunks!
     const storageCdnUrl = await resolveFirebaseStorageCdnUrl(vstepKey, fallbackFileName);
     if (storageCdnUrl) {
       activeObjectUrlCache.set(trimmed, storageCdnUrl);
@@ -1703,3 +1848,172 @@ export async function resolvePlayableAudioUrl(
 
   return null;
 }
+
+/**
+ * Comprehensive Canonical Audio Auto-Discovery for Student Devices:
+ * Even if the student's cached test metadata did not yet have `audioUrl` or `partAudioUrls` populated,
+ * this function automatically discovers real MP3 files or external links by probing:
+ * 1. Explicit configured URL / fileName on the test metadata
+ * 2. Canonical keys `vstep_{testId}_part{partNum}` and `vstep_{testId}_full` across Local IDB, Firebase Storage,
+ *    Server `/api/audio/discover/:testId`, live Firestore `tests/{testId}` document, and Firestore `test_audio_chunks`.
+ */
+export async function resolveStudentExamAudioUrl(params: {
+  testId: string;
+  partNum: number;
+  audioMode?: 'single' | 'per_part';
+  configuredUrl?: string;
+  configuredFileName?: string;
+  partAudioUrls?: { part1?: string; part2?: string; part3?: string; part4?: string };
+  partAudioFileNames?: { part1?: string; part2?: string; part3?: string; part4?: string };
+}): Promise<{ playableUrl: string | null; resolvedLabel?: string }> {
+  const cleanTestId = (params.testId || '').trim();
+  const partNum = params.partNum || 1;
+  const partField = `part${partNum}` as 'part1' | 'part2' | 'part3' | 'part4';
+
+  // 1. Try explicit configured URL / fileName first
+  const explicitUrl = (params.configuredUrl || '').trim();
+  const explicitFileName = (params.configuredFileName || '').trim() || undefined;
+  if (explicitUrl || explicitFileName) {
+    const resolvedExplicit = await resolvePlayableAudioUrl(explicitUrl, explicitFileName);
+    if (resolvedExplicit) {
+      return {
+        playableUrl: resolvedExplicit,
+        resolvedLabel: explicitFileName || `Listening Part ${partNum}`,
+      };
+    }
+  }
+
+  if (!cleanTestId) {
+    return { playableUrl: null };
+  }
+
+  // 2. Build canonical keys in priority order based on audioMode
+  const partCanonicalKey = ensureVstepAudioKey(`${cleanTestId}_part${partNum}`);
+  const fullCanonicalKey = ensureVstepAudioKey(`${cleanTestId}_full`);
+  const orderedCanonicalKeys =
+    params.audioMode === 'per_part'
+      ? [
+          { key: partCanonicalKey, label: `Audio Part ${partNum}` },
+          { key: fullCanonicalKey, label: 'Audio toàn bài' },
+        ]
+      : [
+          { key: fullCanonicalKey, label: 'Audio toàn bài' },
+          { key: partCanonicalKey, label: `Audio Part ${partNum}` },
+        ];
+
+  // 2a. Check fast local IDB or in-memory cache for canonical keys
+  for (const cand of orderedCanonicalKeys) {
+    if (activeObjectUrlCache.has(cand.key)) {
+      return { playableUrl: activeObjectUrlCache.get(cand.key)!, resolvedLabel: cand.label };
+    }
+    const cachedCdn = getCachedFirebaseStorageUrl(cand.key);
+    if (cachedCdn) {
+      return { playableUrl: cachedCdn, resolvedLabel: cand.label };
+    }
+  }
+
+  // 2b. Query Express Server `/api/audio/discover/:testId` (checks both server audio files AND server custom_tests.json)
+  try {
+    const resp = await fetch(`/api/audio/discover/${encodeURIComponent(cleanTestId)}`);
+    if (resp.ok) {
+      const data = (await resp.json()) as {
+        full?: { streamUrl?: string; fileName?: string } | null;
+        parts?: Record<string, { streamUrl?: string; fileName?: string }>;
+        testConfig?: {
+          audioMode?: 'single' | 'per_part';
+          audioUrl?: string;
+          audioFileName?: string;
+          partAudioUrls?: Record<string, string>;
+          partAudioFileNames?: Record<string, string>;
+        } | null;
+      };
+
+      const cfg = data?.testConfig;
+      const effectiveMode = cfg?.audioMode || params.audioMode || 'single';
+
+      if (effectiveMode === 'per_part') {
+        if (data?.parts?.[partField]?.streamUrl) {
+          return {
+            playableUrl: data.parts[partField].streamUrl!,
+            resolvedLabel: data.parts[partField].fileName || `Audio Part ${partNum}`,
+          };
+        }
+        const cfgPartUrl = cfg?.partAudioUrls?.[partField];
+        if (cfgPartUrl) {
+          const r = await resolvePlayableAudioUrl(cfgPartUrl, cfg?.partAudioFileNames?.[partField]);
+          if (r) {
+            return {
+              playableUrl: r,
+              resolvedLabel: cfg?.partAudioFileNames?.[partField] || `Audio Part ${partNum}`,
+            };
+          }
+        }
+      }
+
+      if (data?.full?.streamUrl) {
+        return {
+          playableUrl: data.full.streamUrl,
+          resolvedLabel: data.full.fileName || 'Audio toàn bài',
+        };
+      }
+      if (data?.parts?.[partField]?.streamUrl) {
+        return {
+          playableUrl: data.parts[partField].streamUrl!,
+          resolvedLabel: data.parts[partField].fileName || `Audio Part ${partNum}`,
+        };
+      }
+      if (cfg?.audioUrl) {
+        const r = await resolvePlayableAudioUrl(cfg.audioUrl, cfg.audioFileName);
+        if (r) {
+          return {
+            playableUrl: r,
+            resolvedLabel: cfg.audioFileName || 'Audio toàn bài',
+          };
+        }
+      }
+    }
+  } catch {
+    // Ignore server discovery error and continue to Firebase Storage / Firestore
+  }
+
+  // 2c. Probe canonical keys via `resolvePlayableAudioUrl('idb-audio://...')` (checks IDB -> Firebase Storage -> Server -> Firestore Chunks)
+  for (const cand of orderedCanonicalKeys) {
+    const resolved = await resolvePlayableAudioUrl(`idb-audio://${cand.key}`);
+    if (resolved) {
+      return { playableUrl: resolved, resolvedLabel: cand.label };
+    }
+  }
+
+  // 2d. Check live Firestore `tests/{testId}` document in case Teacher just saved an external link or updated URLs
+  try {
+    const testSnap = await getDocWithTimeout(doc(db, 'tests', cleanTestId), 3500);
+    if (testSnap && testSnap.exists()) {
+      const tData = testSnap.data() as {
+        audioMode?: 'single' | 'per_part';
+        audioUrl?: string;
+        audioFileName?: string;
+        partAudioUrls?: Record<string, string>;
+        partAudioFileNames?: Record<string, string>;
+      };
+      const remotePartUrl = tData?.partAudioUrls?.[partField];
+      const remotePartName = tData?.partAudioFileNames?.[partField];
+      if (remotePartUrl) {
+        const r = await resolvePlayableAudioUrl(remotePartUrl, remotePartName);
+        if (r) {
+          return { playableUrl: r, resolvedLabel: remotePartName || `Audio Part ${partNum}` };
+        }
+      }
+      if (tData?.audioUrl) {
+        const r = await resolvePlayableAudioUrl(tData.audioUrl, tData.audioFileName);
+        if (r) {
+          return { playableUrl: r, resolvedLabel: tData.audioFileName || 'Audio toàn bài' };
+        }
+      }
+    }
+  } catch {
+    // Ignore Firestore lookup error
+  }
+
+  return { playableUrl: null };
+}
+

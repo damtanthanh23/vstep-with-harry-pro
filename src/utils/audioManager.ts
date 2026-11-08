@@ -1,16 +1,24 @@
-// Bulletproof Audio Manager supporting uploaded MP3 files (IndexedDB + Cloud Chunks + URL),
-// instant playback when switching/uploading different audio files, and British English Script Narration fallback.
+// Bulletproof Real-Audio Manager supporting uploaded MP3 files (IndexedDB + Firebase Storage CDN + Server + Cloud Chunks),
+// external links (Google Drive, Dropbox, direct MP3 with automatic proxy fallback), and Canonical Test Audio Auto-Discovery.
+// Strictly disables automatic TTS script narration during Listening exams so students ONLY hear real audio files.
 
 import {
   resolvePlayableAudioUrl,
+  resolveStudentExamAudioUrl,
   saveAudioToIndexedDB,
 } from './audioStorageService';
 
-interface ScriptUtteranceSegment {
-  speaker: string;
-  text: string;
-  startSec: number;
-  durationSec: number;
+export interface LoadExamPartAudioParams {
+  testId: string;
+  partNum: number;
+  audioMode?: 'single' | 'per_part';
+  configuredUrl?: string;
+  configuredFileName?: string;
+  partAudioUrls?: { part1?: string; part2?: string; part3?: string; part4?: string };
+  partAudioFileNames?: { part1?: string; part2?: string; part3?: string; part4?: string };
+  autoPlayWhenReady?: boolean;
+  forceReload?: boolean;
+  onResolvedLabel?: (label: string) => void;
 }
 
 class AudioManager {
@@ -24,21 +32,13 @@ class AudioManager {
   private pendingAutoPlay: boolean = false;
   private isResolvingUrl: boolean = false;
   private audioLoadFailed: boolean = false;
-  private isExpectingRealFile: boolean = false;
+  private isExpectingRealFile: boolean = true;
+  private triedProxyFallback: boolean = false;
   private lastRequestedRawUrl: string = '';
   private lastRequestedFileName: string | undefined = undefined;
+  private lastExamPartParams: LoadExamPartAudioParams | null = null;
   private unlockGestureHandler: (() => void) | null = null;
   private listeners: Set<() => void> = new Set();
-
-  // Fallback Script Narration Engine state (used ONLY when a demo test has NO MP3 configured at all)
-  private fallbackScriptText: string = '';
-  private fallbackPartKey: string = '';
-  private scriptSegments: ScriptUtteranceSegment[] = [];
-  private isScriptNarrationPlaying: boolean = false;
-  private scriptSimTime: number = 0;
-  private scriptSimDuration: number = 0;
-  private scriptTimerId: number | null = null;
-  private activeSegmentIndex: number = -1;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -73,12 +73,29 @@ class AudioManager {
       this.audio.addEventListener('error', () => {
         // Ignore empty src reset events
         if (!this.customAudioUrl) return;
+
+        // Automatic Server Proxy Fallback for external HTTP/HTTPS links (e.g., CORS-blocked MP3 or Google Drive)
+        if (
+          !this.triedProxyFallback &&
+          (this.customAudioUrl.startsWith('http://') ||
+            this.customAudioUrl.startsWith('https://')) &&
+          !this.customAudioUrl.includes('/api/audio-proxy')
+        ) {
+          this.triedProxyFallback = true;
+          const proxiedUrl = `/api/audio-proxy?url=${encodeURIComponent(this.customAudioUrl)}`;
+          this.customAudioUrl = proxiedUrl;
+          if (this.audio) {
+            this.audio.src = proxiedUrl;
+            this.audio.playbackRate = this.playbackRate;
+            this.audio.volume = this.volume;
+            this.audio.load();
+          }
+          this.notifyListeners();
+          return;
+        }
+
         this.audioLoadFailed = true;
         this.pendingAutoPlay = false;
-        // Only fall back to script narration if no real MP3 was expected
-        if (!this.isExpectingRealFile && this.fallbackScriptText.trim().length > 0) {
-          this.startScriptNarration();
-        }
         this.notifyListeners();
       });
     }
@@ -115,62 +132,11 @@ class AudioManager {
   }
 
   /**
-   * Registers the current Listening Part's transcript so if no external MP3 is attached,
-   * the player can still play British English narration with a progress bar.
+   * No-op kept for backward API compatibility — automatic TTS fallback in Listening exams is disabled
+   * so students strictly hear real MP3 audio files.
    */
-  public setPartScriptFallback(scriptText: string, partKey: string) {
-    const cleanScript = (scriptText || '').trim();
-    if (this.fallbackPartKey === partKey && this.fallbackScriptText === cleanScript) {
-      return;
-    }
-
-    if (this.fallbackPartKey !== partKey && this.isScriptNarrationPlaying) {
-      this.stopScriptNarration(true);
-    }
-
-    this.fallbackPartKey = partKey;
-    this.fallbackScriptText = cleanScript;
-    this.buildScriptSegments(cleanScript);
-    this.notifyListeners();
-  }
-
-  private buildScriptSegments(rawScript: string) {
-    if (!rawScript) {
-      this.scriptSegments = [];
-      this.scriptSimDuration = 0;
-      this.scriptSimTime = 0;
-      return;
-    }
-
-    const lines = rawScript
-      .split(/\n+/)
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-
-    const segments: ScriptUtteranceSegment[] = [];
-    let cursorSec = 0;
-
-    lines.forEach((line) => {
-      const speakerMatch = line.match(
-        /^(?:Speaker\s+)?([A-Z]|Man|Woman|Male|Female|Boy|Girl|Host|Radio Host|Interviewer|Narrator)(?:\s*\d+)?\s*[:.-]\s*(.+)$/i
-      );
-      const speaker = speakerMatch ? speakerMatch[1].toUpperCase() : 'NARRATOR';
-      const spokenText = speakerMatch ? speakerMatch[2].trim() : line;
-      const wordCount = Math.max(1, spokenText.split(/\s+/).length);
-      const durationSec = Math.max(2, Math.round((wordCount / 2.4 + 0.8) * 10) / 10);
-
-      segments.push({
-        speaker,
-        text: spokenText,
-        startSec: cursorSec,
-        durationSec,
-      });
-      cursorSec += durationSec;
-    });
-
-    this.scriptSegments = segments;
-    this.scriptSimDuration = Math.max(15, Math.ceil(cursorSec));
-    this.scriptSimTime = 0;
+  public setPartScriptFallback(_scriptText: string, _partKey: string) {
+    // Intentionally disabled: never replace real exam MP3 playback with synthetic speechSynthesis
   }
 
   /**
@@ -178,15 +144,15 @@ class AudioManager {
    * while saving to IndexedDB in the background.
    */
   public async setCustomAudio(file: File, autoPlay = true) {
-    this.stopScriptNarration(true);
+    this.cancelAnySpeechSynthesis();
     this.clearGestureUnlock();
     this.audioLoadFailed = false;
     this.isResolvingUrl = false;
     this.isExpectingRealFile = true;
+    this.triedProxyFallback = false;
     this.lastRequestedRawUrl = '';
     this.lastRequestedFileName = file.name;
 
-    // Create direct Object URL immediately from the uploaded File so there is zero latency or stale cache
     const directObjUrl = URL.createObjectURL(file);
     const uniqueKey = `session_upload_${file.name}_${file.size}_${file.lastModified}_${Date.now()}`;
 
@@ -210,9 +176,96 @@ class AudioManager {
     }
     this.notifyListeners();
 
-    // Persist to IndexedDB in background for recovery
     const storageKey = `session_upload_${file.name.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
     saveAudioToIndexedDB(storageKey, file, file.name).catch(() => {});
+  }
+
+  /**
+   * Canonical Exam Part Audio Loader:
+   * Resolves the real MP3 file or external link for `(testId, partNum)` across all storage layers
+   * (Configured URL -> Local IDB -> Server Discovery -> Firebase Storage CDN -> Firestore Test Doc -> Cloud Chunks).
+   * Never falls back to synthetic TTS voice.
+   */
+  public async loadExamPartAudio(params: LoadExamPartAudioParams) {
+    this.lastExamPartParams = params;
+    const cleanUrl = (params.configuredUrl || '').trim();
+    const compositeKey = `exam::${params.testId}::mode=${params.audioMode || 'single'}::part=${
+      params.audioMode === 'per_part' ? params.partNum : 'full'
+    }::url=${cleanUrl}::file=${params.configuredFileName || ''}`;
+
+    this.lastRequestedRawUrl = cleanUrl;
+    this.lastRequestedFileName = params.configuredFileName;
+
+    if (
+      !params.forceReload &&
+      this.rawSourceKey === compositeKey &&
+      this.customAudioUrl &&
+      this.audio &&
+      this.audio.src &&
+      !this.audioLoadFailed
+    ) {
+      if (params.autoPlayWhenReady && !this.isPlaying()) {
+        this.play();
+      }
+      return;
+    }
+
+    this.rawSourceKey = compositeKey;
+    this.fallbackFileName = params.configuredFileName;
+    this.isExpectingRealFile = true;
+    this.audioLoadFailed = false;
+    this.triedProxyFallback = false;
+    this.isResolvingUrl = true;
+    this.pendingAutoPlay = Boolean(params.autoPlayWhenReady);
+    this.cancelAnySpeechSynthesis();
+
+    if (this.audio && !this.audio.paused) {
+      this.audio.pause();
+    }
+    this.notifyListeners();
+
+    const { playableUrl, resolvedLabel } = await resolveStudentExamAudioUrl({
+      testId: params.testId,
+      partNum: params.partNum,
+      audioMode: params.audioMode,
+      configuredUrl: cleanUrl,
+      configuredFileName: params.configuredFileName,
+      partAudioUrls: params.partAudioUrls,
+      partAudioFileNames: params.partAudioFileNames,
+    });
+
+    if (this.rawSourceKey !== compositeKey) return;
+    this.isResolvingUrl = false;
+
+    if (resolvedLabel && params.onResolvedLabel) {
+      params.onResolvedLabel(resolvedLabel);
+    }
+
+    if (playableUrl && this.audio) {
+      this.audioLoadFailed = false;
+      this.customAudioUrl = playableUrl;
+      this.audio.pause();
+      this.audio.src = playableUrl;
+      this.audio.currentTime = 0;
+      this.audio.playbackRate = this.playbackRate;
+      this.audio.volume = this.volume;
+      this.audio.load();
+
+      if (this.pendingAutoPlay && this.audio.readyState >= 2) {
+        this.pendingAutoPlay = false;
+        this.safeTriggerHtmlAudioPlay();
+      }
+    } else {
+      this.customAudioUrl = null;
+      this.audioLoadFailed = true;
+      this.pendingAutoPlay = false;
+      if (this.audio) {
+        this.audio.pause();
+        this.audio.removeAttribute('src');
+      }
+    }
+
+    this.notifyListeners();
   }
 
   public async setCustomAudioUrl(
@@ -226,8 +279,8 @@ class AudioManager {
 
     this.lastRequestedRawUrl = cleanUrl;
     this.lastRequestedFileName = fileName;
+    this.lastExamPartParams = null;
 
-    // Avoid resetting audio.src ONLY if the exact same versioned audio track is already loaded and healthy
     if (
       !forceReload &&
       this.rawSourceKey === compositeKey &&
@@ -245,25 +298,24 @@ class AudioManager {
     this.rawSourceKey = compositeKey;
     this.fallbackFileName = fileName;
     this.audioLoadFailed = false;
+    this.triedProxyFallback = false;
+    this.isExpectingRealFile = true;
+    this.cancelAnySpeechSynthesis();
 
     if (!cleanUrl && !fileName) {
-      this.isExpectingRealFile = false;
       this.customAudioUrl = null;
+      this.audioLoadFailed = true;
+      this.pendingAutoPlay = false;
       if (this.audio) {
         this.audio.pause();
         this.audio.removeAttribute('src');
-      }
-      if (autoPlayWhenReady && this.fallbackScriptText.trim().length > 0) {
-        this.startScriptNarration();
       }
       this.notifyListeners();
       return;
     }
 
-    this.isExpectingRealFile = true;
     this.isResolvingUrl = true;
     this.pendingAutoPlay = autoPlayWhenReady;
-    this.stopScriptNarration(true);
     if (this.audio && !this.audio.paused) {
       this.audio.pause();
     }
@@ -272,11 +324,9 @@ class AudioManager {
     const resolvedUrl = await resolvePlayableAudioUrl(cleanUrl, fileName);
     this.isResolvingUrl = false;
 
-    // Ensure rawSourceKey didn't change while resolving
     if (this.rawSourceKey !== compositeKey) return;
 
     if (resolvedUrl && this.audio) {
-      this.stopScriptNarration(true);
       this.audioLoadFailed = false;
       this.customAudioUrl = resolvedUrl;
       this.audio.pause();
@@ -291,18 +341,23 @@ class AudioManager {
         this.safeTriggerHtmlAudioPlay();
       }
     } else {
-      // Real MP3 was expected for this test, but was not found on Cloud or local IndexedDB.
-      // Do NOT start the silent fake timer (`startScriptNarration`), and clearly mark audioLoadFailed!
       this.customAudioUrl = null;
       this.audioLoadFailed = true;
       this.pendingAutoPlay = false;
-      this.stopScriptNarration(true);
     }
 
     this.notifyListeners();
   }
 
   public async retryLoadAudio(autoPlay = true) {
+    if (this.lastExamPartParams) {
+      await this.loadExamPartAudio({
+        ...this.lastExamPartParams,
+        autoPlayWhenReady: autoPlay,
+        forceReload: true,
+      });
+      return;
+    }
     if (!this.lastRequestedRawUrl && !this.lastRequestedFileName) return;
     await this.setCustomAudioUrl(
       this.lastRequestedRawUrl,
@@ -327,20 +382,15 @@ class AudioManager {
         })
         .catch((err: Error) => {
           if (err.name === 'NotAllowedError') {
-            // Browser blocked autoplay before user gesture: unlock immediately on first click/tap
             this.registerGestureUnlock(() => {
               this.play();
             });
           } else if (err.name === 'AbortError') {
-            // Interrupted while new track is loading: queue play for `canplay` / `loadeddata`
             this.pendingAutoPlay = true;
           } else {
             if (this.audio?.error) {
               this.audioLoadFailed = true;
               this.pendingAutoPlay = false;
-              if (!this.isExpectingRealFile && this.fallbackScriptText.trim().length > 0) {
-                this.startScriptNarration();
-              }
             } else {
               this.pendingAutoPlay = true;
             }
@@ -351,40 +401,20 @@ class AudioManager {
   }
 
   public play() {
+    this.cancelAnySpeechSynthesis();
+
     if (this.isResolvingUrl) {
       this.pendingAutoPlay = true;
       this.notifyListeners();
       return;
     }
 
-    // 1. If the test expects a real MP3 file, NEVER fall back to silent fake timer narration
-    if (this.isExpectingRealFile) {
-      this.stopScriptNarration(true);
-
-      // If the MP3 failed to resolve earlier (e.g. Teacher just synced it to Cloud), retry loading from Cloud now
-      if (!this.customAudioUrl || this.audioLoadFailed) {
-        this.retryLoadAudio(true);
-        return;
-      }
-
-      if (this.audio) {
-        if (this.audio.readyState >= 2) {
-          this.pendingAutoPlay = false;
-          this.safeTriggerHtmlAudioPlay();
-        } else {
-          this.pendingAutoPlay = true;
-          if (this.audio.networkState === HTMLMediaElement.NETWORK_EMPTY) {
-            this.audio.load();
-          }
-        }
-        this.notifyListeners();
-      }
+    if (!this.customAudioUrl || this.audioLoadFailed) {
+      this.retryLoadAudio(true);
       return;
     }
 
-    // 2. If we have an uploaded/configured HTML5 audio track, play it
-    if (this.audio && this.customAudioUrl) {
-      this.stopScriptNarration(false);
+    if (this.audio) {
       if (this.audio.readyState >= 2) {
         this.pendingAutoPlay = false;
         this.safeTriggerHtmlAudioPlay();
@@ -395,144 +425,22 @@ class AudioManager {
         }
       }
       this.notifyListeners();
-      return;
-    }
-
-    // 3. Otherwise ( ONLY when a demo test has NO MP3 attached at all), play the British English Script Narration fallback
-    if (!this.isExpectingRealFile && this.fallbackScriptText.trim().length > 0) {
-      this.startScriptNarration();
     }
   }
 
-  /**
-   * Automatically starts audio when entering the Listening section or switching Listening Parts
-   */
-  public autoPlayForListeningPart(fallbackScript?: string, partKey?: string) {
-    if (fallbackScript !== undefined && partKey !== undefined) {
-      this.setPartScriptFallback(fallbackScript, partKey);
-    }
+  public autoPlayForListeningPart(_fallbackScript?: string, _partKey?: string) {
     if (this.isPlaying()) return;
     this.play();
   }
 
-  private startScriptNarration() {
-    if (this.isExpectingRealFile) return;
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    if (this.scriptSegments.length === 0 && this.fallbackScriptText) {
-      this.buildScriptSegments(this.fallbackScriptText);
-    }
-    if (this.scriptSegments.length === 0) return;
-
-    this.isScriptNarrationPlaying = true;
-    if (this.scriptSimTime >= this.scriptSimDuration) {
-      this.scriptSimTime = 0;
-      this.activeSegmentIndex = -1;
-    }
-
-    this.speakSegmentAtCurrentTime();
-
-    if (this.scriptTimerId) {
-      window.clearInterval(this.scriptTimerId);
-    }
-    this.scriptTimerId = window.setInterval(() => {
-      if (!this.isScriptNarrationPlaying) return;
-      this.scriptSimTime = Math.min(
-        this.scriptSimDuration,
-        this.scriptSimTime + 0.25 * this.playbackRate
-      );
-
-      const segIdx = this.findSegmentIndexForTime(this.scriptSimTime);
-      if (segIdx !== -1 && segIdx !== this.activeSegmentIndex) {
-        this.activeSegmentIndex = segIdx;
-        this.speakSingleSegment(this.scriptSegments[segIdx]);
-      }
-
-      if (this.scriptSimTime >= this.scriptSimDuration) {
-        this.stopScriptNarration(true);
-      }
-      this.notifyListeners();
-    }, 250);
-
-    this.notifyListeners();
-  }
-
-  private findSegmentIndexForTime(sec: number): number {
-    for (let i = 0; i < this.scriptSegments.length; i++) {
-      const seg = this.scriptSegments[i];
-      if (sec >= seg.startSec && sec < seg.startSec + seg.durationSec) {
-        return i;
-      }
-    }
-    return this.scriptSegments.length - 1;
-  }
-
-  private speakSegmentAtCurrentTime() {
-    const idx = Math.max(0, this.findSegmentIndexForTime(this.scriptSimTime));
-    this.activeSegmentIndex = idx;
-    const seg = this.scriptSegments[idx];
-    if (seg) {
-      this.speakSingleSegment(seg);
-    }
-  }
-
-  private speakSingleSegment(seg: ScriptUtteranceSegment) {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(seg.text);
-      utterance.lang = 'en-GB';
-      utterance.volume = this.volume;
-      utterance.rate = Math.max(0.6, Math.min(1.6, 0.95 * this.playbackRate));
-
-      const normSpeaker = seg.speaker.toUpperCase();
-      if (
-        normSpeaker === 'B' ||
-        normSpeaker.includes('MAN') ||
-        normSpeaker.includes('MALE')
-      ) {
-        utterance.pitch = 0.88;
-      } else if (
-        normSpeaker === 'A' ||
-        normSpeaker.includes('WOMAN') ||
-        normSpeaker.includes('FEMALE')
-      ) {
-        utterance.pitch = 1.1;
-      } else {
-        utterance.pitch = 1.0;
-      }
-
-      const voices = window.speechSynthesis.getVoices();
-      const ukVoices = voices.filter(
-        (v) => v.lang === 'en-GB' || v.lang === 'en_GB'
-      );
-      if (
-        ukVoices.length > 1 &&
-        (normSpeaker === 'B' || normSpeaker.includes('MAN'))
-      ) {
-        utterance.voice = ukVoices[1] || ukVoices[0];
-      } else {
-        const ukVoice = ukVoices[0] || voices.find((v) => v.lang.startsWith('en'));
-        if (ukVoice) utterance.voice = ukVoice;
-      }
-
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      // Ignore speech synthesis restrictions
-    }
-  }
-
-  private stopScriptNarration(resetTime = false) {
-    this.isScriptNarrationPlaying = false;
-    if (this.scriptTimerId && typeof window !== 'undefined') {
-      window.clearInterval(this.scriptTimerId);
-      this.scriptTimerId = null;
-    }
-    if (resetTime) {
-      this.scriptSimTime = 0;
-      this.activeSegmentIndex = -1;
-    }
+  private cancelAnySpeechSynthesis() {
+    this.isSpeechActive = false;
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        // Ignore
+      }
     }
   }
 
@@ -542,8 +450,7 @@ class AudioManager {
     if (this.audio) {
       this.audio.pause();
     }
-    this.stopScriptNarration(false);
-    this.isSpeechActive = false;
+    this.cancelAnySpeechSynthesis();
     this.notifyListeners();
   }
 
@@ -556,7 +463,7 @@ class AudioManager {
   }
 
   public isPlaying(): boolean {
-    if (this.isSpeechActive || this.isScriptNarrationPlaying) return true;
+    if (this.isSpeechActive) return true;
     return !!(this.audio && !this.audio.paused && !this.audio.ended);
   }
 
@@ -569,60 +476,30 @@ class AudioManager {
   }
 
   public getCurrentTime(): number {
-    if (this.isExpectingRealFile) {
-      if (this.audio && this.customAudioUrl && !this.audioLoadFailed && !this.isResolvingUrl) {
-        return this.audio.currentTime || 0;
-      }
-      return 0;
-    }
-    if (this.audio && this.customAudioUrl && !this.audioLoadFailed) {
+    if (this.audio && this.customAudioUrl && !this.audioLoadFailed && !this.isResolvingUrl) {
       return this.audio.currentTime || 0;
     }
-    return this.scriptSimTime;
+    return 0;
   }
 
   public getDuration(): number {
-    if (this.isExpectingRealFile) {
-      if (
-        this.audio &&
-        this.customAudioUrl &&
-        !this.audioLoadFailed &&
-        !this.isResolvingUrl &&
-        !isNaN(this.audio.duration) &&
-        this.audio.duration > 0
-      ) {
-        return this.audio.duration;
-      }
-      return 0;
-    }
     if (
       this.audio &&
       this.customAudioUrl &&
       !this.audioLoadFailed &&
+      !this.isResolvingUrl &&
       !isNaN(this.audio.duration) &&
       this.audio.duration > 0
     ) {
       return this.audio.duration;
     }
-    return this.scriptSimDuration || 120;
+    return 0;
   }
 
   public seek(seconds: number) {
     const maxDur = this.getDuration() || 0;
     if (maxDur <= 0) return;
     const clamped = Math.max(0, Math.min(maxDur, seconds));
-
-    if (this.isExpectingRealFile) {
-      if (this.audio && this.customAudioUrl && !this.audioLoadFailed) {
-        try {
-          this.audio.currentTime = clamped;
-        } catch {
-          // Ignore seek before metadata ready
-        }
-        this.notifyListeners();
-      }
-      return;
-    }
 
     if (this.audio && this.customAudioUrl && !this.audioLoadFailed) {
       try {
@@ -631,14 +508,7 @@ class AudioManager {
         // Ignore seek before metadata ready
       }
       this.notifyListeners();
-      return;
     }
-
-    this.scriptSimTime = clamped;
-    if (this.isScriptNarrationPlaying) {
-      this.speakSegmentAtCurrentTime();
-    }
-    this.notifyListeners();
   }
 
   public seekRelative(deltaSeconds: number) {
@@ -655,9 +525,6 @@ class AudioManager {
     this.playbackRate = sanitized;
     if (this.audio) {
       this.audio.playbackRate = sanitized;
-    }
-    if (this.isScriptNarrationPlaying) {
-      this.speakSegmentAtCurrentTime();
     }
     this.notifyListeners();
   }
@@ -683,13 +550,7 @@ class AudioManager {
   }
 
   public hasAudioSource(): boolean {
-    if (this.isExpectingRealFile) {
-      return !!(this.customAudioUrl && !this.audioLoadFailed);
-    }
-    return !!(
-      (this.customAudioUrl && !this.audioLoadFailed) ||
-      this.fallbackScriptText.trim().length > 0
-    );
+    return !!(this.customAudioUrl && !this.audioLoadFailed);
   }
 
   public playExamChime() {
@@ -726,8 +587,7 @@ class AudioManager {
   public speakText(text: string, onEnd?: () => void, speakerLabel?: string) {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
 
-    this.stopScriptNarration(false);
-    window.speechSynthesis.cancel();
+    this.cancelAnySpeechSynthesis();
     this.playExamChime();
 
     const cleanedSpeechText = text

@@ -19,6 +19,9 @@ import {
   Moon,
   Eye,
   EyeOff,
+  Maximize2,
+  Minimize2,
+  ShieldAlert,
 } from 'lucide-react';
 import { InteractiveAudioPlayer } from './InteractiveAudioPlayer';
 import { useAuth } from '../context/AuthContext';
@@ -35,6 +38,10 @@ interface ExamHeaderProps {
   isOnline?: boolean;
   lastSavedText?: string;
   audioBadgeLabel?: string;
+  strictProctoring?: boolean;
+  isFullscreen?: boolean;
+  tabSwitchCount?: number;
+  onToggleFullscreen?: () => void;
   onToggleMode: () => void;
   onPauseClick?: () => void;
   onSaveAndExitPractice?: () => void;
@@ -56,6 +63,10 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
   isOnline = true,
   lastSavedText,
   audioBadgeLabel,
+  strictProctoring = false,
+  isFullscreen = false,
+  tabSwitchCount = 0,
+  onToggleFullscreen,
   onToggleMode,
   onPauseClick,
   onSaveAndExitPractice,
@@ -248,8 +259,40 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
           )}
         </div>
 
-        {/* Right: Compact Theme Icon + Report Bug + Teacher Mode Toggle + Submit + Menu */}
+        {/* Right: Fullscreen/Proctoring + Compact Theme Icon + Report Bug + Teacher Mode Toggle + Submit + Menu */}
         <div className="flex items-center gap-2 sm:gap-2.5">
+          {/* Tab Switch Warning Badge in Strict Exam Mode */}
+          {mode === 'exam' && strictProctoring && tabSwitchCount > 0 && (
+            <span
+              className="hidden sm:inline-flex items-center gap-1 rounded-xl bg-[#FF4B4B] px-2.5 py-1 text-[11px] font-black text-white border border-white/40 shadow-2xs tabular-nums"
+              title={`Đã phát hiện rời tab phòng thi ${tabSwitchCount} lần`}
+            >
+              <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
+              <span>Rời tab: {tabSwitchCount}</span>
+            </span>
+          )}
+
+          {/* Fullscreen Toggle Button */}
+          {onToggleFullscreen && (
+            <button
+              type="button"
+              onClick={onToggleFullscreen}
+              className="hidden sm:flex items-center justify-center rounded-xl bg-white/20 hover:bg-white/30 border border-white/25 border-b-3 border-b-black/25 active:border-b-0 active:translate-y-0.5 p-2 text-white transition-all cursor-pointer shrink-0"
+              title={
+                isFullscreen
+                  ? 'Thoát chế độ Toàn màn hình (Fullscreen)'
+                  : 'Bật chế độ Phòng thi Toàn màn hình (Fullscreen)'
+              }
+              aria-label="Chuyển đổi Toàn màn hình"
+            >
+              {isFullscreen ? (
+                <Minimize2 className="h-4 w-4 text-lime-200" />
+              ) : (
+                <Maximize2 className="h-4 w-4 text-white" />
+              )}
+            </button>
+          )}
+
           {/* Compact Light/Dark Theme Toggle Icon Button (Item 4) */}
           <button
             type="button"

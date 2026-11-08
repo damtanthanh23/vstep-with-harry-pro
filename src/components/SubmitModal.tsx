@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
-import { AlertTriangle, UserCheck, LogIn, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, UserCheck, LogIn, CheckCircle2, Flag, HelpCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 interface SubmitModalProps {
   isOpen: boolean;
   timeRemainingSeconds: number;
+  flaggedCount?: number;
+  unansweredCount?: number;
+  totalQuestions?: number;
   onContinue: () => void;
   onSubmit: (guestInfo?: { name?: string; email?: string }) => void;
 }
@@ -12,6 +15,9 @@ interface SubmitModalProps {
 export const SubmitModal: React.FC<SubmitModalProps> = ({
   isOpen,
   timeRemainingSeconds,
+  flaggedCount = 0,
+  unansweredCount = 0,
+  totalQuestions = 75,
   onContinue,
   onSubmit,
 }) => {
@@ -74,9 +80,44 @@ export const SubmitModal: React.FC<SubmitModalProps> = ({
         <h3 className="mb-1 text-xl font-black text-[#3C3C3C] dark:text-white">
           Thời gian còn {minutes}m {seconds.toString().padStart(2, '0')}s
         </h3>
-        <p className="mb-5 text-xs font-bold text-[#777777] dark:text-slate-400">
+        <p className="mb-4 text-xs font-bold text-[#777777] dark:text-slate-400">
           Bạn có chắc chắn muốn nộp bài thi ngay bây giờ?
         </p>
+
+        {/* Flagged & Unanswered Summary Alert */}
+        {(unansweredCount > 0 || flaggedCount > 0) && (
+          <div className="mb-4 grid grid-cols-2 gap-2.5 text-left">
+            <div
+              className={`rounded-2xl p-3 border-2 border-b-3 flex items-center gap-2.5 ${
+                unansweredCount > 0
+                  ? 'bg-[#FFF4E5] dark:bg-amber-950/40 border-[#FF9600] border-b-[#E58700] text-[#D97706] dark:text-amber-300'
+                  : 'bg-[#E5F9D6] dark:bg-emerald-950/40 border-[#58CC02] border-b-[#46A302] text-[#2B6601] dark:text-emerald-300'
+              }`}
+            >
+              <HelpCircle className="h-4 w-4 shrink-0" />
+              <div className="text-[11px] leading-tight">
+                <span className="block font-black">
+                  {unansweredCount}/{totalQuestions} câu
+                </span>
+                <span className="font-bold opacity-85">Chưa chọn đáp án</span>
+              </div>
+            </div>
+
+            <div
+              className={`rounded-2xl p-3 border-2 border-b-3 flex items-center gap-2.5 ${
+                flaggedCount > 0
+                  ? 'bg-[#FFF4E5] dark:bg-amber-950/40 border-[#FFC800] border-b-[#E5B400] text-[#B8860B] dark:text-amber-300'
+                  : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500'
+              }`}
+            >
+              <Flag className={`h-4 w-4 shrink-0 ${flaggedCount > 0 ? 'fill-[#FF9600] text-[#FF9600]' : ''}`} />
+              <div className="text-[11px] leading-tight">
+                <span className="block font-black">{flaggedCount} câu hỏi</span>
+                <span className="font-bold opacity-85">Đang gắn cờ xem lại</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Student Identification Section */}
         {currentUser ? (

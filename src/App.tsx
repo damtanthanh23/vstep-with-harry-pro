@@ -93,6 +93,11 @@ import {
   subscribeToExamOrderConfig,
   sortTestsList,
 } from './services/examOrderService';
+import { EquipmentCheckModal } from './components/EquipmentCheckModal';
+import {
+  recordSingleMistake,
+  recordMistakesFromAttempt,
+} from './services/mistakeService';
 
 // Define question groups matching the VSTEP 4-skill exam sections with Part-relative numbering
 interface QuestionGroup {
@@ -351,6 +356,7 @@ export default function App() {
 
   // Pre-Start Setup Modal state (Item 16)
   const [preStartModalOpen, setPreStartModalOpen] = useState<boolean>(false);
+  const [isEquipmentCheckOpen, setIsEquipmentCheckOpen] = useState<boolean>(false);
   const [pendingStartTestId, setPendingStartTestId] = useState<string>('test-1');
   const [selectedPartsForSession, setSelectedPartsForSession] = useState<string[]>(ALL_PRACTICE_PARTS);
   const [practiceTimerType, setPracticeTimerType] = useState<'suggested' | 'custom' | 'untimed'>('suggested');
@@ -385,7 +391,14 @@ export default function App() {
   // Active Attempt ID & Persisted AI Evaluations for ResultsView
   const [activeAttemptId, setActiveAttemptId] = useState<string | null>(null);
   const [activeWritingAiEval, setActiveWritingAiEval] = useState<any>(undefined);
+  const [activeSpeakingAiEval, setActiveSpeakingAiEval] = useState<any>(undefined);
   const [activeAiDiagnostic, setActiveAiDiagnostic] = useState<any>(null);
+
+  // Strict Fullscreen & Tab-Switch Proctoring State
+  const [strictExamMode, setStrictExamMode] = useState<boolean>(true);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [tabSwitchCount, setTabSwitchCount] = useState<number>(0);
+  const [isTabWarningModalOpen, setIsTabWarningModalOpen] = useState<boolean>(false);
 
   // Exam Active State
   const [currentGroupIndex, setCurrentGroupIndex] = useState<number>(0);
@@ -849,12 +862,58 @@ export default function App() {
     inProgressStorageKey,
   ]);
 
+  // Toggle Fullscreen helper
+  const handleToggleFullscreen = useCallback(() => {
+    try {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen?.().catch(() => {});
+      } else {
+        document.exitFullscreen?.().catch(() => {});
+      }
+    } catch {
+      // Ignore fullscreen restriction in embedded frames
+    }
+  }, []);
+
+  // Track Fullscreen changes and Tab-Switch Proctoring during active Exam
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, []);
+
   // Flush to Cloud Firestore immediately when tab is hidden or page is closed during an active exam
+  // Also enforce Tab-Switch Proctoring Alert when in Exam mode with strictExamMode enabled
   useEffect(() => {
     if (currentScreen !== 'exam') return;
     const handleVisibilityOrHide = () => {
       if (document.visibilityState === 'hidden') {
         flushInProgressToCloudImmediately();
+        if (examMode === 'exam' && strictExamMode && !isPaused && !isSubmitModalOpen) {
+          setTabSwitchCount((prev) => prev + 1);
+          setIsTabWarningModalOpen(true);
+          try {
+            const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+            if (AudioCtx) {
+              const ctx = new AudioCtx();
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              osc.type = 'sawtooth';
+              osc.frequency.setValueAtTime(520, ctx.currentTime);
+              gain.gain.setValueAtTime(0.15, ctx.currentTime);
+              gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+              osc.connect(gain);
+              gain.connect(ctx.destination);
+              osc.start();
+              osc.stop(ctx.currentTime + 0.35);
+              setTimeout(() => ctx.close().catch(() => {}), 500);
+            }
+          } catch {
+            // Ignore audio error
+          }
+        }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityOrHide);
@@ -863,7 +922,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', handleVisibilityOrHide);
       window.removeEventListener('pagehide', flushInProgressToCloudImmediately);
     };
-  }, [currentScreen, flushInProgressToCloudImmediately]);
+  }, [currentScreen, flushInProgressToCloudImmediately, examMode, strictExamMode, isPaused, isSubmitModalOpen]);
 
   // Combined tests list excluding deletedTestIds, sorted by Admin Cloud order & natural title order
   const allTests = useMemo(() => {
@@ -980,7 +1039,7 @@ export default function App() {
   // Current Group & Questions
   const currentGroup = activeQuestionGroups[currentGroupIndex] || activeQuestionGroups[0];
 
-  // Automatically configure & auto-play Listening Audio (with IndexedDB/Firestore recovery + Script fallback)
+  // Automatically configure & auto-play Real Listening Audio (with Canonical Cloud/Server/IDB Discovery)
   useEffect(() => {
     if (currentScreen !== 'exam') return;
 
@@ -991,18 +1050,6 @@ export default function App() {
     }
 
     const activePartNum = currentGroup.partNumber || 1;
-    const partLabel = `Listening Part ${activePartNum}`;
-    const partQuestions = activeExamQuestions.filter(
-      (q) => q.section === 'LISTENING' && q.partNumber === activePartNum
-    );
-    const partFallbackScript = partQuestions
-      .map((q) => q.audioScript)
-      .filter(Boolean)
-      .join(' ');
-
-    // Always register fallback script for this Listening part so playback never fails
-    examAudioManager.setPartScriptFallback(partFallbackScript, partLabel);
-
     const shouldAutoPlayNow = currentGroup.type === 'questions' && !isPaused;
 
     // 1. Temporary Local Fallback for THIS specific Listening Part only (does not touch database audio)
@@ -1018,49 +1065,40 @@ export default function App() {
       return;
     }
 
-    // 2. Per-Part Audio Mode configured in ExamBuilder (Database / IndexedDB)
-    if (activeTestMetadata.audioMode === 'per_part' && currentGroup.partNumber) {
-      const partKey = `part${currentGroup.partNumber}` as 'part1' | 'part2' | 'part3' | 'part4';
-      const partUrl =
-        activeTestMetadata.partAudioUrls?.[partKey] || activeTestMetadata.audioUrl || '';
-      const explicitPartFileName = activeTestMetadata.partAudioFileNames?.[partKey];
-      const partName =
-        explicitPartFileName || `Listening Part ${currentGroup.partNumber}`;
+    // 2. Canonical Exam Part Audio Resolution (Configured URL + External Link Proxy + Auto-Discovery by testId)
+    const partKey = `part${activePartNum}` as 'part1' | 'part2' | 'part3' | 'part4';
+    const isPerPartMode = activeTestMetadata.audioMode === 'per_part';
+    const configuredUrl = isPerPartMode
+      ? activeTestMetadata.partAudioUrls?.[partKey] || activeTestMetadata.audioUrl || ''
+      : activeTestMetadata.audioUrl || activeTestMetadata.partAudioUrls?.[partKey] || '';
+    const configuredFileName = isPerPartMode
+      ? activeTestMetadata.partAudioFileNames?.[partKey] || activeTestMetadata.audioFileName
+      : activeTestMetadata.audioFileName || activeTestMetadata.partAudioFileNames?.[partKey];
 
-      setCustomAudioName(partName);
-      setActiveAudioBadgeLabel(`Audio Part ${currentGroup.partNumber}`);
+    const defaultBadge = isPerPartMode ? `Audio Part ${activePartNum}` : 'Audio toàn bài';
+    setCustomAudioName(configuredFileName || defaultBadge);
+    setActiveAudioBadgeLabel(defaultBadge);
 
-      if (partUrl || explicitPartFileName) {
-        examAudioManager.setCustomAudioUrl(
-          partUrl,
-          explicitPartFileName || partName,
-          shouldAutoPlayNow
-        );
-      } else {
-        examAudioManager.setCustomAudioUrl('', undefined, shouldAutoPlayNow);
-      }
-    } else if (activeTestMetadata.audioUrl || activeTestMetadata.audioFileName) {
-      // 3. Single Full-Test Audio Track configured in ExamBuilder (Database / IndexedDB)
-      const fullAudioName = activeTestMetadata.audioFileName || 'Audio toàn bài';
-      setCustomAudioName(fullAudioName);
-      setActiveAudioBadgeLabel('Audio toàn bài');
-      examAudioManager.setCustomAudioUrl(
-        activeTestMetadata.audioUrl || '',
-        activeTestMetadata.audioFileName || fullAudioName,
-        shouldAutoPlayNow
-      );
-    } else {
-      // 4. Fallback Script Narration when no MP3 file is attached at all
-      setCustomAudioName(undefined);
-      setActiveAudioBadgeLabel(`Audio Part ${activePartNum}`);
-      examAudioManager.setCustomAudioUrl('', undefined, shouldAutoPlayNow);
-    }
+    examAudioManager.loadExamPartAudio({
+      testId: selectedTestId,
+      partNum: activePartNum,
+      audioMode: activeTestMetadata.audioMode || 'single',
+      configuredUrl,
+      configuredFileName,
+      partAudioUrls: activeTestMetadata.partAudioUrls,
+      partAudioFileNames: activeTestMetadata.partAudioFileNames,
+      autoPlayWhenReady: shouldAutoPlayNow,
+      onResolvedLabel: (label) => {
+        if (label) {
+          setCustomAudioName(label);
+        }
+      },
+    });
   }, [
     currentScreen,
     selectedTestId,
     sessionPartAudioOverrides,
     activeTestMetadata,
-    activeExamQuestions,
     currentGroup.type,
     currentGroup.section,
     currentGroup.partNumber,
@@ -1343,6 +1381,7 @@ export default function App() {
     setSelectedTestId(attempt.testId);
     setActiveAttemptId(attempt.attemptId);
     setActiveWritingAiEval(attempt.aiWritingEvaluation);
+    setActiveSpeakingAiEval(attempt.aiSpeakingEvaluation);
     setActiveAiDiagnostic(attempt.aiDiagnosticReport || null);
     setAnswers(attempt.answers || {});
     setWritingSubmission(
@@ -1364,14 +1403,26 @@ export default function App() {
     setCurrentScreen('results');
   };
 
-  // Launch fresh exam/practice session from the Pre-Start Modal
-  const handleConfirmLaunchFromPreStart = () => {
+  // Execute actual room launch after Pre-Start and Equipment Check
+  const executeLaunchExamRoom = () => {
     clearSessionLocalAudioOverrides();
     const testId = pendingStartTestId;
     setSelectedTestId(testId);
     setActiveAttemptId(null);
     setActiveWritingAiEval(undefined);
+    setActiveSpeakingAiEval(undefined);
     setActiveAiDiagnostic(null);
+    setTabSwitchCount(0);
+    setIsTabWarningModalOpen(false);
+    if (examMode === 'exam' && strictExamMode) {
+      try {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen?.().catch(() => {});
+        }
+      } catch {
+        // Ignore if blocked by iframe policy
+      }
+    }
 
     let partsToRun: string[] = [];
     let durationSec = 172 * 60;
@@ -1415,7 +1466,16 @@ export default function App() {
       task2WordCount: 0,
     });
     setSpeakingSubmission(EMPTY_SPEAKING_SUBMISSION);
-    setActiveSpeakingPartIndex(0);
+    setActiveWritingTaskIndex(
+      partsToRun.includes('W2') && !partsToRun.includes('W1') ? 1 : 0
+    );
+    setActiveSpeakingPartIndex(
+      partsToRun.includes('S3') && !partsToRun.includes('S1') && !partsToRun.includes('S2')
+        ? 2
+        : partsToRun.includes('S2') && !partsToRun.includes('S1')
+        ? 1
+        : 0
+    );
     setLastSavedText('');
     setTimeRemainingSeconds(durationSec);
     setInitialTimeSeconds(durationSec);
@@ -1457,7 +1517,27 @@ export default function App() {
     setIsSummaryDrawerOpen(false);
     setIsSubmitModalOpen(false);
     setPreStartModalOpen(false);
+    setIsEquipmentCheckOpen(false);
     setCurrentScreen('exam');
+  };
+
+  // Launch fresh exam/practice session from the Pre-Start Modal (checks equipment first if Listening/Speaking is included)
+  const handleConfirmLaunchFromPreStart = () => {
+    const hasAudioOrMicNeed =
+      examMode === 'exam'
+        ? examSkillsSelected.listening || examSkillsSelected.speaking
+        : selectedPartsForSession.some((p) => p.startsWith('L') || p.startsWith('S'));
+
+    const alreadyCheckedInSession =
+      sessionStorage.getItem('vstep_equipment_checked') === 'true';
+
+    if (hasAudioOrMicNeed && !alreadyCheckedInSession) {
+      setPreStartModalOpen(false);
+      setIsEquipmentCheckOpen(true);
+      return;
+    }
+
+    executeLaunchExamRoom();
   };
 
   // Fix "Thi lại" button so it switches to 'selection' screen and opens Pre-Start Setup Modal (Item 2)
@@ -1583,6 +1663,18 @@ export default function App() {
         [qId]: value,
       }));
 
+      // Record wrong answer into Mistake Notebook immediately in Practice Mode
+      if (!isCorrect && qObj) {
+        recordSingleMistake({
+          uid: currentUser?.uid || 'guest',
+          testId: selectedTestId,
+          testTitle: activeTestMetadata.title,
+          question: qObj,
+          allQuestionsInTest: activeExamQuestions,
+          userAnswer: value,
+        });
+      }
+
       // Immediately and silently save to Cloud Firestore and localStorage (no UI interruption)
       savePracticeAnswerImmediately(
         currentUser?.uid || 'guest',
@@ -1660,6 +1752,114 @@ export default function App() {
     }
   };
 
+  // Exam Room Keyboard Shortcuts: 1-4 / A-D (select option), F (flag question), Left/Right (navigate), Space (play/pause audio)
+  useEffect(() => {
+    if (
+      currentScreen !== 'exam' ||
+      isPaused ||
+      isSubmitModalOpen ||
+      isTimeUpModalOpen ||
+      isFeedbackModalOpen
+    ) {
+      return;
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (
+          tag === 'INPUT' ||
+          tag === 'TEXTAREA' ||
+          tag === 'SELECT' ||
+          target.isContentEditable
+        ) {
+          return;
+        }
+      }
+
+      if (currentGroup.type !== 'questions' || currentQuestions.length === 0) return;
+
+      const activeQ =
+        currentQuestions.find((q) => q.id === activeQuestionId) || currentQuestions[0];
+
+      // Space: Toggle Listening Audio Play/Pause
+      if (e.code === 'Space' && currentGroup.section === 'LISTENING') {
+        e.preventDefault();
+        examAudioManager.togglePlay();
+        return;
+      }
+
+      // F: Toggle Flag on active question
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        if (activeQ) {
+          handleToggleFlag(activeQ.id);
+        }
+        return;
+      }
+
+      // 1-4 or A-D: Select MCQ Option for active question (respects Practice Mode anti-cheat lock inside handleAnswerChange)
+      const upperKey = e.key.toUpperCase();
+      let optIndex = -1;
+      if (upperKey === '1' || upperKey === 'A') optIndex = 0;
+      else if (upperKey === '2' || upperKey === 'B') optIndex = 1;
+      else if (upperKey === '3' || upperKey === 'C') optIndex = 2;
+      else if (upperKey === '4' || upperKey === 'D') optIndex = 3;
+
+      if (optIndex !== -1 && activeQ && activeQ.options && activeQ.options[optIndex]) {
+        e.preventDefault();
+        handleAnswerChange(activeQ.id, activeQ.options[optIndex].id);
+        return;
+      }
+
+      // ArrowRight / ArrowLeft: Move to next/previous question in active part (or next/prev group)
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        const partQs = currentPartQuestionsForFooter;
+        const currIdx = partQs.findIndex((q) => q.id === activeQuestionId);
+        if (currIdx !== -1 && currIdx < partQs.length - 1) {
+          const nextQ = partQs[currIdx + 1];
+          handleSelectQuestionFromSummary(nextQ.id);
+        } else if (currentGroupIndex < activeQuestionGroups.length - 1) {
+          handleNextGroup();
+        }
+        return;
+      }
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const partQs = currentPartQuestionsForFooter;
+        const currIdx = partQs.findIndex((q) => q.id === activeQuestionId);
+        if (currIdx > 0) {
+          const prevQ = partQs[currIdx - 1];
+          handleSelectQuestionFromSummary(prevQ.id);
+        } else if (currentGroupIndex > 0) {
+          handlePrevGroup();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    currentScreen,
+    isPaused,
+    isSubmitModalOpen,
+    isTimeUpModalOpen,
+    isFeedbackModalOpen,
+    currentGroup,
+    currentQuestions,
+    activeQuestionId,
+    currentGroupIndex,
+    activeQuestionGroups.length,
+    currentPartQuestionsForFooter,
+    examMode,
+    answers,
+    flagged,
+  ]);
+
   // Submit and save attempt to Firestore
   const submitExamAndSave = (guestInfo?: { name?: string; email?: string }) => {
     examAudioManager.pause();
@@ -1715,7 +1915,16 @@ export default function App() {
     const newAttemptId = `attempt-${Date.now()}`;
     setActiveAttemptId(newAttemptId);
     setActiveWritingAiEval(undefined);
+    setActiveSpeakingAiEval(undefined);
     setActiveAiDiagnostic(null);
+    setIsTabWarningModalOpen(false);
+    try {
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
+    } catch {
+      // Ignore
+    }
 
     // Load any existing practice audit logs for this test to store cross-reference log
     const localPracticeAuditKey = `langcert_practice_audit_${currentUser?.uid || 'guest'}_${selectedTestId}`;
@@ -1743,6 +1952,7 @@ export default function App() {
       speakingScore: speakingBand10,
       timeSpentSeconds: elapsedSeconds,
       totalPausedSeconds,
+      tabSwitchCount: tabSwitchCount > 0 ? tabSwitchCount : undefined,
       completedAt: Date.now(),
       answers: { ...answers },
       writingSubmission: { ...writingSubmission },
@@ -1754,6 +1964,14 @@ export default function App() {
 
     recordUserAttempt(currentUser?.uid || 'guest', attempt, guestInfo).catch((err) => {
       console.warn('Could not record attempt to Firestore:', err);
+    });
+    recordMistakesFromAttempt({
+      uid: currentUser?.uid || 'guest',
+      testId: selectedTestId,
+      testTitle: activeTestMetadata.title,
+      questions: activeExamQuestions,
+      answers,
+      selectedParts: selectedPartsForSession,
     });
     recordStudyActivity(`Hoàn thành đề: ${activeTestMetadata.title}`, currentUser?.uid);
 
@@ -2100,6 +2318,7 @@ export default function App() {
           onDeleteCustomTest={handleDeleteAnyTest}
           inProgressMap={inProgressMap}
           completedScoresMap={completedScoresMap}
+          customQuestionsMap={customQuestionsMap}
         />
 
         {/* Pre-Start Part & Timer Configuration Modal (Item 15 & 16) */}
@@ -2326,6 +2545,26 @@ export default function App() {
                       </div>
                     </button>
                   </div>
+
+                  {/* Strict Fullscreen & Tab-Switch Proctoring Toggle */}
+                  <div className="mt-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/70 p-3.5 flex items-center justify-between gap-3">
+                    <label className="flex items-start gap-2.5 cursor-pointer select-none flex-1">
+                      <input
+                        type="checkbox"
+                        checked={strictExamMode}
+                        onChange={(e) => setStrictExamMode(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded accent-[#58CC02]"
+                      />
+                      <div>
+                        <span className="block text-xs font-black text-slate-900 dark:text-white">
+                          Chế độ Phòng thi nghiêm ngặt (Toàn màn hình &amp; Cảnh báo chuyển tab)
+                        </span>
+                        <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
+                          Tự động mở Fullscreen và phát cảnh báo nhắc nhở nếu thí sinh rời khỏi cửa sổ bài thi.
+                        </span>
+                      </div>
+                    </label>
+                  </div>
                 </div>
               ) : (
                 <>
@@ -2483,30 +2722,75 @@ export default function App() {
               )}
 
               {/* Modal Actions */}
-              <div className="mt-6 pt-4 border-t-2 border-[#F0F0F0] dark:border-slate-800 flex items-center justify-end gap-3">
+              <div className="mt-6 pt-4 border-t-2 border-[#F0F0F0] dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
                 <button
                   type="button"
-                  onClick={() => setPreStartModalOpen(false)}
-                  className="btn-duo-white px-5 py-3 rounded-2xl text-xs sm:text-sm font-black cursor-pointer"
+                  onClick={() => {
+                    setPreStartModalOpen(false);
+                    setIsEquipmentCheckOpen(true);
+                  }}
+                  className="btn-duo-white px-4 py-2.5 rounded-2xl text-xs font-black text-[#1899D6] flex items-center gap-1.5 cursor-pointer"
                 >
-                  Đóng lại
+                  <Headphones className="h-4 w-4 text-[#1CB0F6]" />
+                  <span>Kiểm tra Tai nghe &amp; Micro</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmLaunchFromPreStart}
-                  className={`${
-                    examMode === 'exam' ? 'btn-duo-green' : 'btn-duo-blue'
-                  } px-6 py-3 rounded-2xl text-xs sm:text-sm font-black flex items-center gap-2 cursor-pointer`}
-                >
-                  <Play className="h-4 w-4 fill-white" />
-                  <span>
-                    {examMode === 'exam' ? 'Vào phòng Thi thử ngay' : 'Bắt đầu Luyện tập ngay'}
-                  </span>
-                </button>
+
+                <div className="flex items-center gap-3 ml-auto">
+                  <button
+                    type="button"
+                    onClick={() => setPreStartModalOpen(false)}
+                    className="btn-duo-white px-5 py-3 rounded-2xl text-xs sm:text-sm font-black cursor-pointer"
+                  >
+                    Đóng lại
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmLaunchFromPreStart}
+                    className={`${
+                      examMode === 'exam' ? 'btn-duo-green' : 'btn-duo-blue'
+                    } px-6 py-3 rounded-2xl text-xs sm:text-sm font-black flex items-center gap-2 cursor-pointer`}
+                  >
+                    <Play className="h-4 w-4 fill-white" />
+                    <span>
+                      {examMode === 'exam' ? 'Vào phòng Thi thử ngay' : 'Bắt đầu Luyện tập ngay'}
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         )}
+
+        {/* Pre-Exam Equipment Check Modal (Headphones & Microphone Verification) */}
+        <EquipmentCheckModal
+          isOpen={isEquipmentCheckOpen}
+          testTitle={pendingTestObj.title}
+          mode={examMode}
+          needsListening={
+            examMode === 'exam'
+              ? examSkillsSelected.listening
+              : selectedPartsForSession.some((p) => p.startsWith('L'))
+          }
+          needsSpeaking={
+            examMode === 'exam'
+              ? examSkillsSelected.speaking
+              : selectedPartsForSession.some((p) => p.startsWith('S'))
+          }
+          onClose={() => {
+            setIsEquipmentCheckOpen(false);
+            setPreStartModalOpen(true);
+          }}
+          onConfirmEnterRoom={(skipFutureChecksInSession) => {
+            if (skipFutureChecksInSession) {
+              try {
+                sessionStorage.setItem('vstep_equipment_checked', 'true');
+              } catch {
+                // Ignore
+              }
+            }
+            executeLaunchExamRoom();
+          }}
+        />
 
         {/* AI PDF Extraction Modal */}
         <AiPdfUploadModal
@@ -2622,6 +2906,30 @@ export default function App() {
           speakingSubmission={hasSpeakingInSession ? speakingSubmission : undefined}
           speakingTasks={activeTestMetadata.speakingTasks || SAMPLE_VSTEP_SPEAKING_TASKS}
           speakingScores={speakingScores}
+          initialSpeakingEvaluation={activeSpeakingAiEval}
+          onSpeakingGraded={(scores, fullEvaluation) => {
+            if (fullEvaluation) {
+              setActiveSpeakingAiEval(fullEvaluation);
+            }
+            if (activeAttemptId) {
+              const recalc = calculateExamResults(
+                activeExamQuestions,
+                answers,
+                elapsedSeconds,
+                writingScores,
+                scores
+              );
+              updateAttemptAiEvaluationInFirestore(
+                currentUser?.uid || 'guest',
+                activeAttemptId,
+                {
+                  speakingScore: scores.overallBand10,
+                  vstepBandScore: Number((recalc.overallPercentage / 10).toFixed(1)),
+                  aiSpeakingEvaluation: fullEvaluation,
+                }
+              ).catch(() => {});
+            }
+          }}
           initialAiDiagnostic={activeAiDiagnostic}
           onAiDiagnosticGenerated={(report) => {
             setActiveAiDiagnostic(report);
@@ -2671,6 +2979,10 @@ export default function App() {
           subInstruction={currentGroup.subInstruction}
           currentPromptAudioScript={activePromptAudioScript}
           mode={examMode}
+          strictProctoring={strictExamMode}
+          isFullscreen={isFullscreen}
+          tabSwitchCount={tabSwitchCount}
+          onToggleFullscreen={handleToggleFullscreen}
           showAudioPlayer={currentGroup.section === 'LISTENING' && currentGroup.type !== 'transition'}
           onToggleMode={() => setExamMode((prev) => (prev === 'exam' ? 'practice' : 'exam'))}
           onSubmitClick={() => setIsSubmitModalOpen(true)}
@@ -2728,6 +3040,7 @@ export default function App() {
             <WritingSectionStage
               submission={writingSubmission}
               onChange={setWritingSubmission}
+              mode={examMode}
               onProceedToReview={() => {
                 const hasSpeakingNext = activeQuestionGroups.some((g) => g.type === 'speaking');
                 if (hasSpeakingNext && currentGroupIndex < activeQuestionGroups.length - 1) {
@@ -2811,6 +3124,7 @@ export default function App() {
           flagged={flagged}
           isPracticeMode={examMode === 'practice'}
           onSelectQuestion={handleSelectQuestionFromSummary}
+          onToggleFlag={handleToggleFlag}
           activeWritingTaskIndex={activeWritingTaskIndex}
           writingSubmission={
             selectedPartsForSession.includes('W1') || selectedPartsForSession.includes('W2')
@@ -2952,10 +3266,53 @@ export default function App() {
         </div>
       )}
 
+      {/* TAB-SWITCH PROCTORING WARNING MODAL */}
+      {isTabWarningModalOpen && (
+        <div className="fixed inset-0 z-[96] flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 p-7 text-center shadow-2xl border-2 border-[#FF9600] border-b-8 border-b-[#E58700] space-y-4">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFF4E5] dark:bg-amber-950 text-[#FF9600] border-2 border-[#FF9600] border-b-4 border-b-[#E58700]">
+              <AlertTriangle className="h-8 w-8" />
+            </div>
+            <div>
+              <span className="inline-block rounded-lg bg-rose-100 dark:bg-rose-950/80 px-2.5 py-0.5 text-[11px] font-black text-[#EA2B2B] dark:text-rose-300 uppercase tracking-wider">
+                Cảnh báo Giám sát Phòng thi · Lần #{tabSwitchCount}
+              </span>
+              <h3 className="mt-2 text-xl font-black text-slate-900 dark:text-white">
+                Phát hiện rời khỏi cửa sổ bài thi!
+              </h3>
+              <p className="mt-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 leading-relaxed">
+                Trong kỳ thi VSTEP thực tế trên máy tính, việc chuyển tab hoặc thoát chế độ Toàn màn hình sẽ bị hệ thống giám sát ghi nhận. Bài làm hiện tại của bạn đã được tự động sao lưu an toàn.
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsTabWarningModalOpen(false);
+                  try {
+                    if (!document.fullscreenElement) {
+                      document.documentElement.requestFullscreen?.().catch(() => {});
+                    }
+                  } catch {
+                    // Ignore
+                  }
+                }}
+                className="btn-duo-green w-full py-3 rounded-2xl text-xs sm:text-sm font-black cursor-pointer"
+              >
+                Quay lại làm bài &amp; Bật Toàn màn hình
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Submit Confirmation Dialog (Matches image_6294e89d.png) */}
       <SubmitModal
         isOpen={isSubmitModalOpen}
         timeRemainingSeconds={isTimedSession ? timeRemainingSeconds : elapsedSeconds}
+        flaggedCount={Object.values(flagged).filter(Boolean).length}
+        unansweredCount={Math.max(0, activeExamQuestions.length - answeredCount)}
+        totalQuestions={activeExamQuestions.length}
         onContinue={() => setIsSubmitModalOpen(false)}
         onSubmit={handleConfirmSubmit}
       />

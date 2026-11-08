@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, BookOpen, Headphones, FileText, Trophy, BookmarkCheck } from 'lucide-react';
+import { Home, BookOpen, Headphones, FileText, Trophy, BookmarkCheck, RotateCcw, PenTool } from 'lucide-react';
 import { NavTabType } from './Sidebar';
 
 interface MobileBottomNavProps {
@@ -16,6 +16,8 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
     { id: 'tests' as NavTabType, label: 'Luyện đề', icon: BookOpen, color: 'text-[#58CC02]' },
     { id: 'listening' as NavTabType, label: 'Nghe', icon: Headphones, color: 'text-[#1CB0F6]' },
     { id: 'reading' as NavTabType, label: 'Đọc', icon: FileText, color: 'text-[#FF9600]' },
+    { id: 'writing_speaking' as NavTabType, label: 'Viết & Nói', icon: PenTool, color: 'text-[#CE82FF]' },
+    { id: 'mistakes' as NavTabType, label: 'Câu sai', icon: RotateCcw, color: 'text-[#FF4B4B]' },
     { id: 'vocab' as NavTabType, label: 'Từ vựng', icon: BookmarkCheck, color: 'text-[#CE82FF]' },
     { id: 'leaderboard' as NavTabType, label: 'Xếp hạng', icon: Trophy, color: 'text-[#FFC800]' },
   ];

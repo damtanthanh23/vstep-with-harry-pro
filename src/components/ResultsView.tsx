@@ -78,12 +78,16 @@ interface ResultsViewProps {
     part3Score: number;
     overallBand10: number;
   };
-  onSpeakingGraded?: (scores: {
-    part1Score: number;
-    part2Score: number;
-    part3Score: number;
-    overallBand10: number;
-  }) => void;
+  initialSpeakingEvaluation?: DetailedSpeakingEvaluation;
+  onSpeakingGraded?: (
+    scores: {
+      part1Score: number;
+      part2Score: number;
+      part3Score: number;
+      overallBand10: number;
+    },
+    fullEvaluation?: DetailedSpeakingEvaluation
+  ) => void;
   initialAiDiagnostic?: AIDiagnosticData | null;
   onAiDiagnosticGenerated?: (report: AIDiagnosticData) => void;
   onRetake: () => void;
@@ -145,6 +149,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   speakingSubmission,
   speakingTasks = SAMPLE_VSTEP_SPEAKING_TASKS,
   speakingScores,
+  initialSpeakingEvaluation,
+  onSpeakingGraded,
   initialAiDiagnostic,
   onAiDiagnosticGenerated,
   onRetake,
@@ -158,6 +164,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
   // Sub-style for Certificate tab: 'certificate' (Trang trọng) vs 'report' (Phiếu điểm chi tiết)
   const [certStyle, setCertStyle] = useState<'certificate' | 'report'>('certificate');
+  const [includeDetailedAppendixInPrint, setIncludeDetailedAppendixInPrint] = useState<boolean>(true);
 
   // Review mode states
   const [reviewDisplayMode, setReviewDisplayMode] = useState<'interactive' | 'list'>('interactive');
@@ -181,8 +188,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
   // Strict Speaking Evaluation State (VSTEP 5-criteria rubric on 10-point scale)
   const [speakingEvaluation, setSpeakingEvaluation] = useState<DetailedSpeakingEvaluation>(() =>
-    evaluateSpeakingStrictRubric(speakingSubmission, speakingTasks)
+    initialSpeakingEvaluation || evaluateSpeakingStrictRubric(speakingSubmission, speakingTasks)
   );
+  const [isGradingSpeakingAi, setIsGradingSpeakingAi] = useState(false);
 
   // Keep deterministic rubric in sync if writingSubmission or speakingSubmission changes
   useEffect(() => {
@@ -195,9 +203,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   }, [writingSubmission, writingTasks, initialWritingEvaluation]);
 
   useEffect(() => {
+    if (initialSpeakingEvaluation) {
+      setSpeakingEvaluation(initialSpeakingEvaluation);
+      return;
+    }
     const baseSpeakEval = evaluateSpeakingStrictRubric(speakingSubmission, speakingTasks);
     setSpeakingEvaluation(baseSpeakEval);
-  }, [speakingSubmission, speakingTasks]);
+  }, [speakingSubmission, speakingTasks, initialSpeakingEvaluation]);
 
   const handleTriggerAiWritingGrader = async () => {
     if (!writingSubmission) return;
@@ -241,14 +253,69 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
     }
   };
 
-  // Automatically invoke AI Writing Examiner on mount if candidate submitted writing text and not already graded
+  const handleTriggerAiSpeakingGrader = async () => {
+    if (!speakingSubmission) return;
+    const hasSpeechText =
+      speakingSubmission.part1Text.trim().length > 0 ||
+      speakingSubmission.part2Text.trim().length > 0 ||
+      speakingSubmission.part3Text.trim().length > 0;
+    if (!hasSpeechText) return;
+
+    setIsGradingSpeakingAi(true);
+    try {
+      const response = await fetch('/api/ai/grade-speaking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          speakingSubmission,
+          speakingTasks,
+        }),
+      });
+      if (response.ok) {
+        const aiSpeakEval: DetailedSpeakingEvaluation = await response.json();
+        if (
+          typeof aiSpeakEval.overallBand10 === 'number' &&
+          aiSpeakEval.part1Criteria &&
+          aiSpeakEval.part2Criteria &&
+          aiSpeakEval.part3Criteria
+        ) {
+          setSpeakingEvaluation(aiSpeakEval);
+          onSpeakingGraded?.(
+            {
+              part1Score: aiSpeakEval.part1Score,
+              part2Score: aiSpeakEval.part2Score,
+              part3Score: aiSpeakEval.part3Score,
+              overallBand10: aiSpeakEval.overallBand10,
+            },
+            aiSpeakEval
+          );
+        }
+      }
+    } catch (err) {
+      console.warn('AI Speaking Examiner fallback to strict deterministic rubric:', err);
+    } finally {
+      setIsGradingSpeakingAi(false);
+    }
+  };
+
+  // Automatically invoke AI Writing & Speaking Examiners on mount if candidate submitted text
   useEffect(() => {
-    if (!writingSubmission || initialWritingEvaluation) return;
-    const hasEssay =
-      writingSubmission.task1Text.trim().length > 0 ||
-      writingSubmission.task2Text.trim().length > 0;
-    if (hasEssay) {
-      handleTriggerAiWritingGrader();
+    if (writingSubmission && !initialWritingEvaluation) {
+      const hasEssay =
+        writingSubmission.task1Text.trim().length > 0 ||
+        writingSubmission.task2Text.trim().length > 0;
+      if (hasEssay) {
+        handleTriggerAiWritingGrader();
+      }
+    }
+    if (speakingSubmission && !initialSpeakingEvaluation) {
+      const hasSpeechText =
+        speakingSubmission.part1Text.trim().length > 0 ||
+        speakingSubmission.part2Text.trim().length > 0 ||
+        speakingSubmission.part3Text.trim().length > 0;
+      if (hasSpeechText) {
+        handleTriggerAiSpeakingGrader();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -476,25 +543,27 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
     window.print();
   };
 
-  // Trigger Gemini AI Diagnostic
+  // Trigger Gemini AI Diagnostic (Standardized to VSTEP 10-point scale)
   const handleRequestAiDiagnostic = async () => {
     setIsAiLoading(true);
     setAiError(null);
+    const diagPayload = {
+      totalScore: results.overallScore10,
+      maxScore: 10,
+      cefrLevel: results.cefr.name,
+      grade: results.grade,
+      listeningScaled: results.listeningScore10,
+      readingScaled: results.readingScore10,
+      writingScaled: results.writingScore10,
+      speakingScaled: results.speakingScore10,
+      partsBreakdown: results.parts,
+      writingSubmission,
+    };
     try {
       const response = await fetch('/api/ai/diagnostic', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          totalScore: results.totalScaledScore,
-          maxScore: results.maxScaledScore,
-          cefrLevel: results.cefr.name,
-          grade: results.grade,
-          listeningScaled: results.listening.scaledScore,
-          readingScaled: results.reading.scaledScore,
-          writingScaled: results.writing?.scaledScore,
-          partsBreakdown: results.parts,
-          writingSubmission,
-        }),
+        body: JSON.stringify(diagPayload),
       });
 
       if (response.ok) {
@@ -504,32 +573,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
         return;
       }
 
-      const fallbackData = generateSmartDiagnosticReport({
-        totalScore: results.totalScaledScore,
-        maxScore: results.maxScaledScore,
-        cefrLevel: results.cefr.name,
-        grade: results.grade,
-        listeningScaled: results.listening.scaledScore,
-        readingScaled: results.reading.scaledScore,
-        writingScaled: results.writing?.scaledScore,
-        partsBreakdown: results.parts,
-        writingSubmission,
-      });
+      const fallbackData = generateSmartDiagnosticReport(diagPayload);
       setAiData(fallbackData);
       onAiDiagnosticGenerated?.(fallbackData);
     } catch (err: unknown) {
       console.warn('Network issue reaching server AI, falling back to smart diagnostic engine:', err);
-      const fallbackData = generateSmartDiagnosticReport({
-        totalScore: results.totalScaledScore,
-        maxScore: results.maxScaledScore,
-        cefrLevel: results.cefr.name,
-        grade: results.grade,
-        listeningScaled: results.listening.scaledScore,
-        readingScaled: results.reading.scaledScore,
-        writingScaled: results.writing?.scaledScore,
-        partsBreakdown: results.parts,
-        writingSubmission,
-      });
+      const fallbackData = generateSmartDiagnosticReport(diagPayload);
       setAiData(fallbackData);
       onAiDiagnosticGenerated?.(fallbackData);
     } finally {
@@ -588,6 +637,25 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                 <span className="hidden sm:inline">Góp ý đề</span>
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => {
+                if (activeMainTab !== 'certificate') {
+                  setActiveMainTab('certificate');
+                  window.setTimeout(() => {
+                    handlePrint();
+                  }, 120);
+                } else {
+                  handlePrint();
+                }
+              }}
+              className="btn-duo-blue px-3.5 py-2 rounded-2xl text-xs flex items-center gap-1.5"
+              title="In trực tiếp hoặc Xuất file PDF Phiếu Điểm VSTEP 4 Kỹ Năng & Phụ lục sửa bài AI"
+            >
+              <Printer className="h-4 w-4" />
+              <span>In Phiếu Điểm / PDF</span>
+            </button>
 
             <button
               type="button"
@@ -710,21 +778,31 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2.5">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-extrabold text-slate-700 dark:text-slate-200 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={includeDetailedAppendixInPrint}
+                    onChange={(e) => setIncludeDetailedAppendixInPrint(e.target.checked)}
+                    className="h-4 w-4 rounded accent-[#58CC02] cursor-pointer"
+                  />
+                  <span>In kèm Phụ lục Sửa bài AI &amp; Câu sai</span>
+                </label>
+
                 <button
                   type="button"
                   onClick={handlePrint}
-                  className="btn-duo-blue px-4 py-2 rounded-2xl text-xs"
-                  title="In trực tiếp hoặc Lưu dưới dạng file PDF"
+                  className="btn-duo-blue px-4 py-2 rounded-2xl text-xs flex items-center gap-1.5"
+                  title="In trực tiếp hoặc Lưu dưới dạng file PDF (Bao gồm Chứng chỉ/Phiếu điểm và Phụ lục sửa bài)"
                 >
                   <Printer className="h-4 w-4" />
-                  <span>In / Lưu PDF Chứng Chỉ</span>
+                  <span>In / Xuất PDF Báo Cáo</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setActiveMainTab('analytics')}
-                  className="btn-duo-green px-4 py-2 rounded-2xl text-xs"
+                  className="btn-duo-green px-4 py-2 rounded-2xl text-xs flex items-center gap-1.5"
                 >
                   <BarChart3 className="h-4 w-4" />
                   <span>Xem Phân Tích Điểm</span>
@@ -1218,6 +1296,276 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* ========================================================= */}
+              {/* PRINTABLE DETAILED CORRECTION APPENDIX (WRITING/SPEAKING  */}
+              {/* AI RUBRIC + WRONG ANSWER EXPLANATIONS)                    */}
+              {/* ========================================================= */}
+              {includeDetailedAppendixInPrint && (
+                <div className="mx-auto max-w-4xl mt-6 rounded-3xl bg-white text-slate-900 shadow-xl border-2 border-slate-300 p-6 sm:p-8 space-y-6 print-page-break">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-slate-200 pb-4">
+                    <div>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-lime-100 text-lime-800 text-[10px] font-black uppercase tracking-wider">
+                        Phụ lục học thuật đính kèm khi In / Xuất PDF
+                      </span>
+                      <h3 className="text-lg sm:text-xl font-black text-slate-900 mt-1">
+                        BÁO CÁO CHẤM CHỮA CHI TIẾT &amp; GIẢI THÍCH CÂU SAI ({testTitle})
+                      </h3>
+                    </div>
+                    <div className="text-right text-xs font-bold text-slate-500">
+                      <div>Học viên: <strong className="text-slate-800">{candidateName}</strong></div>
+                      <div>Ngày xuất báo cáo: {examDateStr}</div>
+                    </div>
+                  </div>
+
+                  {/* 1. Writing Evaluation Summary in Appendix */}
+                  {writingSubmission &&
+                    (writingSubmission.task1WordCount > 0 || writingSubmission.task2WordCount > 0) && (
+                      <div className="space-y-3">
+                        <h4 className="text-xs font-black uppercase tracking-wider text-purple-800 bg-purple-50 px-3 py-2 rounded-xl border border-purple-200 flex items-center justify-between">
+                          <span>1. Nhận xét &amp; Sửa bài Kỹ năng Viết (Writing Task 1 &amp; Task 2)</span>
+                          <span>Điểm Writing: {(results.writingScore10 ?? 0).toFixed(2)} / 10.0</span>
+                        </h4>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                          <div className="rounded-2xl border border-slate-200 p-4 space-y-2 bg-slate-50/50">
+                            <div className="flex items-center justify-between font-black text-slate-900">
+                              <span>Task 1 (Thư / Email · {writingSubmission.task1WordCount} từ)</span>
+                              <span className="text-purple-700 font-mono">
+                                {writingEvaluation.task1Score} / {writingTasks[0]?.marks || 12} điểm
+                              </span>
+                            </div>
+                            <p className="text-slate-700 leading-relaxed font-medium">
+                              {writingEvaluation.task1Criteria.feedbackVi}
+                            </p>
+                            {writingEvaluation.task1Criteria.strengthsVi &&
+                              writingEvaluation.task1Criteria.strengthsVi.length > 0 && (
+                                <div>
+                                  <strong className="text-emerald-700 block">Điểm mạnh:</strong>
+                                  <ul className="list-disc list-inside text-slate-600 space-y-0.5">
+                                    {writingEvaluation.task1Criteria.strengthsVi.map(
+                                      (s: string, idx: number) => (
+                                        <li key={idx}>{s}</li>
+                                      )
+                                    )}
+                                  </ul>
+                                </div>
+                              )}
+                            {writingEvaluation.task1Criteria.improvementsVi &&
+                              writingEvaluation.task1Criteria.improvementsVi.length > 0 && (
+                                <div>
+                                  <strong className="text-amber-700 block">Cần khắc phục:</strong>
+                                  <ul className="list-disc list-inside text-slate-600 space-y-0.5">
+                                    {writingEvaluation.task1Criteria.improvementsVi.map(
+                                      (s: string, idx: number) => (
+                                        <li key={idx}>{s}</li>
+                                      )
+                                    )}
+                                  </ul>
+                                </div>
+                              )}
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 p-4 space-y-2 bg-slate-50/50">
+                            <div className="flex items-center justify-between font-black text-slate-900">
+                              <span>Task 2 (Bài luận Essay · {writingSubmission.task2WordCount} từ)</span>
+                              <span className="text-purple-700 font-mono">
+                                {writingEvaluation.task2Score} / {writingTasks[1]?.marks || 12} điểm
+                              </span>
+                            </div>
+                            <p className="text-slate-700 leading-relaxed font-medium">
+                              {writingEvaluation.task2Criteria.feedbackVi}
+                            </p>
+                            {writingEvaluation.task2Criteria.strengthsVi &&
+                              writingEvaluation.task2Criteria.strengthsVi.length > 0 && (
+                                <div>
+                                  <strong className="text-emerald-700 block">Điểm mạnh:</strong>
+                                  <ul className="list-disc list-inside text-slate-600 space-y-0.5">
+                                    {writingEvaluation.task2Criteria.strengthsVi.map(
+                                      (s: string, idx: number) => (
+                                        <li key={idx}>{s}</li>
+                                      )
+                                    )}
+                                  </ul>
+                                </div>
+                              )}
+                            {writingEvaluation.task2Criteria.improvementsVi &&
+                              writingEvaluation.task2Criteria.improvementsVi.length > 0 && (
+                                <div>
+                                  <strong className="text-amber-700 block">Cần khắc phục:</strong>
+                                  <ul className="list-disc list-inside text-slate-600 space-y-0.5">
+                                    {writingEvaluation.task2Criteria.improvementsVi.map(
+                                      (s: string, idx: number) => (
+                                        <li key={idx}>{s}</li>
+                                      )
+                                    )}
+                                  </ul>
+                                </div>
+                              )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                  {/* 2. Speaking Evaluation Summary in Appendix */}
+                  {speakingSubmission &&
+                    (speakingSubmission.part1WordCount > 0 ||
+                      speakingSubmission.part2WordCount > 0 ||
+                      speakingSubmission.part3WordCount > 0) && (
+                      <div className="space-y-3">
+                        <h4 className="text-xs font-black uppercase tracking-wider text-rose-800 bg-rose-50 px-3 py-2 rounded-xl border border-rose-200 flex items-center justify-between">
+                          <span>2. Nhận xét &amp; Sửa bài Kỹ năng Nói (Speaking Part 1, 2 &amp; 3)</span>
+                          <span>Điểm Speaking: {(results.speakingScore10 ?? 0).toFixed(2)} / 10.0</span>
+                        </h4>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                          <div className="rounded-2xl border border-slate-200 p-3.5 space-y-1.5 bg-slate-50/50">
+                            <div className="flex items-center justify-between font-black text-slate-900">
+                              <span>Part 1 (Social)</span>
+                              <span className="text-rose-600 font-mono">
+                                {speakingEvaluation.part1Score.toFixed(1)}/10
+                              </span>
+                            </div>
+                            <p className="text-slate-600 leading-relaxed">
+                              {speakingEvaluation.part1Criteria.feedbackVi}
+                            </p>
+                          </div>
+                          <div className="rounded-2xl border border-slate-200 p-3.5 space-y-1.5 bg-slate-50/50">
+                            <div className="flex items-center justify-between font-black text-slate-900">
+                              <span>Part 2 (Solution)</span>
+                              <span className="text-rose-600 font-mono">
+                                {speakingEvaluation.part2Score.toFixed(1)}/10
+                              </span>
+                            </div>
+                            <p className="text-slate-600 leading-relaxed">
+                              {speakingEvaluation.part2Criteria.feedbackVi}
+                            </p>
+                          </div>
+                          <div className="rounded-2xl border border-slate-200 p-3.5 space-y-1.5 bg-slate-50/50">
+                            <div className="flex items-center justify-between font-black text-slate-900">
+                              <span>Part 3 (Mind-map)</span>
+                              <span className="text-rose-600 font-mono">
+                                {speakingEvaluation.part3Score.toFixed(1)}/10
+                              </span>
+                            </div>
+                            <p className="text-slate-600 leading-relaxed">
+                              {speakingEvaluation.part3Criteria.feedbackVi}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                  {/* 2B. AI Diagnostic Study Plan Summary in Printable Appendix */}
+                  {aiData && (
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-emerald-800 bg-emerald-50 px-3 py-2 rounded-xl border border-emerald-200 flex items-center justify-between">
+                        <span>Chẩn đoán Năng lực &amp; Lộ trình Ôn tập Cá nhân hóa (AI Tutor)</span>
+                        <span>Mục tiêu VSTEP B1–B2–C1</span>
+                      </h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                        {Array.isArray(aiData.strengths) && aiData.strengths.length > 0 && (
+                          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-3.5 space-y-1">
+                            <strong className="text-emerald-800 block font-black">
+                              Điểm mạnh nổi bật:
+                            </strong>
+                            <ul className="list-disc list-inside text-slate-700 space-y-0.5">
+                              {aiData.strengths.map((s, i) => (
+                                <li key={i}>{s}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {Array.isArray(aiData.weaknesses) && aiData.weaknesses.length > 0 && (
+                          <div className="rounded-2xl border border-amber-200 bg-amber-50/40 p-3.5 space-y-1">
+                            <strong className="text-amber-800 block font-black">
+                              Điểm nghẽn cần khắc phục:
+                            </strong>
+                            <ul className="list-disc list-inside text-slate-700 space-y-0.5">
+                              {aiData.weaknesses.map((w, i) => (
+                                <li key={i}>{w}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 3. Wrong / Unanswered Objective Questions Summary Table */}
+                  {(() => {
+                    const wrongQuestions = questions.filter((q) => !isQuestionCorrect(q));
+                    if (wrongQuestions.length === 0) {
+                      return (
+                        <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-4 text-xs font-bold text-emerald-800">
+                          Tuyệt vời! Bạn đã trả lời chính xác 100% các câu hỏi trắc nghiệm Nghe &amp; Đọc trong bài thi này.
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="space-y-3">
+                        <h4 className="text-xs font-black uppercase tracking-wider text-sky-900 bg-sky-50 px-3 py-2 rounded-xl border border-sky-200 flex items-center justify-between">
+                          <span>
+                            3. Tổng hợp {wrongQuestions.length} câu Trắc nghiệm Sai / Bỏ trống &amp; Giải thích
+                          </span>
+                          <span>
+                            Đúng: {questions.length - wrongQuestions.length}/{questions.length} câu
+                          </span>
+                        </h4>
+
+                        <div className="space-y-2.5">
+                          {wrongQuestions.slice(0, 35).map((wq) => {
+                            const userAns = (answers[wq.id] || '').trim();
+                            const correctStr = Array.isArray(wq.correctAnswer)
+                              ? wq.correctAnswer.join(' / ')
+                              : wq.correctAnswer;
+                            const correctOpt = wq.options?.find(
+                              (o) => o.id.toLowerCase() === String(correctStr).toLowerCase()
+                            );
+                            return (
+                              <div
+                                key={wq.id}
+                                className="rounded-xl border border-slate-200 p-3 text-xs bg-white space-y-1 break-inside-avoid"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="font-black text-slate-900">
+                                    [{wq.section === 'LISTENING' ? 'Nghe' : 'Đọc'} · Part {wq.partNumber} · Câu{' '}
+                                    {getPartRelativeNumber(wq.id, questions)}] {wq.prompt}
+                                  </span>
+                                  <div className="flex items-center gap-2 font-mono text-[11px]">
+                                    <span className="px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 font-bold">
+                                      Bạn chọn: {userAns ? userAns.toUpperCase() : 'Bỏ trống'}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-black">
+                                      Đáp án đúng: {String(correctStr).toUpperCase()}
+                                      {correctOpt ? ` (${correctOpt.text})` : ''}
+                                    </span>
+                                  </div>
+                                </div>
+                                {wq.evidenceQuote && (
+                                  <p className="text-[11px] italic text-amber-800 bg-amber-50/70 px-2.5 py-1 rounded border border-amber-200/80">
+                                    <strong>Trích dẫn bằng chứng:</strong> “{wq.evidenceQuote}”
+                                  </p>
+                                )}
+                                {wq.explanation && (
+                                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                                    <strong>Giải thích:</strong> {wq.explanation}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {wrongQuestions.length > 35 && (
+                            <p className="text-[11px] italic text-slate-500 text-center pt-1">
+                              (Hiển thị 35/{wrongQuestions.length} câu đầu tiên trong bản in nhanh — Xem toàn bộ tại tab "Xem Lại Chi Tiết Bài Làm")
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1572,9 +1920,19 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                         <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
                           Hội Đồng Chấm Speaking Theo Rubrics VSTEP Bộ GD&ĐT (5 Tiêu Chí · Thang 10)
                         </h3>
-                        <span className="inline-flex items-center gap-1 rounded-xl px-3 py-1 text-[10px] font-black uppercase tracking-wider bg-[#FFDADC] dark:bg-rose-950 text-[#EA2B2B] dark:text-rose-300 border-2 border-[#FF4B4B] border-b-3 border-b-[#EA2B2B]">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-xl px-3 py-1 text-[10px] font-black uppercase tracking-wider ${
+                            (speakingEvaluation as any).isAiGraded
+                              ? 'bg-[#D7FFB8] dark:bg-emerald-950 text-[#46A302] dark:text-emerald-300 border-2 border-[#58CC02] border-b-3 border-b-[#46A302]'
+                              : 'bg-[#FFDADC] dark:bg-rose-950 text-[#EA2B2B] dark:text-rose-300 border-2 border-[#FF4B4B] border-b-3 border-b-[#EA2B2B]'
+                          }`}
+                        >
                           <Sparkles className="h-3 w-3" />
-                          Chấm Tự Động Theo 5 Tiêu Chí VSTEP
+                          {isGradingSpeakingAi
+                            ? 'AI Giám khảo đang chấm...'
+                            : (speakingEvaluation as any).isAiGraded
+                            ? 'Đã chấm bởi AI Giám khảo VSTEP'
+                            : 'Chấm Tự Động Theo 5 Tiêu Chí VSTEP'}
                         </span>
                       </div>
                       <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-1">
@@ -1583,11 +1941,23 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="rounded-2xl bg-white dark:bg-slate-800 border-2 border-[#FF4B4B] dark:border-rose-700 border-b-4 border-b-[#EA2B2B] px-4 py-2 text-right">
-                    <span className="block text-[10px] font-black uppercase text-slate-400">Điểm Speaking VSTEP</span>
-                    <span className="font-mono text-sm font-black text-[#EA2B2B] dark:text-rose-300">
-                      {(results.speakingScore10 ?? speakingEvaluation.overallBand10).toFixed(1)} / 10.0
-                    </span>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="rounded-2xl bg-white dark:bg-slate-800 border-2 border-[#FF4B4B] dark:border-rose-700 border-b-4 border-b-[#EA2B2B] px-4 py-2 text-right">
+                      <span className="block text-[10px] font-black uppercase text-slate-400">Điểm Speaking VSTEP</span>
+                      <span className="font-mono text-sm font-black text-[#EA2B2B] dark:text-rose-300">
+                        {(results.speakingScore10 ?? speakingEvaluation.overallBand10).toFixed(1)} / 10.0
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={isGradingSpeakingAi}
+                      onClick={handleTriggerAiSpeakingGrader}
+                      className="btn-duo-green inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-xs font-black disabled:opacity-50 cursor-pointer"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${isGradingSpeakingAi ? 'animate-spin' : ''}`} />
+                      <span>{isGradingSpeakingAi ? 'Đang chấm...' : 'Chấm Speaking bằng AI'}</span>
+                    </button>
                   </div>
                 </div>
 

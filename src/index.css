@@ -213,3 +213,41 @@
   border-bottom-color: #020617;
 }
 
+/* ============================================================================
+   PRINT / PDF EXPORT OPTIMIZATION FOR VSTEP CERTIFICATE & SCORE REPORT
+   ============================================================================ */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide top bars, navigation tabs, and action buttons when printing */
+  button,
+  nav,
+  aside,
+  .no-print {
+    display: none !important;
+  }
+
+  .print-certificate-wrapper {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .print-page-break {
+    page-break-before: always;
+    break-before: page;
+  }
+}
+

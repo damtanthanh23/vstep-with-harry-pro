@@ -821,6 +821,7 @@ export async function updateAttemptAiEvaluationInFirestore(
     speakingScore?: number;
     vstepBandScore?: number;
     aiWritingEvaluation?: any;
+    aiSpeakingEvaluation?: any;
     aiDiagnosticReport?: any;
   }
 ): Promise<void> {
@@ -842,6 +843,9 @@ export async function updateAttemptAiEvaluationInFirestore(
                 ...(patch.vstepBandScore !== undefined ? { vstepBandScore: patch.vstepBandScore } : {}),
                 ...(patch.aiWritingEvaluation !== undefined
                   ? { aiWritingEvaluation: patch.aiWritingEvaluation }
+                  : {}),
+                ...(patch.aiSpeakingEvaluation !== undefined
+                  ? { aiSpeakingEvaluation: patch.aiSpeakingEvaluation }
                   : {}),
                 ...(patch.aiDiagnosticReport !== undefined
                   ? { aiDiagnosticReport: patch.aiDiagnosticReport }

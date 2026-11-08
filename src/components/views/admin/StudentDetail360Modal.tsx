@@ -64,7 +64,7 @@ import { computeVocabStatsFromPartition } from '../../../services/vocabCloudServ
 import { generateDefault15TopicDecks } from '../../../data/b1Official15TopicsData';
 import { getZodiacFromBirthDate } from '../ZodiacPixelMascot';
 import { resolvePlayableAudioUrl } from '../../../utils/audioStorageService';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 
 interface StudentDetail360ModalProps {
@@ -106,6 +106,7 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
     part2?: string;
     part3?: string;
   }>({});
+  const [studentMistakes, setStudentMistakes] = useState<any[]>([]);
   const [selectedRole, setSelectedRole] = useState<UserRole>(student.role || 'student');
   const [roleChangeNotice, setRoleChangeNotice] = useState<string | null>(null);
   const [isUpdatingRole, setIsUpdatingRole] = useState<boolean>(false);
@@ -185,6 +186,7 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
     setLiveVocabStats(student.vocabStats || null);
     setPersonalDecks([]);
     setPersonalFolders([]);
+    setStudentMistakes([]);
     setExpandedPersonalDeckId(null);
     setEditDisplayName(student.displayName || '');
     setEditNickname(student.nickname || '');
@@ -256,6 +258,18 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
       })
       .catch(() => {});
 
+    // Fetch student's Cloud Mistake Notebook (users/{uid}/vocab_state/mistakes_notebook)
+    getDoc(doc(db, 'users', student.uid, 'vocab_state', 'mistakes_notebook'))
+      .then((mSnap) => {
+        if (mSnap.exists()) {
+          const data = mSnap.data();
+          if (Array.isArray(data?.records)) {
+            setStudentMistakes(data.records);
+          }
+        }
+      })
+      .catch(() => {});
+
     return () => {
       unsubAttempts();
     };
@@ -284,6 +298,11 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
         computed.personalDecksCount = vocabRes.personalDecks.length;
         computed.personalFoldersCount = vocabRes.personalFolders.length;
         setLiveVocabStats(computed);
+      }
+
+      const mSnap = await getDoc(doc(db, 'users', student.uid, 'vocab_state', 'mistakes_notebook'));
+      if (mSnap.exists() && Array.isArray(mSnap.data()?.records)) {
+        setStudentMistakes(mSnap.data().records);
       }
     } catch (err) {
       console.warn('Error refreshing student detail:', err);
@@ -1357,6 +1376,21 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                               >
                                 {att.grade || 'Pass'}
                               </span>
+                              {att.aiWritingEvaluation && (
+                                <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-purple-100 text-purple-800 dark:bg-purple-950/70 dark:text-purple-300">
+                                  AI Writing
+                                </span>
+                              )}
+                              {att.aiSpeakingEvaluation && (
+                                <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300">
+                                  AI Speaking
+                                </span>
+                              )}
+                              {typeof att.tabSwitchCount === 'number' && att.tabSwitchCount > 0 && (
+                                <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-rose-100 text-rose-700 dark:bg-rose-950/70 dark:text-rose-300">
+                                  Rời tab: {att.tabSwitchCount} lần
+                                </span>
+                              )}
                             </div>
 
                             <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-4 flex-wrap tabular-nums">
@@ -1371,11 +1405,19 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                               <span>
                                 Tổng đúng: <strong className="text-[#2E7D32] dark:text-[#58CC02]">{att.score}/{att.totalQuestions}</strong> ({Math.round(att.percentage)}%)
                               </span>
+                              {typeof att.vstepBandScore === 'number' && (
+                                <span>
+                                  Band: <strong className="text-slate-900 dark:text-white">{att.vstepBandScore.toFixed(1)}/10</strong>
+                                </span>
+                              )}
                               {typeof att.listeningScore === 'number' && (
                                 <span>Nghe: {att.listeningScore}/35</span>
                               )}
                               {typeof att.readingScore === 'number' && (
                                 <span>Đọc: {att.readingScore}/40</span>
+                              )}
+                              {typeof att.speakingScore === 'number' && (
+                                <span>Nói: {att.speakingScore.toFixed(1)}/10</span>
                               )}
                             </div>
                           </div>
@@ -1402,6 +1444,69 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                         </div>
                       );
                     })}
+                  </div>
+                )}
+              </div>
+
+              {/* Student Cloud Mistake Notebook Inspector for Teachers */}
+              <div className="pt-4 border-t border-slate-200 dark:border-slate-800">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-rose-500" />
+                    <span>
+                      Sổ Tay Câu Hỏi Hay Sai Của Học Viên ({studentMistakes.length} câu đã ghi nhận Cloud)
+                    </span>
+                  </h3>
+                  {studentMistakes.length > 0 && (
+                    <div className="flex items-center gap-2 text-[11px] font-black tabular-nums">
+                      <span className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300">
+                        Cần ôn lại: {studentMistakes.filter((m) => !m.mastered).length} câu
+                      </span>
+                      <span className="px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
+                        Đã nắm vững: {studentMistakes.filter((m) => m.mastered).length} câu
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {studentMistakes.length === 0 ? (
+                  <div className="p-5 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
+                    Chưa có bản ghi Sổ tay câu sai trên Cloud cho học viên này.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
+                    {studentMistakes.slice(0, 24).map((m, mIdx) => (
+                      <div
+                        key={m.key || mIdx}
+                        className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 text-xs space-y-1"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-black text-slate-900 dark:text-white truncate">
+                            [{m.section === 'LISTENING' ? 'Nghe' : 'Đọc'} · Part {m.partNumber}] {m.testTitle}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-black shrink-0 ${
+                              m.mastered
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                : 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                            }`}
+                          >
+                            {m.mastered ? 'Đã thuộc' : `Sai ${m.wrongCount || 1} lần`}
+                          </span>
+                        </div>
+                        <p className="text-slate-700 dark:text-slate-300 font-semibold line-clamp-2">
+                          Câu {m.questionNumber || m.questionId}: {m.prompt}
+                        </p>
+                        <div className="flex items-center gap-3 text-[11px] font-mono pt-0.5">
+                          <span className="text-rose-600 dark:text-rose-400 font-bold">
+                            Chọn sai: {m.userAnswer || '--'}
+                          </span>
+                          <span className="text-emerald-700 dark:text-emerald-400 font-black">
+                            Đáp án đúng: {m.correctAnswer}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1894,6 +1999,23 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                 </div>
               )}
 
+              {/* Tab Switch Proctoring Alert for Teachers */}
+              {typeof selectedAttemptDetail.tabSwitchCount === 'number' &&
+                selectedAttemptDetail.tabSwitchCount > 0 && (
+                  <div className="rounded-2xl bg-rose-50 dark:bg-rose-950/50 border-2 border-rose-300 dark:border-rose-800 p-3.5 flex items-center justify-between gap-3 text-xs text-rose-900 dark:text-rose-200">
+                    <div className="flex items-center gap-2.5 font-bold">
+                      <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                      <span>
+                        Cảnh báo Giám sát Phòng thi VSTEP: Học viên đã chuyển sang tab/cửa sổ khác{' '}
+                        <strong className="font-black underline">
+                          {selectedAttemptDetail.tabSwitchCount} lần
+                        </strong>{' '}
+                        trong quá trình làm bài.
+                      </span>
+                    </div>
+                  </div>
+                )}
+
               {/* Detailed 75-Question Answer vs Official Key & Explanation Inspector */}
               {(() => {
                 const rawAnswers = selectedAttemptDetail.answers || {};
@@ -2274,6 +2396,39 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                             selectedAttemptDetail.speakingSubmission.part3Text}
                           &quot;
                         </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Saved AI Speaking Examiner Evaluation */}
+                  {selectedAttemptDetail.aiSpeakingEvaluation && (
+                    <div className="rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 p-4 border border-amber-200 dark:border-amber-800/70 text-xs space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-black text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                          <Sparkles className="h-4 w-4 text-amber-600" />
+                          <span>Kết quả Giám khảo AI Speaking (Đã lưu Cloud)</span>
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-lg bg-amber-200/80 dark:bg-amber-900 text-amber-950 dark:text-amber-100 font-black text-[11px] tabular-nums">
+                          Part 1: {selectedAttemptDetail.aiSpeakingEvaluation.part1Score ?? '-'} · Part 2: {selectedAttemptDetail.aiSpeakingEvaluation.part2Score ?? '-'} · Part 3: {selectedAttemptDetail.aiSpeakingEvaluation.part3Score ?? '-'} (Tổng: {selectedAttemptDetail.aiSpeakingEvaluation.overallBand10 ?? selectedAttemptDetail.speakingScore ?? '-'}/10)
+                        </span>
+                      </div>
+                      {selectedAttemptDetail.aiSpeakingEvaluation.part1Criteria?.feedbackVi && (
+                        <div className="text-[11px] text-slate-700 dark:text-slate-300 bg-white/80 dark:bg-slate-900/70 p-2.5 rounded-xl border border-amber-100 dark:border-amber-900">
+                          <strong className="text-amber-800 dark:text-amber-300">Nhận xét Part 1 (Social): </strong>
+                          {selectedAttemptDetail.aiSpeakingEvaluation.part1Criteria.feedbackVi}
+                        </div>
+                      )}
+                      {selectedAttemptDetail.aiSpeakingEvaluation.part2Criteria?.feedbackVi && (
+                        <div className="text-[11px] text-slate-700 dark:text-slate-300 bg-white/80 dark:bg-slate-900/70 p-2.5 rounded-xl border border-amber-100 dark:border-amber-900">
+                          <strong className="text-amber-800 dark:text-amber-300">Nhận xét Part 2 (Solution): </strong>
+                          {selectedAttemptDetail.aiSpeakingEvaluation.part2Criteria.feedbackVi}
+                        </div>
+                      )}
+                      {selectedAttemptDetail.aiSpeakingEvaluation.part3Criteria?.feedbackVi && (
+                        <div className="text-[11px] text-slate-700 dark:text-slate-300 bg-white/80 dark:bg-slate-900/70 p-2.5 rounded-xl border border-amber-100 dark:border-amber-900">
+                          <strong className="text-amber-800 dark:text-amber-300">Nhận xét Part 3 (Topic): </strong>
+                          {selectedAttemptDetail.aiSpeakingEvaluation.part3Criteria.feedbackVi}
+                        </div>
                       )}
                     </div>
                   )}

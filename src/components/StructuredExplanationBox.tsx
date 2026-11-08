@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Sparkles, Volume2, Languages, Check, PanelLeftOpen } from 'lucide-react';
+import { Sparkles, Volume2, Languages, Check, PanelLeftOpen, BookmarkPlus } from 'lucide-react';
 import { examAudioManager } from '../utils/audioManager';
 import { parseScriptIntoSpeakerTurns } from './InteractiveTranscriptModal';
+import { QuickSaveVocabModal, QuickSaveVocabPayload } from './QuickSaveVocabModal';
 
 interface StructuredExplanationBoxProps {
   explanation?: string; // Deprecated & ignored: explanations are completely removed
@@ -32,8 +33,21 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
 }) => {
   const [liveQuestionTranslation, setLiveQuestionTranslation] = useState<string | null>(null);
   const [isTranslatingQuestion, setIsTranslatingQuestion] = useState(false);
+  const [quickSavePayload, setQuickSavePayload] = useState<QuickSaveVocabPayload | null>(null);
 
   const effectiveQuestionTranslation = vietnameseTranslation || liveQuestionTranslation;
+
+  const handleOpenQuickSaveFromSelection = () => {
+    const sel = window.getSelection()?.toString().trim() || '';
+    const cleanedWord = sel.length >= 2 && sel.length <= 75 ? sel : '';
+    const contextCandidate =
+      evidenceQuote || questionPrompt || (options && options[0]?.text) || '';
+    setQuickSavePayload({
+      initialWord: cleanedWord,
+      contextSentence: contextCandidate,
+      sourceLabel: 'Giải thích & Câu bằng chứng VSTEP',
+    });
+  };
 
   const handleEvidenceClick = () => {
     if (evidenceQuote && onHighlightQuote) {
@@ -89,9 +103,20 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
       {/* 0. Detailed Vietnamese Explanation (Giải thích chi tiết) */}
       {explanation && explanation.trim().length > 0 && (
         <div className="rounded-2xl border-2 border-[#58CC02] dark:border-lime-800 border-b-4 border-b-[#46A302] bg-white dark:bg-slate-900 p-3.5 text-xs text-slate-800 dark:text-slate-100 shadow-2xs space-y-1">
-          <div className="font-black text-[#2B6601] dark:text-[#78E014] text-[11px] uppercase tracking-wider flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5 text-[#58CC02]" />
-            <span>Giải thích chi tiết đáp án:</span>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-black text-[#2B6601] dark:text-[#78E014] text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-[#58CC02]" />
+              <span>Giải thích chi tiết đáp án:</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleOpenQuickSaveFromSelection}
+              className="inline-flex items-center gap-1 rounded-xl bg-[#F3E5FF] dark:bg-purple-950/70 border border-[#CE82FF] px-2.5 py-1 text-[10px] font-black text-[#A560E8] dark:text-purple-300 hover:bg-purple-200 transition-colors cursor-pointer"
+              title="Bôi đen từ mới hoặc bấm để lưu nhanh vào Kho Flashcard SRS"
+            >
+              <BookmarkPlus className="h-3 w-3" />
+              <span>+ Lưu từ vựng SRS</span>
+            </button>
           </div>
           <p className="leading-relaxed font-semibold whitespace-pre-line pl-1">
             {explanation}
@@ -129,6 +154,14 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
               <Languages className="h-4 w-4 text-[#46A302] dark:text-emerald-400" />
               <span>Bản dịch Câu hỏi &amp; Các phương án:</span>
             </span>
+            <button
+              type="button"
+              onClick={handleOpenQuickSaveFromSelection}
+              className="inline-flex items-center gap-1 rounded-xl bg-white dark:bg-slate-900 border border-[#CE82FF] px-2.5 py-1 text-[10px] font-black text-[#A560E8] dark:text-purple-300 hover:bg-purple-50 cursor-pointer"
+            >
+              <BookmarkPlus className="h-3 w-3" />
+              <span>+ Lưu từ SRS</span>
+            </button>
           </div>
           <p className="leading-relaxed font-semibold whitespace-pre-line pl-1 text-slate-800 dark:text-slate-100">
             {effectiveQuestionTranslation}
@@ -136,7 +169,7 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
         </div>
       ) : (
         (questionPrompt || (options && options.length > 0)) && (
-          <div>
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handleTranslateQuestionAndOptions}
@@ -150,9 +183,24 @@ export const StructuredExplanationBox: React.FC<StructuredExplanationBoxProps> =
                   : 'Xem bản dịch câu hỏi & các phương án A, B, C, D'}
               </span>
             </button>
+            <button
+              type="button"
+              onClick={handleOpenQuickSaveFromSelection}
+              className="btn-duo-white inline-flex items-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-black text-[#A560E8] dark:text-purple-300 cursor-pointer"
+              title="Lưu nhanh từ mới trong câu hỏi này vào Kho Flashcard SRS"
+            >
+              <BookmarkPlus className="h-3.5 w-3.5 text-[#CE82FF]" />
+              <span>+ Lưu từ vựng SRS</span>
+            </button>
           </div>
         )
       )}
+
+      <QuickSaveVocabModal
+        isOpen={Boolean(quickSavePayload)}
+        onClose={() => setQuickSavePayload(null)}
+        payload={quickSavePayload}
+      />
 
       {/* 3. Speaker-Grouped Audio Script & Whole-Turn Translation (if Listening and not hidden) */}
       {!hideInlineScript && speakerTurns.length > 0 && (

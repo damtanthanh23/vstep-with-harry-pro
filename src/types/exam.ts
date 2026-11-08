@@ -229,10 +229,12 @@ export interface UserExamAttempt {
   writingSubmission?: WritingSubmission;
   speakingSubmission?: SpeakingSubmission;
   aiWritingEvaluation?: any;
+  aiSpeakingEvaluation?: any;
   aiDiagnosticReport?: any;
   selectedParts?: string[];
   practiceAuditLogs?: PracticeAuditEntry[];
   practicedQuestionsCount?: number;
+  tabSwitchCount?: number;
 }
 
 /**

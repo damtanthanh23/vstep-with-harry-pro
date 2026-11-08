@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight, Headphones, BookOpen, PenTool, Mic } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Headphones, BookOpen, PenTool, Mic, Flag, Keyboard } from 'lucide-react';
 import { ExamSection, Question, getPartRelativeNumber } from '../types/exam';
 import { WritingSubmission } from '../types/writing';
 import { SpeakingSubmission } from '../types/speaking';
@@ -15,6 +15,7 @@ interface ExamFooterProps {
   flagged?: Record<number, boolean>;
   isPracticeMode?: boolean;
   onSelectQuestion?: (questionId: number) => void;
+  onToggleFlag?: (questionId: number) => void;
   activeWritingTaskIndex?: 0 | 1;
   writingSubmission?: WritingSubmission;
   onSelectWritingTask?: (taskIndex: 0 | 1) => void;
@@ -37,6 +38,7 @@ export const ExamFooter: React.FC<ExamFooterProps> = ({
   flagged = {},
   isPracticeMode = false,
   onSelectQuestion,
+  onToggleFlag,
   activeWritingTaskIndex = 0,
   writingSubmission,
   onSelectWritingTask,
@@ -92,6 +94,8 @@ export const ExamFooter: React.FC<ExamFooterProps> = ({
       : section === 'WRITING'
       ? 'bg-[#A560E8] border-[#8438C8] border-b-[#6826A6]'
       : 'bg-[#FF4B4B] border-[#EA2B2B] border-b-[#C91D1D]';
+
+  const isCurrentFlagged = activeQuestionId ? !!flagged[activeQuestionId] : false;
 
   return (
     <footer className="fixed bottom-0 left-0 right-0 z-30 h-15 bg-[#58CC02] text-white shadow-lg border-t-2 border-[#46A302] flex items-center justify-between gap-2 sm:gap-4 px-3 sm:px-6 select-none">
@@ -226,7 +230,7 @@ export const ExamFooter: React.FC<ExamFooterProps> = ({
                   type="button"
                   onClick={() => onSelectQuestion && onSelectQuestion(q.id)}
                   className={`relative shrink-0 flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-xl text-xs transition-all cursor-pointer ${boxStyle} ${activeHighlight}`}
-                  title={`Câu ${relNum} (${statusText})${isFlagged ? ' - Đã gắn cờ' : ''}`}
+                  title={`Câu ${relNum} (${statusText})${isFlagged ? ' - Đã gắn cờ (Phím F)' : ''}`}
                 >
                   <span className="flex items-center justify-center gap-0.5">
                     <span>{relNum}</span>
@@ -246,8 +250,34 @@ export const ExamFooter: React.FC<ExamFooterProps> = ({
         </div>
       </div>
 
-      {/* Right: Overall Progress Pill + Prev / Next Part Navigation Buttons */}
-      <div className="shrink-0 flex items-center gap-2 sm:gap-3">
+      {/* Right: Quick Flag Button + Keyboard Shortcut Hint + Progress Pill + Prev / Next Part Buttons */}
+      <div className="shrink-0 flex items-center gap-2 sm:gap-2.5">
+        {section !== 'WRITING' && section !== 'SPEAKING' && activeQuestionId && onToggleFlag && (
+          <button
+            type="button"
+            onClick={() => onToggleFlag(activeQuestionId)}
+            className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-[11px] font-black border-2 border-b-4 active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer ${
+              isCurrentFlagged
+                ? 'bg-[#FFC800] text-[#3C3C3C] border-[#E5B400] border-b-[#B8860B]'
+                : 'bg-white/20 text-white border-white/30 border-b-black/30 hover:bg-white/30'
+            }`}
+            title="Gắn cờ câu hỏi đang chọn để xem lại sau (Phím tắt: F)"
+          >
+            <Flag className={`h-3.5 w-3.5 ${isCurrentFlagged ? 'fill-[#3C3C3C] text-[#3C3C3C]' : ''}`} />
+            <span className="hidden sm:inline">{isCurrentFlagged ? 'Đã gắn cờ (F)' : 'Gắn cờ (F)'}</span>
+          </button>
+        )}
+
+        {section !== 'WRITING' && section !== 'SPEAKING' && (
+          <div
+            className="hidden xl:flex items-center gap-1.5 bg-black/15 px-2.5 py-1 rounded-xl border border-white/15 text-[10px] font-extrabold text-lime-50"
+            title="Phím tắt bàn phím trong phòng thi: Phím 1–4 hoặc A–D để chọn đáp án, Phím F để gắn cờ câu hỏi, Mũi tên ←/→ để chuyển câu, Phím Space để Phát/Dừng Audio"
+          >
+            <Keyboard className="h-3.5 w-3.5 text-[#FFC800] shrink-0" />
+            <span>A–D/1–4: Chọn · F: Cờ · ←/→: Câu</span>
+          </div>
+        )}
+
         <div className="hidden md:flex items-center gap-2 bg-black/15 px-2.5 py-1 rounded-xl border border-white/15">
           <div className="w-16 h-2 rounded-full bg-black/25 overflow-hidden">
             <div

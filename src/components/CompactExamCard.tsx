@@ -25,6 +25,52 @@ import {
 import { TestMetadata, InProgressAttempt, isDraftTest } from '../types/exam';
 import { getEffectiveTestCategory } from '../services/categoryTagService';
 import { ExamViewMode } from '../services/examOrderService';
+import {
+  getCachedFirebaseStorageUrl,
+  subscribeToFirebaseStorageUrlReady,
+} from '../utils/audioStorageService';
+
+export interface DiscoveredAudioHealth {
+  hasAudio: boolean;
+  mode: 'single' | 'per_part';
+  partCount: number;
+  label: string;
+}
+
+// Module-level batch cache so all CompactExamCards share a single /api/audio/discover-batch request
+const serverAudioHealthCache = new Map<string, DiscoveredAudioHealth>();
+const pendingBatchIds = new Set<string>();
+let batchTimer: ReturnType<typeof setTimeout> | null = null;
+const batchListeners = new Set<() => void>();
+
+function requestBatchAudioHealth(testId: string) {
+  if (!testId || serverAudioHealthCache.has(testId)) return;
+  pendingBatchIds.add(testId);
+  if (batchTimer) return;
+  batchTimer = setTimeout(async () => {
+    const idsToFetch = Array.from(pendingBatchIds);
+    pendingBatchIds.clear();
+    batchTimer = null;
+    if (idsToFetch.length === 0) return;
+    try {
+      const resp = await fetch('/api/audio/discover-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testIds: idsToFetch }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const items = data?.items || {};
+        Object.entries(items).forEach(([id, info]) => {
+          serverAudioHealthCache.set(id, info as DiscoveredAudioHealth);
+        });
+        batchListeners.forEach((cb) => cb());
+      }
+    } catch {
+      // Ignore network error
+    }
+  }, 60);
+}
 
 interface CompactExamCardProps {
   test: TestMetadata;
@@ -87,6 +133,23 @@ export const CompactExamCard: React.FC<CompactExamCardProps> = ({
   onOpenHistory,
   onOpenVocabForTest,
 }) => {
+  const [, setAudioTick] = React.useState(0);
+
+  React.useEffect(() => {
+    requestBatchAudioHealth(test.id);
+    const onBatchDone = () => setAudioTick((c) => c + 1);
+    batchListeners.add(onBatchDone);
+    const unsubStorage = subscribeToFirebaseStorageUrlReady((readyKey) => {
+      if (readyKey.includes(test.id)) {
+        setAudioTick((c) => c + 1);
+      }
+    });
+    return () => {
+      batchListeners.delete(onBatchDone);
+      unsubStorage();
+    };
+  }, [test.id]);
+
   const answeredInProgressCount = inProgress
     ? Object.values(inProgress.answers || {}).filter((v) => v && v.trim().length > 0).length
     : 0;
@@ -94,18 +157,88 @@ export const CompactExamCard: React.FC<CompactExamCardProps> = ({
   const effectiveCat = getEffectiveTestCategory(test);
   const totalQ = test.totalQuestions || 75;
   const durationMin = test.durationMinutes || 172;
-  const hasSeparateAudio = test.audioMode === 'per_part' || Boolean(test.audioFileName);
-  const configuredPartCount = test.partAudioUrls
-    ? Object.values(test.partAudioUrls).filter((v) => Boolean(v && v.trim().length > 0)).length
-    : 0;
-  const audioLabel =
-    test.audioMode === 'per_part'
-      ? configuredPartCount > 0
-        ? `${configuredPartCount} Audio riêng`
-        : '3 Audio riêng'
-      : test.audioFileName
-      ? test.audioFileName
-      : '3 Audio riêng';
+
+  // Compute real MP3 Audio Health across metadata, Firebase CDN cache, and Server audio discovery
+  const serverHealth = serverAudioHealthCache.get(test.id);
+  const cachedFullCdn = getCachedFirebaseStorageUrl(`vstep_${test.id}_full`);
+  const hasFullAudio = Boolean(
+    (test.audioUrl && test.audioUrl.trim().length > 0) ||
+      (test.audioFileName && test.audioFileName.trim().length > 0) ||
+      cachedFullCdn ||
+      (serverHealth?.hasAudio && serverHealth.mode === 'single')
+  );
+
+  let configuredPartCount = 0;
+  for (const pNum of [1, 2, 3] as const) {
+    const pKey = `part${pNum}` as const;
+    const hasPartMeta = Boolean(
+      (test.partAudioUrls?.[pKey] && test.partAudioUrls[pKey]!.trim().length > 0) ||
+        (test.partAudioFileNames?.[pKey] && test.partAudioFileNames[pKey]!.trim().length > 0) ||
+        getCachedFirebaseStorageUrl(`vstep_${test.id}_${pKey}`)
+    );
+    if (hasPartMeta) {
+      configuredPartCount += 1;
+    }
+  }
+  const effectivePartCount = Math.max(configuredPartCount, serverHealth?.partCount || 0);
+  const isPerPartMode = test.audioMode === 'per_part' || (!hasFullAudio && effectivePartCount > 0);
+  const hasEnoughMp3 = isPerPartMode ? effectivePartCount >= 3 || hasFullAudio : hasFullAudio || effectivePartCount > 0;
+  const hasPartialMp3 = !hasEnoughMp3 && (effectivePartCount > 0 || hasFullAudio);
+
+  const audioStatusBadgeLabel = hasEnoughMp3
+    ? isPerPartMode && effectivePartCount >= 3
+      ? 'Đủ 3/3 Part MP3'
+      : 'Đủ MP3 Listening'
+    : hasPartialMp3
+    ? `Thiếu MP3 (${effectivePartCount}/3 Part)`
+    : 'Thiếu MP3';
+
+  const renderAudioHealthBadge = (compact = false) => {
+    if (hasEnoughMp3) {
+      return (
+        <span
+          className={`inline-flex items-center gap-1 rounded-xl font-extrabold shrink-0 whitespace-nowrap bg-[#E5F9D6] dark:bg-emerald-950/60 border border-[#58CC02]/60 text-[#2B6601] dark:text-emerald-300 ${
+            compact ? 'px-2.5 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'
+          }`}
+          title="Đề thi đã được gắn đầy đủ file Audio MP3 chuẩn cho phần thi Listening"
+        >
+          <CheckCircle2 className="h-3 w-3 text-[#58CC02] shrink-0" />
+          <span>{audioStatusBadgeLabel}</span>
+        </span>
+      );
+    }
+
+    if (canManageExams) {
+      return (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEditTest(test.id);
+          }}
+          className={`inline-flex items-center gap-1 rounded-xl font-extrabold shrink-0 whitespace-nowrap bg-[#FFF4E5] dark:bg-amber-950/70 border border-[#FF9600] text-[#D97706] dark:text-amber-300 hover:bg-amber-100 transition-colors cursor-pointer ${
+            compact ? 'px-2.5 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'
+          }`}
+          title="Bấm để mở trình quản lý đề và gắn thêm file Audio MP3 cho đề thi này"
+        >
+          <AlertTriangle className="h-3 w-3 text-[#FF9600] shrink-0" />
+          <span>{audioStatusBadgeLabel} · Gắn ngay</span>
+        </button>
+      );
+    }
+
+    return (
+      <span
+        className={`inline-flex items-center gap-1 rounded-xl font-extrabold shrink-0 whitespace-nowrap bg-[#FFF4E5] dark:bg-amber-950/60 border border-[#FF9600]/60 text-[#D97706] dark:text-amber-300 ${
+          compact ? 'px-2.5 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'
+        }`}
+        title="Đề thi này đang chờ Giáo viên cập nhật đủ file Audio MP3"
+      >
+        <AlertTriangle className="h-3 w-3 text-[#FF9600] shrink-0" />
+        <span>{audioStatusBadgeLabel}</span>
+      </span>
+    );
+  };
 
   const dragProps =
     canManageExams && isReorderMode
@@ -164,11 +297,7 @@ export const CompactExamCard: React.FC<CompactExamCardProps> = ({
               <span>{effectiveCat}</span>
             </span>
 
-            {hasSeparateAudio && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[10px] font-extrabold bg-[#DDF4FF] dark:bg-sky-950/50 border border-[#1CB0F6]/50 dark:border-sky-800 text-[#1899D6] dark:text-sky-300 shrink-0 whitespace-nowrap">
-                <span>{audioLabel}</span>
-              </span>
-            )}
+            {renderAudioHealthBadge(true)}
 
             {isDraft && canManageExams && onPublishDraftTest && (
               <button
@@ -556,19 +685,7 @@ export const CompactExamCard: React.FC<CompactExamCardProps> = ({
             </span>
           </div>
 
-          {hasSeparateAudio && (
-            <span
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 border border-[#1CB0F6]/50 text-[#1899D6] dark:text-sky-400 text-[11px] font-extrabold truncate max-w-[140px]"
-              title={
-                test.audioMode === 'per_part'
-                  ? 'Có 3 file Audio riêng cho từng Part VSTEP (Part 1, 2, 3)'
-                  : test.audioFileName
-              }
-            >
-              <Music className="h-3 w-3 shrink-0" />
-              <span className="truncate">{audioLabel}</span>
-            </span>
-          )}
+          {renderAudioHealthBadge(false)}
         </div>
 
         {/* Row 4: Colored 4-Skill Pills Row (Duolingo Semantic Colors) */}

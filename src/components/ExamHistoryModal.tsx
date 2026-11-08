@@ -19,6 +19,8 @@ import {
   BarChart3,
   PenTool,
   Mic,
+  Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { fetchUserAttempts } from '../services/examService';
@@ -175,17 +177,36 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
     return true;
   });
 
-  // Compute SVG chart points for activeChartGroup
+  // Helper to get VSTEP 10-point band score for any attempt (including Writing/Speaking-only sessions)
+  const getAttemptBand10 = (att: UserExamAttempt): number => {
+    if (typeof att.vstepBandScore === 'number' && att.vstepBandScore > 0) {
+      return Number(att.vstepBandScore.toFixed(1));
+    }
+    if (typeof att.percentage === 'number' && att.percentage > 0) {
+      return Number((att.percentage / 10).toFixed(1));
+    }
+    if (typeof att.speakingScore === 'number' && att.speakingScore > 0) {
+      return Number(att.speakingScore.toFixed(1));
+    }
+    if (typeof att.writingScore === 'number' && att.writingScore > 0) {
+      const w10 = att.writingScore > 10 ? (att.writingScore / 24) * 10 : att.writingScore;
+      return Number(w10.toFixed(1));
+    }
+    const rawPct = ((att.score || 0) / (att.totalQuestions || 75)) * 10;
+    return Number(rawPct.toFixed(1));
+  };
+
+  // Compute SVG chart points for activeChartGroup on VSTEP 10.0 scale
   const chartAttempts = activeChartGroup?.list || [];
   const svgWidth = 680;
-  const svgHeight = 210;
-  const padLeft = 42;
-  const padRight = 28;
-  const padTop = 24;
+  const svgHeight = 220;
+  const padLeft = 46;
+  const padRight = 32;
+  const padTop = 26;
   const padBottom = 36;
   const plotW = svgWidth - padLeft - padRight;
   const plotH = svgHeight - padTop - padBottom;
-  const maxScore = 75;
+  const maxScore = 10;
 
   const chartPoints = chartAttempts.map((att, idx) => {
     const count = chartAttempts.length;
@@ -193,9 +214,10 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
       count === 1
         ? padLeft + plotW / 2
         : padLeft + (idx / (count - 1)) * plotW;
-    const clampedScore = Math.max(0, Math.min(maxScore, att.score));
+    const band10 = getAttemptBand10(att);
+    const clampedScore = Math.max(0, Math.min(maxScore, band10));
     const y = padTop + plotH - (clampedScore / maxScore) * plotH;
-    return { x, y, attempt: att, attemptNumber: idx + 1 };
+    return { x, y, band10, attempt: att, attemptNumber: idx + 1 };
   });
 
   const polylinePoints = chartPoints.map((p) => `${p.x},${p.y}`).join(' ');
@@ -206,15 +228,14 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
         },${padTop + plotH}`
       : '';
 
-  const passLineY = padTop + plotH - (30 / maxScore) * plotH;
-
-  // Trend summary for activeChartGroup
-  const firstScore = chartAttempts.length > 0 ? chartAttempts[0].score : 0;
+  // Trend summary for activeChartGroup on 10.0 scale
+  const firstScore = chartAttempts.length > 0 ? getAttemptBand10(chartAttempts[0]) : 0;
   const latestScore =
-    chartAttempts.length > 0 ? chartAttempts[chartAttempts.length - 1].score : 0;
+    chartAttempts.length > 0 ? getAttemptBand10(chartAttempts[chartAttempts.length - 1]) : 0;
   const bestScore =
-    chartAttempts.length > 0 ? Math.max(...chartAttempts.map((a) => a.score)) : 0;
-  const overallDelta = chartAttempts.length >= 2 ? latestScore - firstScore : 0;
+    chartAttempts.length > 0 ? Math.max(...chartAttempts.map((a) => getAttemptBand10(a))) : 0;
+  const overallDelta =
+    chartAttempts.length >= 2 ? Number((latestScore - firstScore).toFixed(1)) : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
@@ -482,12 +503,12 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                     </div>
                     <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800">
                       <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                        Điểm cao nhất / Gần nhất
+                        Điểm cao nhất / Gần nhất (Thang 10)
                       </div>
-                      <div className="text-base font-black text-slate-900 dark:text-white mt-0.5">
-                        {bestScore}/75{' '}
+                      <div className="text-base font-black text-slate-900 dark:text-white mt-0.5 tabular-nums">
+                        {bestScore.toFixed(1)}/10{' '}
                         <span className="text-xs font-bold text-slate-400">
-                          (Gần nhất: {latestScore}/75)
+                          (Gần nhất: {latestScore.toFixed(1)}/10)
                         </span>
                       </div>
                     </div>
@@ -495,22 +516,22 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                       <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
                         Xu hướng so với Lần 1
                       </div>
-                      <div className="mt-0.5 flex items-center gap-1.5">
+                      <div className="mt-0.5 flex items-center gap-1.5 tabular-nums">
                         {chartAttempts.length < 2 ? (
                           <span className="text-xs font-bold text-slate-400">
                             Cần làm thêm lần 2
                           </span>
                         ) : overallDelta > 0 ? (
                           <span className="inline-flex items-center gap-1 text-sm font-black text-emerald-600 dark:text-emerald-400">
-                            <TrendingUp className="w-4 h-4" /> +{overallDelta} câu
+                            <TrendingUp className="w-4 h-4" /> +{overallDelta.toFixed(1)} điểm
                           </span>
                         ) : overallDelta < 0 ? (
                           <span className="inline-flex items-center gap-1 text-sm font-black text-rose-600 dark:text-rose-400">
-                            <TrendingDown className="w-4 h-4" /> {overallDelta} câu
+                            <TrendingDown className="w-4 h-4" /> {overallDelta.toFixed(1)} điểm
                           </span>
                         ) : (
                           <span className="text-sm font-black text-amber-600 dark:text-amber-400">
-                            Giữ nguyên ({latestScore}/75)
+                            Giữ nguyên ({latestScore.toFixed(1)}/10)
                           </span>
                         )}
                       </div>
@@ -518,12 +539,12 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                   </div>
                 )}
 
-                {/* SVG Line Chart */}
+                {/* SVG Line Chart (Standard VSTEP 0.0 - 10.0 Scale with B1/B2/C1 Thresholds) */}
                 {chartPoints.length > 0 && (
                   <div className="w-full overflow-x-auto bg-slate-50/70 dark:bg-slate-950/60 rounded-xl p-3 border border-slate-200/60 dark:border-slate-800">
                     <svg
                       viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-                      className="w-full h-48 min-w-[460px]"
+                      className="w-full h-52 min-w-[460px]"
                     >
                       <defs>
                         <linearGradient id="scoreAreaGrad" x1="0" y1="0" x2="0" y2="1">
@@ -532,10 +553,16 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                         </linearGradient>
                       </defs>
 
-                      {/* Horizontal Grid Lines (0, 15, 30 Pass B1, 45, 75) */}
-                      {[0, 15, 30, 45, 75].map((val) => {
+                      {/* Horizontal Grid Lines (0, 4.0 B1, 6.0 B2, 8.5 C1, 10.0) */}
+                      {[
+                        { val: 0, label: '0.0', badge: '' },
+                        { val: 4.0, label: '4.0', badge: 'B1 (4.0)', color: '#0ea5e9' },
+                        { val: 6.0, label: '6.0', badge: 'B2 (6.0)', color: '#10b981' },
+                        { val: 8.5, label: '8.5', badge: 'C1 (8.5)', color: '#f59e0b' },
+                        { val: 10.0, label: '10.0', badge: '' },
+                      ].map(({ val, label, badge, color }) => {
                         const y = padTop + plotH - (val / maxScore) * plotH;
-                        const isPassLine = val === 30;
+                        const isBandLine = Boolean(badge);
                         return (
                           <g key={val}>
                             <line
@@ -543,10 +570,10 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                               y1={y}
                               x2={svgWidth - padRight}
                               y2={y}
-                              stroke={isPassLine ? '#10b981' : '#94a3b8'}
-                              strokeOpacity={isPassLine ? 0.6 : 0.2}
-                              strokeWidth={isPassLine ? 1.5 : 1}
-                              strokeDasharray={isPassLine ? '5 4' : undefined}
+                              stroke={color || '#94a3b8'}
+                              strokeOpacity={isBandLine ? 0.55 : 0.2}
+                              strokeWidth={isBandLine ? 1.5 : 1}
+                              strokeDasharray={isBandLine ? '5 4' : undefined}
                             />
                             <text
                               x={padLeft - 8}
@@ -554,21 +581,22 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                               textAnchor="end"
                               className="fill-slate-400 dark:fill-slate-500 text-[10px] font-bold"
                             >
-                              {val}
+                              {label}
                             </text>
+                            {badge && (
+                              <text
+                                x={svgWidth - padRight - 4}
+                                y={y - 4}
+                                textAnchor="end"
+                                fill={color}
+                                className="text-[9px] font-black"
+                              >
+                                Chuẩn {badge}
+                              </text>
+                            )}
                           </g>
                         );
                       })}
-
-                      {/* Pass threshold label */}
-                      <text
-                        x={svgWidth - padRight - 4}
-                        y={passLineY - 5}
-                        textAnchor="end"
-                        className="fill-emerald-600 dark:fill-emerald-400 text-[9px] font-black"
-                      >
-                        Mốc Đạt B1 (4.0/10 ≈ 30/75)
-                      </text>
 
                       {/* Area fill */}
                       {chartPoints.length > 1 && (
@@ -589,7 +617,7 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
 
                       {/* Data points */}
                       {chartPoints.map((pt) => {
-                        const passed = pt.attempt.grade !== 'Fail' && pt.attempt.percentage >= 50;
+                        const passed = pt.band10 >= 4.0;
                         return (
                           <g key={pt.attempt.attemptId}>
                             <circle
@@ -610,7 +638,7 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                               textAnchor="middle"
                               className="fill-slate-800 dark:fill-slate-100 text-[11px] font-black"
                             >
-                              {pt.attempt.score}/{pt.attempt.totalQuestions || 75}
+                              {pt.band10.toFixed(1)}/10
                             </text>
                             {/* Attempt number on X axis */}
                             <text
@@ -693,6 +721,28 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                                   : 'Bằng điểm lần trước'}
                               </span>
                             )}
+
+                            {attempt.aiWritingEvaluation && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950/70 text-purple-800 dark:text-purple-200 text-[10px] font-black border border-purple-200 dark:border-purple-800">
+                                <Sparkles className="w-3 h-3" />
+                                Đã chấm AI Writing
+                              </span>
+                            )}
+
+                            {attempt.aiSpeakingEvaluation && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-200 text-[10px] font-black border border-amber-200 dark:border-amber-800">
+                                <Sparkles className="w-3 h-3" />
+                                Đã chấm AI Speaking
+                              </span>
+                            )}
+
+                            {typeof attempt.tabSwitchCount === 'number' &&
+                              attempt.tabSwitchCount > 0 && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300 text-[10px] font-black border border-rose-200 dark:border-rose-800">
+                                  <AlertTriangle className="w-3 h-3" />
+                                  Rời tab: {attempt.tabSwitchCount} lần
+                                </span>
+                              )}
                           </div>
                           <div className="flex flex-wrap items-center gap-4 mt-1.5 text-xs text-slate-500 dark:text-slate-400 font-semibold">
                             <span className="flex items-center gap-1">
@@ -707,10 +757,8 @@ export const ExamHistoryModal: React.FC<ExamHistoryModalProps> = ({
                         </div>
 
                         <div className="text-left sm:text-right shrink-0">
-                          <div className="text-2xl font-black text-slate-900 dark:text-white">
-                            {typeof attempt.vstepBandScore === 'number'
-                              ? `${attempt.vstepBandScore.toFixed(1)} / 10.0`
-                              : `${attempt.score}/${attempt.totalQuestions || 75}`}{' '}
+                          <div className="text-2xl font-black text-slate-900 dark:text-white tabular-nums">
+                            {getAttemptBand10(attempt).toFixed(1)} / 10.0{' '}
                             <span className="text-sm font-black text-[#58CC02]">
                               ({Math.round(attempt.percentage)}%)
                             </span>

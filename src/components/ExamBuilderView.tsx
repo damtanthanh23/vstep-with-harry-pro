@@ -43,6 +43,7 @@ import {
   StorageConnectionTestResult,
   subscribeToFirebaseStorageUrlReady,
   ensureVstepAudioKey,
+  patchTestAudioMetadataEverywhere,
   FIREBASE_STORAGE_BUCKET,
   STORAGE_AUDIO_FOLDER,
   APP_SITE_ID,
@@ -308,7 +309,8 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
   );
 
   // Automatically replace idb-audio:// URLs with the direct Firebase Storage CDN URL (`storageUrl`)
-  // as soon as background upload to `vstep/exam_audio/vstep_{cleanKey}.mp3` completes
+  // as soon as background upload to `vstep/exam_audio/vstep_{cleanKey}.mp3` completes,
+  // and auto-discover any existing canonical audio on mount if initialTest had no audioUrl yet.
   useEffect(() => {
     const fullKey = ensureVstepAudioKey(`${testId}_full`);
     const p1Key = ensureVstepAudioKey(`${testId}_part1`);
@@ -319,16 +321,87 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
     const unsub = subscribeToFirebaseStorageUrlReady((readyKey, cdnUrl) => {
       if (readyKey === fullKey) {
         setAudioUrl(cdnUrl);
+        patchTestAudioMetadataEverywhere({
+          testId,
+          partScope: 'full',
+          audioUrl: cdnUrl,
+          audioMode: 'single',
+        }).catch(() => {});
       } else if (readyKey === p1Key) {
         setPartAudioUrls((prev) => ({ ...prev, part1: cdnUrl }));
+        patchTestAudioMetadataEverywhere({
+          testId,
+          partScope: 1,
+          audioUrl: cdnUrl,
+          audioMode: 'per_part',
+        }).catch(() => {});
       } else if (readyKey === p2Key) {
         setPartAudioUrls((prev) => ({ ...prev, part2: cdnUrl }));
+        patchTestAudioMetadataEverywhere({
+          testId,
+          partScope: 2,
+          audioUrl: cdnUrl,
+          audioMode: 'per_part',
+        }).catch(() => {});
       } else if (readyKey === p3Key) {
         setPartAudioUrls((prev) => ({ ...prev, part3: cdnUrl }));
+        patchTestAudioMetadataEverywhere({
+          testId,
+          partScope: 3,
+          audioUrl: cdnUrl,
+          audioMode: 'per_part',
+        }).catch(() => {});
       } else if (readyKey === p4Key) {
         setPartAudioUrls((prev) => ({ ...prev, part4: cdnUrl }));
+        patchTestAudioMetadataEverywhere({
+          testId,
+          partScope: 4,
+          audioUrl: cdnUrl,
+          audioMode: 'per_part',
+        }).catch(() => {});
       }
     });
+
+    // Auto-discover server/canonical audio if initialTest had empty fields
+    void (async () => {
+      try {
+        const resp = await fetch(`/api/audio/discover/${encodeURIComponent(testId)}`);
+        if (!resp.ok) return;
+        const data = (await resp.json()) as {
+          full?: { streamUrl?: string; fileName?: string } | null;
+          parts?: Record<string, { streamUrl?: string; fileName?: string }>;
+        };
+        if (data?.full?.streamUrl) {
+          setAudioUrl((prev) => prev || `idb-audio://${fullKey}`);
+          setAudioFileName((prev) => prev || data.full?.fileName || 'Audio toàn bài.mp3');
+        }
+        if (data?.parts && Object.keys(data.parts).length > 0) {
+          setPartAudioUrls((prev) => {
+            const next = { ...prev };
+            for (const pNum of [1, 2, 3, 4] as const) {
+              const pField = `part${pNum}` as const;
+              if (!next[pField] && data.parts?.[pField]?.streamUrl) {
+                next[pField] = `idb-audio://${ensureVstepAudioKey(`${testId}_part${pNum}`)}`;
+              }
+            }
+            return next;
+          });
+          setPartAudioFileNames((prev) => {
+            const next = { ...prev };
+            for (const pNum of [1, 2, 3, 4] as const) {
+              const pField = `part${pNum}` as const;
+              if (!next[pField] && data.parts?.[pField]?.fileName) {
+                next[pField] = data.parts[pField].fileName;
+              }
+            }
+            return next;
+          });
+        }
+      } catch {
+        // Ignore discovery error
+      }
+    })();
+
     return () => unsub();
   }, [testId]);
 
@@ -895,8 +968,15 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
       const persisted = await persistExamAudioFile(file, testId, 'full');
       setAudioUrl(persisted.persistentUrl);
       setResolvedSinglePlayableUrl(persisted.playableUrl || immediateBlobUrl);
+      patchTestAudioMetadataEverywhere({
+        testId,
+        partScope: 'full',
+        audioUrl: persisted.persistentUrl,
+        fileName: file.name,
+        audioMode: 'single',
+      }).catch(() => {});
       setQuickFillNotice(
-        `Đã nạp file nghe "${file.name}" (Đang đồng bộ ngầm lên Cloud ở góc phải màn hình)!`
+        `Đã nạp file nghe "${file.name}" và đang tự động đồng bộ lên Cloud cho mọi học sinh!`
       );
       setTimeout(() => setQuickFillNotice(null), 3500);
     } catch (err) {
@@ -928,8 +1008,15 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
         ...prev,
         [key]: persisted.playableUrl || immediateBlobUrl,
       }));
+      patchTestAudioMetadataEverywhere({
+        testId,
+        partScope: partNum,
+        audioUrl: persisted.persistentUrl,
+        fileName: file.name,
+        audioMode: 'per_part',
+      }).catch(() => {});
       setQuickFillNotice(
-        `Đã nạp MP3 Part ${partNum}: "${file.name}" (Đang đồng bộ ngầm lên Cloud ở góc phải)!`
+        `Đã nạp MP3 Part ${partNum}: "${file.name}" và đang tự động đồng bộ lên Cloud cho mọi học sinh!`
       );
       setTimeout(() => setQuickFillNotice(null), 3500);
     } catch (err) {
@@ -943,6 +1030,15 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
   const handlePartAudioUrlChange = (partNum: 1 | 2 | 3 | 4, url: string) => {
     const key = `part${partNum}` as keyof PartAudioMap;
     setPartAudioUrls((prev) => ({ ...prev, [key]: url }));
+    const trimmed = url.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      patchTestAudioMetadataEverywhere({
+        testId,
+        partScope: partNum,
+        audioUrl: trimmed,
+        audioMode: 'per_part',
+      }).catch(() => {});
+    }
   };
 
   const handleSaveCustomTag = async () => {
@@ -1807,7 +1903,19 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
                     <input
                       type="text"
                       value={audioUrl}
-                      onChange={(e) => setAudioUrl(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setAudioUrl(val);
+                        const trimmed = val.trim();
+                        if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+                          patchTestAudioMetadataEverywhere({
+                            testId,
+                            partScope: 'full',
+                            audioUrl: trimmed,
+                            audioMode: 'single',
+                          }).catch(() => {});
+                        }
+                      }}
                       placeholder="Dán link MP3 (Google Drive / Cloud / URL) hoặc bấm Chọn MP3..."
                       className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-mono text-slate-700 outline-hidden focus:border-sky-500 focus:bg-white"
                     />

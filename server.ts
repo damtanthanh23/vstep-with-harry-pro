@@ -26,8 +26,15 @@ app.use(express.urlencoded({ limit: '60mb', extended: true }));
 
 import { generateSmartDiagnosticReport } from './src/utils/aiDiagnosticFallback.ts';
 
-// Initialize Google Gen AI with server-side API Key
-const ai = new GoogleGenAI(process.env.GEMINI_API_KEY ? { apiKey: process.env.GEMINI_API_KEY } : {});
+// Initialize Google Gen AI with server-side API Key and telemetry header
+const ai = new GoogleGenAI({
+  ...(process.env.GEMINI_API_KEY ? { apiKey: process.env.GEMINI_API_KEY } : {}),
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    },
+  },
+});
 
 /**
  * Robust Gemini generation with fallback across models and timeout protection
@@ -38,20 +45,32 @@ async function generateGeminiSafe(options: {
   preferredModels?: string[];
   timeoutMs?: number;
 }) {
-  const models = options.preferredModels || [
-    'gemini-3.8-flash',
+  const rawModels = options.preferredModels || [
     'gemini-flash-latest',
+    'gemini-3.8-flash',
     'gemini-3.1-flash-lite',
   ];
+  // Put gemini-flash-latest first so calls succeed on the first round-trip across all API keys
+  const models = Array.from(
+    new Set(['gemini-flash-latest', ...rawModels, 'gemini-3.1-flash-lite'])
+  );
   const timeoutMs = options.timeoutMs || 35000;
   let lastError: any = null;
 
   for (const model of models) {
     try {
+      let safeConfig = options.config ? { ...options.config } : undefined;
+      if (safeConfig && (model.includes('gemini-3.8') || model.includes('gemini-4'))) {
+        delete safeConfig.temperature;
+        delete safeConfig.topP;
+        delete safeConfig.topK;
+        delete safeConfig.candidateCount;
+      }
+
       const genPromise = ai.models.generateContent({
         model,
         contents: options.contents,
-        config: options.config,
+        config: safeConfig,
       });
 
       const timeoutPromise = new Promise((_, reject) =>
@@ -73,7 +92,7 @@ async function generateGeminiSafe(options: {
 
 /**
  * AI PDF Exam Ingestion Endpoint
- * Takes PDF Base64 (and optional answer key / transcript) and extracts complete LanguageCert exam structure
+ * Takes PDF Base64 (and optional answer key / transcript) and extracts complete VSTEP B1-B2-C1 4-skill exam structure
  */
 app.post('/api/ai/parse-exam-pdf', async (req, res) => {
   try {
@@ -83,7 +102,7 @@ app.post('/api/ai/parse-exam-pdf', async (req, res) => {
       answerKeyText,
       transcriptPdfBase64,
       transcriptText,
-      examTitle = 'Đề thi LanguageCert B1 mới',
+      examTitle = 'Đề thi VSTEP B1-B2-C1 mới',
     } = req.body;
 
     if (!pdfBase64 && !answerKeyText && !transcriptText) {
@@ -122,35 +141,27 @@ app.post('/api/ai/parse-exam-pdf', async (req, res) => {
       });
     }
 
-    const promptText = `Bạn là Trợ lý AI Khảo thí Ngôn ngữ Quốc tế chuyên trích xuất và số hóa tài liệu luyện thi LanguageCert International ESOL (IESOL B1 Achiever).
+    const promptText = `Bạn là Chuyên gia Khảo thí Quốc gia chuyên số hóa đề thi VSTEP B1–B2–C1 (Khung năng lực ngoại ngữ 6 bậc dùng cho Việt Nam của Bộ Giáo dục và Đào tạo).
 
-HÃY BÓC TÁCH VÀ CHUYỂN ĐỔI FILE PDF THÀNH CẤU TRÚC ĐỀ THI ĐẦY ĐỦ CẢ 3 KỸ NĂNG (LISTENING, READING, WRITING):
-1. Cấu trúc chuẩn 52 câu hỏi + 2 bài viết:
-   - PHẦN NGHE (LISTENING - Câu 1 đến 26):
-     * Part 1 (id: 1..7, partNumber: 1, section: "LISTENING", type: "mcq"): 7 câu trắc nghiệm A, B, C.
-     * Part 2 (id: 8..13, partNumber: 2, section: "LISTENING", type: "mcq"): 3 đoạn hội thoại (mỗi đoạn 2 câu), kèm contextTitle (ví dụ: "Conversation 1 (Questions 1-2)").
-     * Part 3 (id: 14..20, partNumber: 3, section: "LISTENING", type: "notes"): Điền từ vào phiếu ghi chú (tối đa 3 từ). Gắn "notesData": { "title": "Tiêu đề bảng ghi chú", "items": [{ "label": "Nhãn mục", "prefix": "Văn bản trước ô trống", "questionId": 14, "suffix": "Văn bản sau ô trống" }] } vào câu số 14.
-     * Part 4 (id: 21..26, partNumber: 4, section: "LISTENING", type: "mcq"): 6 câu trắc nghiệm A, B, C.
-   - PHẦN ĐỌC (READING - Câu 27 đến 52 - BẮT BUỘC TRÍCH XUẤT ĐẦY ĐỦ TỪ PDF):
-     * Part 1 (id: 27..31, partNumber: 1, section: "READING", type: "mcq"): 5 văn bản ngắn/biển báo/email. MỖI CÂU (27..31) PHẢI CÓ "stimulusCard": { "header": "Tiêu đề/Loại biển báo", "body": "Nội dung văn bản trong khung", "footer": "Ghi chú cuối nếu có" } và 3 lựa chọn A, B, C.
-     * Part 2 (id: 32..37, partNumber: 2, section: "READING", type: "gapped_text"): Bài đọc đục lỗ 6 câu (câu 32 đến 37, tương ứng lỗ trống 1 đến 6 trong bài). Câu số 32 PHẢI CHỨA:
-       - "gappedArticle": { "title": "Tiêu đề bài đọc Part 2", "paragraphs": ["Đoạn văn có chứa {{32}}, {{33}}, {{34}}, {{35}}, {{36}}, {{37}} ngay tại vị trí các ô trống trong bài đọc"] }
-       - "gappedOptions": [{ "id": "A", "text": "Câu A..." }, { "id": "B", "text": "Câu B..." }, ..., { "id": "G", "text": "Câu G..." }] (7 câu A-G).
-     * Part 3 (id: 38..44, partNumber: 3, section: "READING", type: "matching"): Đọc 4 đoạn văn A, B, C, D và nối với 7 câu hỏi (38..44). Câu số 38 PHẢI CHỨA:
-       - "multiTextCards": [{ "id": "A", "title": "Text A", "content": "Toàn bộ nội dung đoạn A", "vietnameseTranslation": "Bản dịch tiếng Việt hoàn chỉnh của đoạn A..." }, { "id": "B", "title": "Text B", "content": "...", "vietnameseTranslation": "Bản dịch tiếng Việt đoạn B..." }, { "id": "C", "title": "Text C", "content": "...", "vietnameseTranslation": "Bản dịch tiếng Việt đoạn C..." }, { "id": "D", "title": "Text D", "content": "...", "vietnameseTranslation": "Bản dịch tiếng Việt đoạn D..." }]
-       - BẮT BUỘC DỊCH TOÀN BỘ 4 ĐOẠN VĂN A-D TRỰC TIẾP VÀO TRƯỜNG "vietnameseTranslation" của từng card.
-       - Mỗi câu 38..44 có "prompt": "Which text..." và options A, B, C, D.
-     * Part 4 (id: 45..52, partNumber: 4, section: "READING", type: "short_answer"): Bài đọc dài trả lời ngắn (tối đa 3 từ). Câu số 45 PHẢI CHỨA:
-       - "readingArticle": { "title": "Tiêu đề bài báo Part 4", "paragraphs": ["Đoạn 1...", "Đoạn 2...", "Đoạn 3..."] }
-       - "readingArticleTranslation": { "title": "Tiêu đề tiếng Việt", "paragraphs": ["Bản dịch đoạn 1...", "Bản dịch đoạn 2...", "Bản dịch đoạn 3..."] } chứa bản dịch tiếng Việt trọn vẹn của toàn bộ bài đọc.
-       - Mỗi câu 45..52 có câu hỏi "prompt" và "correctAnswer" là cụm từ ngắn.
+HÃY BÓC TÁCH VÀ CHUYỂN ĐỔI FILE PDF THÀNH CẤU TRÚC ĐỀ THI CHUẨN VSTEP B1–B2–C1 ĐẦY ĐỦ 4 KỸ NĂNG (LISTENING, READING, WRITING, SPEAKING):
+1. Cấu trúc chuẩn 75 câu hỏi trắc nghiệm 4 lựa chọn (A, B, C, D) + 2 bài Viết + 3 phần Nói:
+   - PHẦN NGHE (LISTENING - 3 Parts, Câu 1 đến 35, tất cả đều type: "mcq" với 4 đáp án A, B, C, D):
+     * Part 1 (id: 1..8, partNumber: 1, section: "LISTENING", type: "mcq"): 8 thông báo/hướng dẫn ngắn (Short announcements/instructions). Mỗi câu có 4 lựa chọn A, B, C, D.
+     * Part 2 (id: 9..20, partNumber: 2, section: "LISTENING", type: "mcq"): 3 đoạn hội thoại (Conversation 1: câu 9..12; Conversation 2: câu 13..16; Conversation 3: câu 17..20), kèm contextTitle và audioScript cho từng đoạn hội thoại.
+     * Part 3 (id: 21..35, partNumber: 3, section: "LISTENING", type: "mcq"): 3 bài nói chuyện/bài giảng (Talk/Lecture 1: câu 21..25; Talk/Lecture 2: câu 26..30; Talk/Lecture 3: câu 31..35), kèm contextTitle và audioScript.
+   - PHẦN ĐỌC (READING - 4 Passages, Câu 36 đến 75, tất cả đều type: "mcq" với 4 đáp án A, B, C, D):
+     * Passage 1 (id: 36..45, partNumber: 1, section: "READING", type: "mcq"): Câu số 36 PHẢI CHỨA "readingArticle": { "title": "PASSAGE 1: ...", "paragraphs": ["Đoạn 1...", "Đoạn 2..."] } và "readingArticleTranslation": { "title": "...", "paragraphs": ["Bản dịch đoạn 1...", "Bản dịch đoạn 2..."] }.
+     * Passage 2 (id: 46..55, partNumber: 2, section: "READING", type: "mcq"): Câu số 46 PHẢI CHỨA "readingArticle" và "readingArticleTranslation" của Passage 2.
+     * Passage 3 (id: 56..65, partNumber: 3, section: "READING", type: "mcq"): Câu số 56 PHẢI CHỨA "readingArticle" và "readingArticleTranslation" của Passage 3.
+     * Passage 4 (id: 66..75, partNumber: 4, section: "READING", type: "mcq"): Câu số 66 PHẢI CHỨA "readingArticle" và "readingArticleTranslation" của Passage 4.
    - PHẦN VIẾT (WRITING - 2 Tasks):
-     * Trích xuất mảng "writingTasks" gồm 2 phần tử cho Writing Part 1 (70-100 từ) và Writing Part 2 (100-120 từ) nếu có trong PDF (hoặc tạo đề Writing B1 sát chủ đề đề thi nếu PDF không đính kèm trang Writing).
+     * Trích xuất mảng "writingTasks" gồm Task 1 (Viết Thư/Email ≥ 120 từ, trọng số 1/3) và Task 2 (Viết Bài luận Essay ≥ 250 từ, trọng số 2/3).
+   - PHẦN NÓI (SPEAKING - 3 Parts):
+     * Trích xuất mảng "speakingTasks" gồm Part 1 (Social Interaction - 3 phút), Part 2 (Solution Discussion - 4 phút) và Part 3 (Topic Development kèm sơ đồ Mind-map - 5 phút) nếu có trong tài liệu hoặc tạo chủ đề chuẩn VSTEP sát nội dung đề.
 
 2. YÊU CẦU CHẤT LƯỢNG:
-   - TUYỆT ĐỐI KHÔNG BỎ SÓT PHẦN READING (Câu 27 đến 52). Phải trích xuất đầy đủ cả 52 câu hỏi (1-26 Listening, 27-52 Reading).
-   - BẮT BUỘC DỊCH SẴN TOÀN BỘ: Reading Part 3 (4 đoạn A, B, C, D vào multiTextCards.vietnameseTranslation) và Reading Part 4 (toàn bài đọc vào readingArticleTranslation) để học viên xem bản dịch tức thì không phải chờ dịch thủ công bằng AI.
-   - Cung cấp đáp án đúng ("correctAnswer"), trích dẫn câu bằng chứng nguyên văn ("evidenceQuote") cho các câu ở Listening Part 2, 3, 4 và Reading Part 2, 3, 4 (riêng Listening Part 1 không cần evidenceQuote), bản dịch tiếng Việt ("vietnameseTranslation" - riêng Reading Part 2 dịch đoạn văn ngay phía trước ô trống), cùng lời thoại gom theo người nói A:, B:, C: ("audioScript" và "audioScriptTranslation").
+   - Mỗi câu hỏi trắc nghiệm đều có 4 phương án A, B, C, D ("options": [{ "id": "A", "text": "..." }, { "id": "B", "text": "..." }, { "id": "C", "text": "..." }, { "id": "D", "text": "..." }]).
+   - Cung cấp đáp án đúng ("correctAnswer"), trích dẫn câu bằng chứng nguyên văn ("evidenceQuote"), giải thích chi tiết bằng tiếng Việt ("explanation"), bản dịch tiếng Việt ("vietnameseTranslation"), cùng lời thoại ("audioScript" và "audioScriptTranslation").
 
 Dữ liệu bổ sung nếu có:
 ${answerKeyText ? `[ĐÁP ÁN ĐÍNH KÈM]:\n${answerKeyText}\n` : ''}
@@ -159,31 +170,71 @@ ${transcriptText ? `[TRANSCRIPT ĐÍNH KÈM]:\n${transcriptText}\n` : ''}
 Trả về DUY NHẤT một JSON hợp lệ với cấu trúc:
 {
   "title": "${examTitle}",
-  "subtitle": "Đề thi LanguageCert B1 đầy đủ Listening, Reading & Writing",
-  "totalQuestions": 52,
-  "durationMinutes": 90,
+  "subtitle": "Đề thi VSTEP B1-B2-C1 đầy đủ 4 kỹ năng (35 câu Nghe, 40 câu Đọc, 2 bài Viết & 3 phần Nói)",
+  "totalQuestions": 75,
+  "durationMinutes": 172,
   "writingTasks": [
     {
-      "id": "writing-part-1",
+      "id": "writing-task-1",
       "partNumber": 1,
-      "title": "Writing Part 1",
-      "instruction": "Read the email/notice below and write a response...",
-      "stimulusText": "Nội dung văn bản/email gợi ý của đề...",
+      "title": "Writing Task 1 (Letter / Email Writing)",
+      "instruction": "You should spend about 20 minutes on this task. Write at least 120 words.",
+      "stimulusText": "Nội dung thư/email gợi ý của đề...",
       "bulletPoints": ["Ý yêu cầu 1", "Ý yêu cầu 2", "Ý yêu cầu 3"],
-      "minWords": 70,
-      "maxWords": 100,
-      "sampleAnswer": "Bài viết mẫu chuẩn B1..."
+      "minWords": 120,
+      "maxWords": 180,
+      "marks": 12,
+      "sampleAnswer": "Bài viết mẫu chuẩn VSTEP B2..."
     },
     {
-      "id": "writing-part-2",
+      "id": "writing-task-2",
       "partNumber": 2,
-      "title": "Writing Part 2",
-      "instruction": "Write a letter / composition...",
-      "stimulusText": "Ngữ cảnh đề bài...",
-      "bulletPoints": ["Ý yêu cầu 1", "Ý yêu cầu 2"],
-      "minWords": 100,
-      "maxWords": 120,
-      "sampleAnswer": "Bài viết mẫu chuẩn B1..."
+      "title": "Writing Task 2 (Essay Writing)",
+      "instruction": "You should spend about 40 minutes on this task. Write at least 250 words.",
+      "stimulusText": "Chủ đề bài luận Essay...",
+      "bulletPoints": ["Nêu quan điểm rõ ràng", "Đưa ra ít nhất 2 luận điểm kèm ví dụ thực tế"],
+      "minWords": 250,
+      "maxWords": 320,
+      "marks": 12,
+      "sampleAnswer": "Bài luận mẫu chuẩn VSTEP B2-C1..."
+    }
+  ],
+  "speakingTasks": [
+    {
+      "id": "speaking-part-1",
+      "partNumber": 1,
+      "title": "Speaking Part 1: Social Interaction (3 Minutes)",
+      "instruction": "Let's talk about two familiar topics.",
+      "prepSeconds": 0,
+      "speakSeconds": 180,
+      "topic1Title": "Topic 1",
+      "topic1Questions": ["Question 1?", "Question 2?", "Question 3?"],
+      "topic2Title": "Topic 2",
+      "topic2Questions": ["Question 1?", "Question 2?", "Question 3?"],
+      "sampleAnswer": "Bài nói mẫu Part 1..."
+    },
+    {
+      "id": "speaking-part-2",
+      "partNumber": 2,
+      "title": "Speaking Part 2: Solution Discussion (4 Minutes)",
+      "instruction": "You have 1 minute to prepare and 2-3 minutes to speak.",
+      "prepSeconds": 60,
+      "speakSeconds": 180,
+      "situationText": "Tình huống thảo luận...",
+      "solutionOptions": ["Option 1", "Option 2", "Option 3"],
+      "sampleAnswer": "Bài nói mẫu Part 2..."
+    },
+    {
+      "id": "speaking-part-3",
+      "partNumber": 3,
+      "title": "Speaking Part 3: Topic Development (5 Minutes)",
+      "instruction": "Develop the topic using the mind-map below and answer follow-up questions.",
+      "prepSeconds": 60,
+      "speakSeconds": 240,
+      "centralTopic": "Chủ đề trung tâm",
+      "mindMapNodes": ["Ý nhánh 1", "Ý nhánh 2", "Ý nhánh 3"],
+      "followUpQuestions": ["Follow-up question 1?", "Follow-up question 2?"],
+      "sampleAnswer": "Bài nói mẫu Part 3..."
     }
   ],
   "questions": [
@@ -192,12 +243,18 @@ Trả về DUY NHẤT một JSON hợp lệ với cấu trúc:
       "partNumber": 1,
       "section": "LISTENING",
       "type": "mcq",
-      "instruction": "Listen and choose the best reply.",
+      "instruction": "Listen and choose the best answer A, B, C or D.",
       "prompt": "...",
-      "options": [{ "id": "A", "text": "..." }, { "id": "B", "text": "..." }, { "id": "C", "text": "..." }],
+      "options": [
+        { "id": "A", "text": "..." },
+        { "id": "B", "text": "..." },
+        { "id": "C", "text": "..." },
+        { "id": "D", "text": "..." }
+      ],
       "correctAnswer": "A",
       "evidenceQuote": "...",
-      "vietnameseTranslation": "Dịch câu hỏi | A. Dịch A | B. Dịch B | C. Dịch C",
+      "explanation": "Giải thích vì sao chọn đáp án A...",
+      "vietnameseTranslation": "Dịch câu hỏi | A. Dịch A | B. Dịch B | C. Dịch C | D. Dịch D",
       "audioScript": "A: ...\nB: ...",
       "audioScriptTranslation": "A: ...\nB: ..."
     }
@@ -211,7 +268,7 @@ Trả về DUY NHẤT một JSON hợp lệ với cấu trúc:
       contents,
       config: {
         systemInstruction:
-          'Bạn là chuyên gia số hóa đề thi LanguageCert B1 IESOL. Bắt buộc trích xuất đầy đủ cả phần LISTENING (1-26), phần READING (27-52 kèm toàn bộ văn bản đọc stimulusCard, gappedArticle, gappedOptions, multiTextCards, readingArticle) và phần WRITING (writingTasks). Chỉ trả về JSON hợp lệ.',
+          'Bạn là chuyên gia số hóa đề thi VSTEP B1-B2-C1 chuẩn Bộ GD&ĐT. Bắt buộc trích xuất đầy đủ phần LISTENING (câu 1-35, 3 Parts, 4 lựa chọn A-D), phần READING (câu 36-75, 4 Passages kèm readingArticle & readingArticleTranslation, 4 lựa chọn A-D), WRITING (2 Tasks) và SPEAKING (3 Parts). Chỉ trả về JSON hợp lệ.',
         responseMimeType: 'application/json',
       },
       timeoutMs: 90000,
@@ -239,7 +296,7 @@ app.post('/api/ai/translate', async (req, res) => {
       return res.status(400).json({ error: 'Thiếu văn bản cần dịch' });
     }
 
-    const prompt = `Dịch đoạn văn bản tiếng Anh sau sang tiếng Việt tự nhiên, chuẩn xác, phục vụ học tập luyện thi LanguageCert B1:
+    const prompt = `Dịch đoạn văn bản tiếng Anh sau sang tiếng Việt tự nhiên, chuẩn xác, phục vụ học tập luyện thi VSTEP B1–B2–C1:
 ${context ? `Ngữ cảnh: ${context}\n` : ''}
 Văn bản tiếng Anh:
 """
@@ -259,6 +316,79 @@ Chỉ trả về bản dịch tiếng Việt, không kèm lời dẫn hay giải
     console.error('Error translating text:', error);
     const msg = error instanceof Error ? error.message : 'Lỗi khi dịch thuật';
     return res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * Quick Single-Word / Phrase Contextual Lookup for Saving to SRS Flashcards from Reading/Listening
+ */
+app.post('/api/ai/quick-vocab-lookup', async (req, res) => {
+  const { word = '', contextSentence = '' } = req.body || {};
+  const cleanWord = String(word || '').trim().slice(0, 80);
+  const cleanContext = String(contextSentence || '').trim().slice(0, 500);
+
+  if (!cleanWord) {
+    return res.status(400).json({ error: 'Vui lòng nhập từ hoặc cụm từ tiếng Anh.' });
+  }
+
+  try {
+    const prompt = `Phân tích từ/cụm từ tiếng Anh "${cleanWord}"${
+      cleanContext ? ` trong ngữ cảnh câu: "${cleanContext}"` : ''
+    } phục vụ ôn thi VSTEP B1–B2–C1.
+Trả về JSON gồm:
+- word: dạng nguyên mẫu hoặc cụm từ chuẩn
+- phonetic: phiên âm IPA chuẩn quốc tế (ví dụ "/ˌæk.əˈdem.ɪk/")
+- partOfSpeech: một trong "n", "v", "adj", "adv", "phr"
+- meaningVi: nghĩa tiếng Việt súc tích, sát ngữ cảnh nhất
+- exampleEn: câu ví dụ tiếng Anh (ưu tiên giữ câu ngữ cảnh nếu phù hợp hoặc viết câu chuẩn VSTEP B1-B2)
+- exampleVi: bản dịch tiếng Việt của câu ví dụ
+- collocations: 1-2 cụm từ đi kèm thông dụng (collocations/synonyms)`;
+
+    const response = await generateGeminiSafe({
+      preferredModels: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'],
+      contents: prompt,
+      timeoutMs: 15000,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            word: { type: Type.STRING },
+            phonetic: { type: Type.STRING },
+            partOfSpeech: { type: Type.STRING },
+            meaningVi: { type: Type.STRING },
+            exampleEn: { type: Type.STRING },
+            exampleVi: { type: Type.STRING },
+            collocations: { type: Type.STRING },
+          },
+          required: ['word', 'phonetic', 'partOfSpeech', 'meaningVi', 'exampleEn', 'exampleVi'],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    return res.json({
+      word: parsed.word || cleanWord,
+      phonetic: parsed.phonetic || '',
+      partOfSpeech: ['n', 'v', 'adj', 'adv', 'phr'].includes(String(parsed.partOfSpeech).toLowerCase())
+        ? String(parsed.partOfSpeech).toLowerCase()
+        : 'n',
+      meaningVi: parsed.meaningVi || '',
+      exampleEn: parsed.exampleEn || cleanContext || `This is an example with ${cleanWord}.`,
+      exampleVi: parsed.exampleVi || '',
+      collocations: parsed.collocations || '',
+    });
+  } catch (err) {
+    console.warn('Quick vocab lookup fallback:', err);
+    return res.json({
+      word: cleanWord,
+      phonetic: '',
+      partOfSpeech: cleanWord.includes(' ') ? 'phr' : 'n',
+      meaningVi: '',
+      exampleEn: cleanContext || `We encountered the term "${cleanWord}" in the VSTEP reading passage.`,
+      exampleVi: '',
+      collocations: '',
+    });
   }
 });
 
@@ -692,39 +822,49 @@ app.post('/api/ai/diagnostic', async (req, res) => {
     let writingContext = 'Thí sinh không làm phần thi Viết (Writing).';
     if (writingSubmission && (writingSubmission.task1Text || writingSubmission.task2Text)) {
       writingContext = `
-Bài Viết Task 1 (${writingSubmission.task1WordCount || 0} từ):
+Bài Viết Task 1 - Thư/Email (${writingSubmission.task1WordCount || 0} từ · Chuẩn VSTEP ≥ 120 từ, trọng số 1/3):
 ${writingSubmission.task1Text || '(Chưa nộp)'}
 
-Bài Viết Task 2 (${writingSubmission.task2WordCount || 0} từ):
+Bài Viết Task 2 - Bài luận Essay (${writingSubmission.task2WordCount || 0} từ · Chuẩn VSTEP ≥ 250 từ, trọng số 2/3):
 ${writingSubmission.task2Text || '(Chưa nộp)'}
 `;
     }
 
-    const systemInstruction = `Bạn là một Chuyên gia Khảo thí và Giảng viên cấp cao về chứng chỉ tiếng Anh LanguageCert International ESOL (IESOL B1 Achiever) và LTE (LanguageCert Test of English).
-Nhiệm vụ của bạn là phân tích kết quả bài thi của học viên, chỉ ra điểm mạnh cụ thể, các điểm yếu/bẫy đề thi cần khắc phục theo syllabus LanguageCert, chấm nhận xét bài viết (nếu có), đề xuất lộ trình ôn tập 4 tuần thiết thực và gửi lời động viên chân thành.
-Sử dụng tiếng Việt chuẩn mực, ấm áp, mang tính sư phạm cao. Các thuật ngữ chuyên môn hoặc tên sách có thể kèm tiếng Anh.`;
+    const toScale10 = (val?: number, max = 10) => {
+      if (val === undefined || val === null) return 0;
+      if (max > 10 || val > 10) return Number(((val / (max > 10 ? max : 50)) * 10).toFixed(1));
+      return Number(val.toFixed(1));
+    };
 
-    const prompt = `Phân tích kết quả thi LanguageCert B1 của học viên:
-- Tổng điểm Scaled Score: ${totalScore}/${maxScore}
-- Bậc CEFR quy đổi: ${cefrLevel}
-- Xếp loại kết quả: ${grade}
-- Điểm Nghe (Listening Scaled): ${listeningScaled}/50
-- Điểm Đọc (Reading Scaled): ${readingScaled}/50
-- Điểm Viết (Writing Scaled): ${writingScaled !== undefined ? `${writingScaled}/50` : 'Không thi'}
+    const overall10 = toScale10(totalScore, maxScore || 10);
+    const listening10 = toScale10(listeningScaled, 10);
+    const reading10 = toScale10(readingScaled, 10);
+    const writing10 = writingScaled !== undefined ? toScale10(writingScaled, 10) : undefined;
+
+    const systemInstruction = `Bạn là Chuyên gia Khảo thí Quốc gia và Giảng viên Cấp cao về kỳ thi Đánh giá năng lực Tiếng Anh bậc 3–5 theo Khung năng lực ngoại ngữ 6 bậc dùng cho Việt Nam (VSTEP B1–B2–C1 của Bộ Giáo dục và Đào tạo).
+Nhiệm vụ của bạn là phân tích chuyên sâu kết quả bài thi VSTEP trên thang điểm 10 (B1: 4.0–5.5, B2: 6.0–8.0, C1: 8.5–10.0), chỉ ra điểm mạnh cụ thể, các điểm yếu/bẫy đề thi cần khắc phục theo đúng định dạng đề thi VSTEP 4 kỹ năng (Listening 3 Part 35 câu, Reading 4 Passages 40 câu, Writing Task 1 Thư ≥ 120 từ & Task 2 Essay ≥ 250 từ, Speaking 3 Part), nhận xét bài viết theo 4 tiêu chí VSTEP, đề xuất lộ trình ôn tập 4 tuần thiết thực và gửi lời động viên chân thành.
+Sử dụng tiếng Việt chuẩn mực, ấm áp, mang tính sư phạm cao.`;
+
+    const prompt = `Phân tích kết quả thi VSTEP B1–B2–C1 (Thang điểm 10 Bộ GD&ĐT) của học viên:
+- Điểm Tổng Kết VSTEP (Thang 10): ${overall10.toFixed(1)}/10.0
+- Bậc năng lực đạt được: ${cefrLevel} (${grade})
+- Điểm Nghe (Listening): ${listening10.toFixed(1)}/10.0
+- Điểm Đọc (Reading): ${reading10.toFixed(1)}/10.0
+- Điểm Viết (Writing): ${writing10 !== undefined ? `${writing10.toFixed(1)}/10.0` : 'Không thi'}
 
 Chi tiết từng phần thi:
 ${partsSummary}
 
-Dữ liệu bài thi Viết:
+Dữ liệu bài thi Viết VSTEP:
 ${writingContext}
 
 Hãy trả về kết quả định dạng JSON với cấu trúc:
-1. strengths: Mảng các điểm mạnh cụ thể dựa trên các phần làm tốt nhất.
-2. weaknesses: Mảng các điểm yếu và bẫy đề thi cần tránh (dựa trên các phần sai nhiều).
-3. writingFeedback: Nhận xét chi tiết bài viết (nếu có nộp) theo 4 tiêu chí LanguageCert: Hoàn thành nhiệm vụ (Task Fulfillment), Mạch lạc liên kết (Cohesion), Vốn từ (Lexis), Ngữ pháp (Grammar). Nếu không nộp bài viết thì tóm tắt yêu cầu chuẩn B1.
-4. studyPlan: Lộ trình 4 tuần cải thiện điểm số (Tuần 1 đến 4), mỗi tuần nêu rõ kỹ năng trọng tâm, bài tập khuyến nghị và điểm ngữ pháp cần nắm.
-5. recommendedResources: Danh mục sách và tài nguyên học tập chuẩn (như English Vocabulary in Use, Business Grammar Builder, BBC 6 Minute English).
-6. encouragement: Lời động viên truyền cảm hứng và mẹo kiểm soát tâm lý, phân bổ thời gian trong phòng thi.`;
+1. strengths: Mảng các điểm mạnh cụ thể dựa trên các phần làm tốt nhất (theo thang 10 VSTEP).
+2. weaknesses: Mảng các điểm yếu và bẫy đề thi VSTEP cần tránh (dựa trên các phần sai nhiều).
+3. writingFeedback: Nhận xét chi tiết bài viết (nếu có nộp) theo 4 tiêu chí Rubrics VSTEP Bộ GD&ĐT: Task Fulfillment (Hoàn thành nhiệm vụ · Task 1 ≥ 120 từ trọng số 1/3, Task 2 ≥ 250 từ trọng số 2/3), Organization (Bố cục & Mạch lạc), Vocabulary (Từ vựng học thuật), Grammar (Độ đa dạng & Chính xác ngữ pháp).
+4. studyPlan: Lộ trình 4 tuần nâng bậc VSTEP (Tuần 1 đến 4), mỗi tuần nêu rõ kỹ năng trọng tâm, bài tập khuyến nghị và điểm ngữ pháp cần nắm.
+5. recommendedResources: Danh mục tài liệu ôn luyện VSTEP B1–B2–C1 chuẩn mực.
+6. encouragement: Lời động viên truyền cảm hứng và chiến thuật phân bổ thời gian trong phòng thi VSTEP.`;
 
     const response = await generateGeminiSafe({
       preferredModels: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'],
@@ -790,7 +930,6 @@ Hãy trả về kết quả định dạng JSON với cấu trúc:
     return res.json(parsedJson);
   } catch (error: unknown) {
     console.warn('Gemini diagnostic call encountered issue, deploying pedagogical fallback:', error);
-    // Intelligent fallback guaranteed to succeed with deep pedagogical accuracy
     const fallback = generateSmartDiagnosticReport({
       totalScore,
       maxScore,
@@ -808,8 +947,8 @@ Hãy trả về kết quả định dạng JSON với cấu trúc:
 
 /**
  * Strict AI Writing Examiner Endpoint (/api/ai/grade-writing)
- * Evaluates Writing Part 1 & Part 2 strictly against the official LanguageCert B1 4-criteria rubric
- * (Task Fulfilment, Accuracy & Range of Grammar, Accuracy & Range of Vocabulary, Organization & Cohesion; 0-3 each = 12 marks/task)
+ * Evaluates Writing Task 1 & Task 2 strictly against the official VSTEP B1-B2-C1 4-criteria rubric
+ * (Task Fulfilment, Organization & Cohesion, Vocabulary, Grammar; 0-3 each = 12 marks/task, VSTEP formula = (Task1 + Task2 * 2) / 3 on 10-point scale)
  */
 app.post('/api/ai/grade-writing', async (req, res) => {
   const { writingSubmission, writingTasks = [] } = req.body || {};
@@ -819,21 +958,20 @@ app.post('/api/ai/grade-writing', async (req, res) => {
   const task2Words = Number(writingSubmission?.task2WordCount || 0);
 
   const task1Prompt = writingTasks[0] || {
-    title: 'Writing Part 1',
-    instruction: 'Respond to the notice/email covering all 3 bullet points (70-100 words).',
+    title: 'Writing Task 1 (Letter / Email Writing)',
+    instruction: 'Write a letter or email responding to the given situation (at least 120 words).',
     bulletPoints: [],
-    minWords: 70,
-    maxWords: 100,
+    minWords: 120,
+    maxWords: 180,
   };
   const task2Prompt = writingTasks[1] || {
-    title: 'Writing Part 2',
-    instruction: 'Write an informal letter/email covering the required functions (100-120 words).',
+    title: 'Writing Task 2 (Essay Writing)',
+    instruction: 'Write an academic essay on the given topic (at least 250 words).',
     bulletPoints: [],
-    minWords: 100,
-    maxWords: 120,
+    minWords: 250,
+    maxWords: 320,
   };
 
-  // If both tasks are completely empty, return 0 immediately
   if (!task1Text && !task2Text) {
     return res.json({
       task1Score: 0,
@@ -844,9 +982,9 @@ app.post('/api/ai/grade-writing', async (req, res) => {
         vocabulary: 0,
         organization: 0,
         total: 0,
-        feedbackVi: 'Thí sinh bỏ trống hoàn toàn Writing Part 1 (0/12 điểm).',
+        feedbackVi: 'Thí sinh bỏ trống hoàn toàn Writing Task 1 (0/12 điểm).',
         strengthsVi: [],
-        improvementsVi: ['Cần viết tối thiểu 70–100 từ và trả lời đủ 3 ý yêu cầu của đề bài.'],
+        improvementsVi: ['Cần viết thư/email tối thiểu 120 từ và trả lời đầy đủ tất cả các yêu cầu trong đề bài.'],
         correctedSample: task1Prompt.sampleAnswer || '',
       },
       task2Criteria: {
@@ -855,39 +993,38 @@ app.post('/api/ai/grade-writing', async (req, res) => {
         vocabulary: 0,
         organization: 0,
         total: 0,
-        feedbackVi: 'Thí sinh bỏ trống hoàn toàn Writing Part 2 (0/12 điểm).',
+        feedbackVi: 'Thí sinh bỏ trống hoàn toàn Writing Task 2 (0/12 điểm).',
         strengthsVi: [],
-        improvementsVi: ['Cần viết tối thiểu 100–120 từ và hoàn thành đủ 2 mục đích giao tiếp của đề bài.'],
+        improvementsVi: ['Cần viết bài luận (Essay) tối thiểu 250 từ với bố cục 4 đoạn rõ ràng.'],
         correctedSample: task2Prompt.sampleAnswer || '',
       },
-      overallBandComment: 'Thí sinh chưa nộp bài viết cho cả 2 phần Writing Part 1 và Part 2 (0/24 điểm).',
+      overallBandComment: 'Thí sinh chưa nộp bài viết cho cả 2 phần Writing Task 1 và Task 2 (0.0/10 điểm VSTEP).',
       isAiGraded: true,
     });
   }
 
   try {
-    const systemInstruction = `Bạn là Giám khảo Chấm thi Chính thức (Chief Writing Examiner) của Hội đồng Khảo thí Quốc tế PeopleCert / LanguageCert International ESOL (IESOL B1 Achiever).
-Nhiệm vụ của bạn là chấm điểm NGHIÊM NGẶT, KHÁCH QUAN và CHÍNH XÁC tuyệt đối cho bài thi Writing Part 1 và Writing Part 2 của thí sinh theo đúng Barem 4 Tiêu chí chính thức của LanguageCert:
+    const systemInstruction = `Bạn là Giám khảo Chấm thi Viết Cấp cao (Chief VSTEP Writing Examiner) theo đúng Quy chế Đánh giá năng lực Tiếng Anh bậc 3–5 (VSTEP B1–B2–C1) của Bộ Giáo dục và Đào tạo Việt Nam.
+Nhiệm vụ của bạn là chấm điểm NGHIÊM NGẶT, KHÁCH QUAN và CHÍNH XÁC tuyệt đối cho bài thi Writing Task 1 (Thư/Email, chiếm 1/3 tổng điểm) và Writing Task 2 (Bài luận Essay, chiếm 2/3 tổng điểm) theo đúng Barem 4 Tiêu chí chuẩn VSTEP:
 1. Task Fulfilment (Hoàn thành nhiệm vụ: 0 - 3 điểm):
-   - 3 điểm: Trả lời đầy đủ, rõ ràng tất cả các ý bắt buộc (bullet points), đúng văn phong (trang trọng/thân mật), số từ nằm trong khoảng chuẩn (Part 1: 70-100 từ; Part 2: 100-120 từ).
-   - 2 điểm: Trả lời được hầu hết các ý nhưng còn sơ sài 1 ý, hoặc số từ thiếu/vượt nhẹ.
-   - 1 điểm: Bỏ sót nhiều ý quan trọng, lạc đề một phần, hoặc bài viết quá ngắn (< 45 từ cho Part 1 hoặc < 65 từ cho Part 2).
-   - 0 điểm: Bỏ trống, viết dưới 15 từ, chép lại đề bài, viết tiếng Việt hoặc hoàn toàn lạc đề.
-2. Accuracy & Range of Grammar (Ngữ pháp: 0 - 3 điểm):
-   - Đánh giá độ đa dạng cấu trúc câu chuẩn B1 (câu ghép, mệnh đề quan hệ, câu điều kiện, các thì hoàn thành/tương lai) và mức độ chính xác.
-3. Accuracy & Range of Vocabulary (Từ vựng: 0 - 3 điểm):
-   - Đánh giá vốn từ vựng theo chủ đề, collocations và chính tả. Trừ điểm nghiêm khắc nếu lặp từ hoặc sai chính tả nhiều.
-4. Organization & Cohesion (Bố cục & Liên kết: 0 - 3 điểm):
-   - Đánh giá việc chia đoạn văn rõ ràng (Mở bài - Thân bài - Kết thư), lời chào đầu thư/cuối thư và sử dụng từ nối (however, therefore, furthermore, in addition, regarding...).
+   - 3 điểm: Giải quyết trọn vẹn mọi yêu cầu của đề bài, đúng thể loại và văn phong (Trang trọng / Thân mật cho Task 1; Học thuật cho Task 2), đạt chuẩn độ dài VSTEP (Task 1 ≥ 120 từ; Task 2 ≥ 250 từ).
+   - 2 điểm: Trả lời được hầu hết các yêu cầu nhưng triển khai 1 ý còn nông, hoặc thiếu từ nhẹ (Task 1: 90–119 từ; Task 2: 190–249 từ).
+   - 1 điểm: Bỏ sót ý quan trọng, lạc đề một phần, hoặc bài viết quá ngắn (Task 1 < 85 từ; Task 2 < 180 từ).
+   - 0 điểm: Bỏ trống, viết dưới 20 từ, chép lại đề bài hoặc hoàn toàn lạc đề.
+2. Organization & Cohesion (Bố cục & Mạch lạc: 0 - 3 điểm):
+   - Đánh giá cấu trúc đoạn văn rõ ràng (Mở bài - Thân bài - Kết luận), sử dụng từ nối học thuật (linking devices) và phép quy chiếu mạch lạc.
+3. Vocabulary (Vốn từ vựng: 0 - 3 điểm):
+   - Đánh giá độ rộng vốn từ B1–B2–C1, khả năng Paraphrasing, sử dụng Collocations và độ chính xác chính tả.
+4. Grammar (Độ đa dạng & Chính xác Ngữ pháp: 0 - 3 điểm):
+   - Đánh giá khả năng kết hợp câu đơn và câu phức (mệnh đề quan hệ, câu điều kiện, đảo ngữ, câu bị động) và kiểm soát lỗi ngữ pháp.
 
 QUY TẮC NGHIÊM NGẶT:
 - Nếu phần nào thí sinh bỏ trống (0 từ), BẮT BUỘC chấm 0 điểm cho cả 4 tiêu chí của phần đó (total = 0).
-- Tuyệt đối KHÔNG chấm điểm nương tay theo kiểu đếm số từ. Nếu viết đủ số từ nhưng sai ngữ pháp nặng, lạc đề hoặc viết vô nghĩa thì vẫn bị điểm thấp (1-4/12).
 - Tổng điểm mỗi Task (total) PHẢI bằng tổng của (taskFulfilment + grammar + vocabulary + organization) trên thang 0..12.`;
 
-    const prompt = `HÃY CHẤM BÀI THI WRITING LANGUAGECERT B1 SAU ĐÂY THEO BAREM NGHIÊM NGẶT:
+    const prompt = `HÃY CHẤM BÀI THI VSTEP WRITING (B1–B2–C1) SAU ĐÂY THEO RUBRICS BỘ GD&ĐT:
 
-=== WRITING PART 1 (Yêu cầu ${task1Prompt.minWords || 70}–${task1Prompt.maxWords || 100} từ, tối đa 12 điểm) ===
+=== WRITING TASK 1: LETTER / EMAIL (Yêu cầu tối thiểu ${task1Prompt.minWords || 120} từ · Trọng số 1/3 · Tối đa 12 điểm raw) ===
 - Đề bài: ${task1Prompt.instruction || ''}
 - Ngữ cảnh: ${task1Prompt.stimulusText || ''}
 - Các ý bắt buộc: ${(task1Prompt.bulletPoints || []).join(' | ')}
@@ -896,7 +1033,7 @@ QUY TẮC NGHIÊM NGẶT:
 ${task1Text || '(THÍ SINH BỎ TRỐNG PHẦN NÀY)'}
 """
 
-=== WRITING PART 2 (Yêu cầu ${task2Prompt.minWords || 100}–${task2Prompt.maxWords || 120} từ, tối đa 12 điểm) ===
+=== WRITING TASK 2: ESSAY (Yêu cầu tối thiểu ${task2Prompt.minWords || 250} từ · Trọng số 2/3 · Tối đa 12 điểm raw) ===
 - Đề bài: ${task2Prompt.instruction || ''}
 - Ngữ cảnh: ${task2Prompt.stimulusText || ''}
 - Các ý bắt buộc: ${(task2Prompt.bulletPoints || []).join(' | ')}
@@ -915,7 +1052,7 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
         vocabulary: { type: Type.NUMBER, description: 'Điểm tiêu chí Vocabulary (0-3)' },
         organization: { type: Type.NUMBER, description: 'Điểm tiêu chí Organization & Cohesion (0-3)' },
         total: { type: Type.NUMBER, description: 'Tổng điểm Task (0-12)' },
-        feedbackVi: { type: Type.STRING, description: 'Nhận xét chi tiết từng tiêu chí bằng tiếng Việt' },
+        feedbackVi: { type: Type.STRING, description: 'Nhận xét chi tiết từng tiêu chí bằng tiếng Việt theo chuẩn VSTEP' },
         strengthsVi: {
           type: Type.ARRAY,
           items: { type: Type.STRING },
@@ -924,11 +1061,11 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
         improvementsVi: {
           type: Type.ARRAY,
           items: { type: Type.STRING },
-          description: 'Các lỗi sai cụ thể (ngữ pháp, từ vựng, ý thiếu) kèm cách sửa chi tiết',
+          description: 'Các lỗi sai cụ thể (ngữ pháp, từ vựng, độ dài, ý thiếu) kèm cách sửa chi tiết',
         },
         correctedSample: {
           type: Type.STRING,
-          description: 'Bài viết đã được AI nâng cấp và sửa lỗi hoàn chỉnh lên chuẩn B1 High Pass',
+          description: 'Bài viết đã được AI nâng cấp và sửa lỗi hoàn chỉnh lên chuẩn VSTEP B2–C1 (Band 7.5–8.5/10)',
         },
       },
       required: [
@@ -958,7 +1095,7 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
             task2Criteria: criterionSchema,
             overallBandComment: {
               type: Type.STRING,
-              description: 'Tổng kết đánh giá năng lực Viết chung và lời khuyên chiến thuật phòng thi',
+              description: 'Tổng kết đánh giá năng lực Viết theo công thức VSTEP (Task 1 + Task 2 × 2)/3 trên thang điểm 10',
             },
           },
           required: ['task1Criteria', 'task2Criteria', 'overallBandComment'],
@@ -978,7 +1115,7 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
           total: 0,
           feedbackVi: 'Thí sinh bỏ trống phần viết này (0/12 điểm).',
           strengthsVi: [],
-          improvementsVi: ['Cần hoàn thành bài viết đầy đủ theo yêu cầu đề bài.'],
+          improvementsVi: ['Cần hoàn thành bài viết đầy đủ theo yêu cầu độ dài chuẩn VSTEP Bộ GD&ĐT.'],
           correctedSample: '',
         };
       }
@@ -1002,6 +1139,9 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
 
     const c1 = normalizeCriteria(parsed.task1Criteria, !task1Text);
     const c2 = normalizeCriteria(parsed.task2Criteria, !task2Text);
+    const t1Band10 = (c1.total / 12) * 10;
+    const t2Band10 = (c2.total / 12) * 10;
+    const vstepWriting10 = Math.round(((t1Band10 + t2Band10 * 2) / 3) * 2) / 2;
 
     return res.json({
       task1Score: c1.total,
@@ -1010,12 +1150,215 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
       task2Criteria: c2,
       overallBandComment:
         parsed.overallBandComment ||
-        `Tổng điểm Writing đạt ${c1.total + c2.total}/24 điểm raw (${Math.round(((c1.total + c2.total) / 24) * 50)}/50 điểm quy đổi).`,
+        `Điểm Writing VSTEP đạt ${vstepWriting10.toFixed(1)}/10.0 theo công thức Bộ GD&ĐT: (Task 1 [${t1Band10.toFixed(1)}] + Task 2 [${t2Band10.toFixed(1)}] × 2) / 3.`,
       isAiGraded: true,
     });
   } catch (err) {
     console.warn('Error in /api/ai/grade-writing, returning strict rubric evaluation:', err);
     return res.status(500).json({ error: 'Không thể kết nối AI chấm bài lúc này.' });
+  }
+});
+
+/**
+ * Strict AI Speaking Examiner Endpoint (/api/ai/grade-speaking)
+ * Evaluates VSTEP Speaking Part 1 (Social Interaction), Part 2 (Solution Discussion), and Part 3 (Topic Development)
+ * strictly against the 5 official VSTEP Speaking Criteria on a 0–10 scale (rounded to 0.5).
+ */
+app.post('/api/ai/grade-speaking', async (req, res) => {
+  const { speakingSubmission, speakingTasks = [] } = req.body || {};
+  const part1Text = String(speakingSubmission?.part1Text || '').trim();
+  const part2Text = String(speakingSubmission?.part2Text || '').trim();
+  const part3Text = String(speakingSubmission?.part3Text || '').trim();
+  const part1Words = Number(speakingSubmission?.part1WordCount || 0);
+  const part2Words = Number(speakingSubmission?.part2WordCount || 0);
+  const part3Words = Number(speakingSubmission?.part3WordCount || 0);
+
+  if (!part1Text && !part2Text && !part3Text) {
+    return res.status(400).json({ error: 'Thí sinh chưa có nội dung bài nói (Transcript) để chấm bằng AI.' });
+  }
+
+  try {
+    const systemInstruction = `Bạn là Giám khảo Chấm thi Nói Cấp cao (Chief VSTEP Speaking Examiner) theo đúng Quy chế Đánh giá năng lực Tiếng Anh bậc 3–5 (VSTEP B1–B2–C1) của Bộ Giáo dục và Đào tạo Việt Nam.
+Nhiệm vụ của bạn là chấm điểm NGHIÊM NGẶT, KHÁCH QUAN và CHÍNH XÁC cho 3 phần thi Speaking của thí sinh theo đúng 5 Tiêu chí chấm Speaking VSTEP trên thang điểm 0–10:
+1. Grammar (Độ đa dạng & chính xác cấu trúc ngữ pháp: 0–10)
+2. Vocabulary (Vốn từ vựng giao tiếp & học thuật theo chủ đề: 0–10)
+3. Pronunciation (Khả năng phát âm, trọng âm và ngữ điệu thể hiện qua độ tự nhiên của lời nói/văn bản thu âm: 0–10)
+4. Fluency (Độ trôi chảy, khả năng phát triển ý liên tục không ngập ngừng: 0–10)
+5. Discourse Management (Tổ chức diễn ngôn, sử dụng từ nối dẫn dắt lập luận ở Part 1 Social Interaction, Part 2 Solution Discussion, Part 3 Topic Development Mind-map: 0–10)
+
+QUY TẮC NGHIÊM NGẶT:
+- Nếu Part nào thí sinh bỏ trống hoàn toàn, chấm 0 điểm cho cả 5 tiêu chí của Part đó (total10 = 0).
+- Điểm trung bình mỗi Part (total10) làm tròn đến 0.5 trên thang 10.`;
+
+    const p1Task = speakingTasks[0] || {};
+    const p2Task = speakingTasks[1] || {};
+    const p3Task = speakingTasks[2] || {};
+
+    const p1ClusterSummary = Array.isArray(p1Task.topicClusters)
+      ? p1Task.topicClusters
+          .map(
+            (c: any) =>
+              `${c.topicTitle || ''}: ${Array.isArray(c.questions) ? c.questions.join(' / ') : ''}`
+          )
+          .join(' | ')
+      : [
+          p1Task.topic1Title
+            ? `${p1Task.topic1Title}: ${(p1Task.topic1Questions || []).join(' / ')}`
+            : '',
+          p1Task.topic2Title
+            ? `${p1Task.topic2Title}: ${(p1Task.topic2Questions || []).join(' / ')}`
+            : '',
+          ...(p1Task.questions || []),
+        ]
+          .filter(Boolean)
+          .join(' | ');
+
+    const p2SituationSummary =
+      p2Task.situation || p2Task.situationText || p2Task.instruction || '';
+    const p2OptionsSummary = (p2Task.options || p2Task.solutionOptions || []).join(' / ');
+
+    const p3TopicSummary =
+      p3Task.topicStatement ||
+      p3Task.centralTopic ||
+      p3Task.mindMap?.centralIdea ||
+      p3Task.mindMap?.centerTopic ||
+      p3Task.title ||
+      '';
+    const p3NodesSummary = (
+      p3Task.mindMap?.nodes ||
+      p3Task.mindMapNodes ||
+      []
+    ).join(' / ');
+    const p3FollowUpSummary = (p3Task.followUpQuestions || []).join(' / ');
+
+    const prompt = `HÃY CHẤM BÀI THI VSTEP SPEAKING (3 PART · THANG ĐIỂM 10 BỘ GD&ĐT) SAU ĐÂY:
+
+=== SPEAKING PART 1: SOCIAL INTERACTION (3 phút) ===
+- Chủ đề / Câu hỏi: ${p1Task.title || ''} | ${p1ClusterSummary}
+- Nội dung trả lời của thí sinh (${part1Words} từ):
+"""
+${part1Text || '(THÍ SINH BỎ TRỐNG PHẦN NÀY)'}
+"""
+
+=== SPEAKING PART 2: SOLUTION DISCUSSION (4 phút) ===
+- Tình huống & 3 lựa chọn: ${p2SituationSummary} | Các phương án: ${p2OptionsSummary}
+- Nội dung trả lời của thí sinh (${part2Words} từ):
+"""
+${part2Text || '(THÍ SINH BỎ TRỐNG PHẦN NÀY)'}
+"""
+
+=== SPEAKING PART 3: TOPIC DEVELOPMENT MIND-MAP (5 phút) ===
+- Chủ đề trung tâm: ${p3TopicSummary} | Các nhánh gợi ý: ${p3NodesSummary} | Câu hỏi phụ: ${p3FollowUpSummary}
+- Nội dung trả lời của thí sinh (${part3Words} từ):
+"""
+${part3Text || '(THÍ SINH BỎ TRỐNG PHẦN NÀY)'}
+"""
+
+Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
+
+    const partCriterionSchema = {
+      type: Type.OBJECT,
+      properties: {
+        grammar: { type: Type.NUMBER, description: 'Điểm Grammar (0-10)' },
+        vocabulary: { type: Type.NUMBER, description: 'Điểm Vocabulary (0-10)' },
+        pronunciation: { type: Type.NUMBER, description: 'Điểm Pronunciation (0-10)' },
+        fluency: { type: Type.NUMBER, description: 'Điểm Fluency (0-10)' },
+        discourseManagement: { type: Type.NUMBER, description: 'Điểm Discourse Management (0-10)' },
+        total10: { type: Type.NUMBER, description: 'Điểm trung bình Part trên thang 10 (làm tròn 0.5)' },
+        feedbackVi: { type: Type.STRING, description: 'Nhận xét chi tiết của Giám khảo VSTEP bằng tiếng Việt' },
+        strengthsVi: { type: Type.ARRAY, items: { type: Type.STRING } },
+        improvementsVi: { type: Type.ARRAY, items: { type: Type.STRING } },
+      },
+      required: [
+        'grammar',
+        'vocabulary',
+        'pronunciation',
+        'fluency',
+        'discourseManagement',
+        'total10',
+        'feedbackVi',
+        'strengthsVi',
+        'improvementsVi',
+      ],
+    };
+
+    const response = await generateGeminiSafe({
+      preferredModels: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'],
+      contents: prompt,
+      timeoutMs: 25000,
+      config: {
+        systemInstruction,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            part1Criteria: partCriterionSchema,
+            part2Criteria: partCriterionSchema,
+            part3Criteria: partCriterionSchema,
+            overallBandComment: { type: Type.STRING },
+          },
+          required: ['part1Criteria', 'part2Criteria', 'part3Criteria', 'overallBandComment'],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    const roundHalf = (n: number) => Math.round(Math.max(0, Math.min(10, n)) * 2) / 2;
+
+    const normalizePart = (c: any, isEmpty: boolean, partNum: number) => {
+      if (isEmpty || !c) {
+        return {
+          grammar: 0,
+          vocabulary: 0,
+          pronunciation: 0,
+          fluency: 0,
+          discourseManagement: 0,
+          total10: 0,
+          feedbackVi: `Thí sinh chưa trả lời Speaking Part ${partNum} (0.0/10 điểm).`,
+          strengthsVi: [],
+          improvementsVi: [`Cần thu âm hoặc nhập bài nói đầy đủ cho Speaking Part ${partNum}.`],
+        };
+      }
+      const gr = roundHalf(Number(c.grammar) || 0);
+      const vc = roundHalf(Number(c.vocabulary) || 0);
+      const pr = roundHalf(Number(c.pronunciation) || 0);
+      const fl = roundHalf(Number(c.fluency) || 0);
+      const dm = roundHalf(Number(c.discourseManagement) || 0);
+      const avg = roundHalf((gr + vc + pr + fl + dm) / 5);
+      return {
+        grammar: gr,
+        vocabulary: vc,
+        pronunciation: pr,
+        fluency: fl,
+        discourseManagement: dm,
+        total10: avg,
+        feedbackVi: String(c.feedbackVi || ''),
+        strengthsVi: Array.isArray(c.strengthsVi) ? c.strengthsVi : [],
+        improvementsVi: Array.isArray(c.improvementsVi) ? c.improvementsVi : [],
+      };
+    };
+
+    const p1 = normalizePart(parsed.part1Criteria, !part1Text, 1);
+    const p2 = normalizePart(parsed.part2Criteria, !part2Text, 2);
+    const p3 = normalizePart(parsed.part3Criteria, !part3Text, 3);
+    const overallBand10 = roundHalf(p1.total10 * 0.25 + p2.total10 * 0.35 + p3.total10 * 0.4);
+
+    return res.json({
+      part1Score: p1.total10,
+      part2Score: p2.total10,
+      part3Score: p3.total10,
+      overallBand10,
+      part1Criteria: p1,
+      part2Criteria: p2,
+      part3Criteria: p3,
+      overallBandComment:
+        parsed.overallBandComment ||
+        `Tổng điểm Speaking VSTEP đạt ${overallBand10.toFixed(1)}/10.0 (Part 1: ${p1.total10.toFixed(1)} · Part 2: ${p2.total10.toFixed(1)} · Part 3: ${p3.total10.toFixed(1)}).`,
+      isAiGraded: true,
+    });
+  } catch (err) {
+    console.warn('Error in /api/ai/grade-speaking:', err);
+    return res.status(500).json({ error: 'Không thể kết nối AI chấm Speaking lúc này.' });
   }
 });
 
@@ -1039,10 +1382,20 @@ function resolveExistingServerAudioFile(
 ): { resolvedKey: string; audioPath: string; metaPath: string } | null {
   const candidates: string[] = [];
   const primaryKey = sanitizeServerAudioKey(rawKey);
-  if (primaryKey) candidates.push(primaryKey);
+  if (primaryKey) {
+    candidates.push(primaryKey);
+    const withPrefix = primaryKey.startsWith('vstep_') ? primaryKey : `vstep_${primaryKey}`;
+    const withoutPrefix = primaryKey.replace(/^vstep_/, '');
+    if (!candidates.includes(withPrefix)) candidates.push(withPrefix);
+    if (withoutPrefix && !candidates.includes(withoutPrefix)) candidates.push(withoutPrefix);
+  }
 
   if (fallbackFileName) {
     const aliasKey = sanitizeServerAudioKey(`file_${fallbackFileName}`);
+    const vstepAliasKey = sanitizeServerAudioKey(`vstep_file_${fallbackFileName}`);
+    if (vstepAliasKey && !candidates.includes(vstepAliasKey)) {
+      candidates.push(vstepAliasKey);
+    }
     if (aliasKey && !candidates.includes(aliasKey)) {
       candidates.push(aliasKey);
     }
@@ -1092,6 +1445,218 @@ app.get('/api/audio/exists/:key', (req, res) => {
     });
   } catch {
     return res.json({ exists: false });
+  }
+});
+
+/**
+ * Canonical Test Audio Discovery Endpoint (`GET /api/audio/discover/:testId`)
+ * Allows any student device to immediately discover all uploaded MP3s or configured external links for a testId
+ */
+app.get('/api/audio/discover/:testId', (req, res) => {
+  try {
+    const testId = String(req.params.testId || '').trim();
+    if (!testId) {
+      return res.status(400).json({ error: 'Missing testId' });
+    }
+
+    const testsMap = readServerTestsMap();
+    const savedTest = testsMap[testId] || null;
+
+    const inspectSlot = (slotSuffix: string, fallbackFile?: string) => {
+      const found = resolveExistingServerAudioFile(`vstep_${testId}_${slotSuffix}`, fallbackFile);
+      if (!found) return null;
+      try {
+        const stat = fs.statSync(found.audioPath);
+        let meta: Record<string, unknown> = {};
+        if (fs.existsSync(found.metaPath)) {
+          meta = JSON.parse(fs.readFileSync(found.metaPath, 'utf-8'));
+        }
+        return {
+          key: found.resolvedKey,
+          byteSize: stat.size,
+          fileName: String(meta.fileName || fallbackFile || `${found.resolvedKey}.mp3`),
+          streamUrl: `/api/audio/stream/${encodeURIComponent(found.resolvedKey)}?v=${stat.mtimeMs}`,
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    const fullSlot = inspectSlot('full', savedTest?.audioFileName);
+    const parts: Record<string, { key: string; byteSize: number; fileName: string; streamUrl: string }> = {};
+    for (const pNum of [1, 2, 3, 4]) {
+      const pKey = `part${pNum}`;
+      const pFound = inspectSlot(pKey, savedTest?.partAudioFileNames?.[pKey]);
+      if (pFound) {
+        parts[pKey] = pFound;
+      }
+    }
+
+    return res.json({
+      testId,
+      full: fullSlot,
+      parts,
+      testConfig: savedTest
+        ? {
+            audioMode: savedTest.audioMode,
+            audioUrl: savedTest.audioUrl,
+            audioFileName: savedTest.audioFileName,
+            partAudioUrls: savedTest.partAudioUrls,
+            partAudioFileNames: savedTest.partAudioFileNames,
+          }
+        : null,
+    });
+  } catch {
+    return res.json({ testId: req.params.testId, full: null, parts: {}, testConfig: null });
+  }
+});
+
+/**
+ * Batch Audio Status Discovery Endpoint (`POST /api/audio/discover-batch`)
+ * Returns audio availability for multiple testIds at once so exam cards can show accurate "Đã có MP3" vs "Chưa gắn MP3" badges.
+ */
+app.post('/api/audio/discover-batch', (req, res) => {
+  try {
+    const rawIds = Array.isArray(req.body?.testIds) ? req.body.testIds : [];
+    const testsMap = readServerTestsMap();
+    const items: Record<
+      string,
+      {
+        hasAudio: boolean;
+        mode: 'single' | 'per_part';
+        partCount: number;
+        label: string;
+      }
+    > = {};
+
+    for (const rawId of rawIds) {
+      const testId = String(rawId || '').trim();
+      if (!testId) continue;
+      const savedTest = testsMap[testId] || null;
+      const fullFound = resolveExistingServerAudioFile(`vstep_${testId}_full`, savedTest?.audioFileName);
+      let partCount = 0;
+      for (const pNum of [1, 2, 3]) {
+        const pKey = `part${pNum}`;
+        const pFound = resolveExistingServerAudioFile(
+          `vstep_${testId}_${pKey}`,
+          savedTest?.partAudioFileNames?.[pKey]
+        );
+        const hasConfiguredPartUrl = Boolean(
+          savedTest?.partAudioUrls?.[pKey] && String(savedTest.partAudioUrls[pKey]).trim().length > 0
+        );
+        if (pFound || hasConfiguredPartUrl) {
+          partCount += 1;
+        }
+      }
+      const hasConfiguredFullUrl = Boolean(
+        savedTest?.audioUrl && String(savedTest.audioUrl).trim().length > 0
+      );
+      const hasFull = Boolean(fullFound || hasConfiguredFullUrl || savedTest?.audioFileName);
+      const hasAny = hasFull || partCount > 0;
+      const isPerPart = savedTest?.audioMode === 'per_part' || (!hasFull && partCount > 0);
+      const label = !hasAny
+        ? 'Chưa gắn MP3'
+        : isPerPart && partCount > 0
+        ? `Đủ ${partCount}/3 Part MP3`
+        : 'Đã có MP3 Cloud';
+
+      items[testId] = {
+        hasAudio: hasAny,
+        mode: isPerPart ? 'per_part' : 'single',
+        partCount,
+        label,
+      };
+    }
+
+    return res.json({ items });
+  } catch {
+    return res.json({ items: {} });
+  }
+});
+
+/**
+ * External Audio & Google Drive Streaming Proxy (`GET /api/audio-proxy?url=...`)
+ * Resolves Google Drive share links (bypassing virus scan confirmation & CORS/cookie restrictions)
+ * and caches downloaded MP3s on disk so HTML5 <audio> supports instant Range seeking on all browsers.
+ */
+app.get('/api/audio-proxy', async (req, res) => {
+  try {
+    const rawUrl = String(req.query.url || '').trim();
+    if (!rawUrl || (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://'))) {
+      return res.status(400).json({ error: 'Invalid external audio URL' });
+    }
+
+    const gdriveMatch =
+      rawUrl.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+      rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    const gdriveFileId = gdriveMatch ? gdriveMatch[1] : null;
+
+    const cacheKey = gdriveFileId
+      ? sanitizeServerAudioKey(`gdrive_${gdriveFileId}`)
+      : sanitizeServerAudioKey(`ext_${Buffer.from(rawUrl).toString('base64url').slice(0, 64)}`);
+    const cachedAudioPath = path.join(AUDIO_UPLOAD_DIR, `${cacheKey}.mp3`);
+
+    // 1. If already cached on disk and non-empty, serve immediately with full byte-range support
+    if (fs.existsSync(cachedAudioPath)) {
+      try {
+        const stat = fs.statSync(cachedAudioPath);
+        if (stat.size > 1024) {
+          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('Accept-Ranges', 'bytes');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          return res.sendFile(cachedAudioPath);
+        }
+      } catch {
+        // Ignore and re-fetch
+      }
+    }
+
+    // 2. Build candidate upstream URLs (for Google Drive, try drive.usercontent.google.com first, then docs.google.com)
+    const candidateUrls = gdriveFileId
+      ? [
+          `https://drive.usercontent.google.com/download?id=${gdriveFileId}&export=download&confirm=t`,
+          `https://docs.google.com/uc?export=download&id=${gdriveFileId}&confirm=t`,
+        ]
+      : [rawUrl.includes('dropbox.com') ? rawUrl.replace('?dl=0', '?raw=1') : rawUrl];
+
+    for (const targetUrl of candidateUrls) {
+      try {
+        const upstreamResp = await fetch(targetUrl, {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+          },
+          redirect: 'follow',
+        });
+
+        if (!upstreamResp.ok) continue;
+
+        const contentType = (upstreamResp.headers.get('content-type') || '').toLowerCase();
+        // Skip HTML pages (e.g., Google Drive login or warning HTML)
+        if (contentType.includes('text/html')) {
+          continue;
+        }
+
+        const arrayBuf = await upstreamResp.arrayBuffer();
+        const buffer = Buffer.from(arrayBuf);
+        if (buffer.length <= 512) continue;
+
+        await fs.promises.writeFile(cachedAudioPath, buffer);
+        res.setHeader('Content-Type', contentType.startsWith('audio/') ? contentType : 'audio/mpeg');
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        return res.sendFile(cachedAudioPath);
+      } catch {
+        // Try next candidate URL
+      }
+    }
+
+    return res.status(404).json({ error: 'Unable to fetch external audio stream' });
+  } catch (err) {
+    console.warn('Error in /api/audio-proxy:', err);
+    return res.status(500).json({ error: 'Audio proxy error' });
   }
 });
 
@@ -1309,6 +1874,48 @@ app.post('/api/tests', (req, res) => {
   } catch (err) {
     console.warn('Error saving test to /api/tests:', err);
     return res.status(500).json({ error: 'Failed to save test on server' });
+  }
+});
+
+app.post('/api/tests/:id/audio-patch', (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({ error: 'Missing test id' });
+    }
+    const patch = req.body || {};
+    const map = readServerTestsMap();
+    const existing = map[id];
+    if (existing) {
+      map[id] = {
+        ...existing,
+        ...(patch.audioMode ? { audioMode: patch.audioMode } : {}),
+        ...(patch.audioUrl !== undefined ? { audioUrl: patch.audioUrl } : {}),
+        ...(patch.audioFileName !== undefined ? { audioFileName: patch.audioFileName } : {}),
+        ...(patch.partAudioUrls
+          ? {
+              partAudioUrls: {
+                ...(existing.partAudioUrls || {}),
+                ...patch.partAudioUrls,
+              },
+            }
+          : {}),
+        ...(patch.partAudioFileNames
+          ? {
+              partAudioFileNames: {
+                ...(existing.partAudioFileNames || {}),
+                ...patch.partAudioFileNames,
+              },
+            }
+          : {}),
+        updatedAt: Date.now(),
+      };
+      writeServerTestsMap(map);
+    }
+    return res.json({ ok: true, id, updated: Boolean(existing) });
+  } catch (err) {
+    console.warn('Error patching test audio on server:', err);
+    return res.status(500).json({ error: 'Failed to patch test audio on server' });
   }
 });
 
