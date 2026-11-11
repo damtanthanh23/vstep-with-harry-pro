@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   PenTool,
   Mic,
@@ -13,12 +13,19 @@ import {
   Volume2,
   Award,
   Layers,
+  Send,
+  Square,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 import { TestMetadata, ExamSection } from '../../types/exam';
 import { SAMPLE_B1_WRITING_TASKS, WritingTask } from '../../types/writing';
 import { SAMPLE_VSTEP_SPEAKING_TASKS, SpeakingTask } from '../../types/speaking';
 import { examAudioManager } from '../../utils/audioManager';
 import { QuickSaveVocabModal, QuickSaveVocabPayload } from '../QuickSaveVocabModal';
+import { GlobalSelectionDictionaryPopover } from '../GlobalSelectionDictionaryPopover';
+import { recordStudyActivity } from '../../services/streakService';
+import { useAuth } from '../../context/AuthContext';
 
 interface WritingSpeakingPracticeViewProps {
   tests: TestMetadata[];
@@ -82,11 +89,24 @@ export const WritingSpeakingPracticeView: React.FC<WritingSpeakingPracticeViewPr
   onStartTest,
   onSelectMode,
 }) => {
+  const { currentUser } = useAuth();
   const [activeSkillTab, setActiveSkillTab] = useState<'writing' | 'speaking'>('writing');
   const [selectedTestId, setSelectedTestId] = useState<string>(tests[0]?.id || 'test-1');
   const [selectedSubPart, setSelectedSubPart] = useState<number>(0); // 0 = all
   const [expandedSampleIds, setExpandedSampleIds] = useState<Record<string, boolean>>({});
   const [quickSavePayload, setQuickSavePayload] = useState<QuickSaveVocabPayload | null>(null);
+
+  // In-Place Quick AI Sandbox states keyed by `${skill}-${testId}-${partNumber}`
+  const [openSandboxKeys, setOpenSandboxKeys] = useState<Record<string, boolean>>({});
+  const [sandboxTexts, setSandboxTexts] = useState<Record<string, string>>({});
+  const [sandboxLoading, setSandboxLoading] = useState<Record<string, boolean>>({});
+  const [sandboxResults, setSandboxResults] = useState<Record<string, any>>({});
+  const [sandboxErrors, setSandboxErrors] = useState<Record<string, string>>({});
+  const [sandboxSampleTab, setSandboxSampleTab] = useState<Record<string, 'B1' | 'B2' | 'C1'>>({});
+
+  // Speech recognition & audio recording for Speaking Sandbox
+  const [recordingKey, setRecordingKey] = useState<string | null>(null);
+  const recognitionRef = useRef<any>(null);
 
   const activeTestObj = tests.find((t) => t.id === selectedTestId) || tests[0];
   const writingTasks: WritingTask[] =
@@ -102,6 +122,10 @@ export const WritingSpeakingPracticeView: React.FC<WritingSpeakingPracticeViewPr
     setExpandedSampleIds((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const toggleSandbox = (key: string) => {
+    setOpenSandboxKeys((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   const handleLaunchSkillPart = (
     section: 'WRITING' | 'SPEAKING',
     partNumber: 1 | 2 | 3,
@@ -109,6 +133,162 @@ export const WritingSpeakingPracticeView: React.FC<WritingSpeakingPracticeViewPr
   ) => {
     onSelectMode(mode);
     onStartTest(selectedTestId, section, partNumber);
+  };
+
+  const countWords = (text: string) => {
+    const trimmed = (text || '').trim();
+    return trimmed ? trimmed.split(/\s+/).length : 0;
+  };
+
+  const handleStartSpeechDictation = (sandboxKey: string) => {
+    const SpeechRec =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) {
+      setSandboxErrors((prev) => ({
+        ...prev,
+        [sandboxKey]:
+          'Trình duyệt hiện tại không hỗ trợ nhận diện giọng nói trực tiếp. Bạn có thể nhập hoặc dán nội dung bài nói vào ô bên dưới để chấm AI.',
+      }));
+      return;
+    }
+
+    if (recordingKey === sandboxKey && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      setRecordingKey(null);
+      return;
+    }
+
+    try {
+      const rec = new SpeechRec();
+      rec.lang = 'en-US';
+      rec.continuous = true;
+      rec.interimResults = false;
+      rec.onresult = (event: any) => {
+        let transcriptChunk = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            transcriptChunk += event.results[i][0].transcript + ' ';
+          }
+        }
+        if (transcriptChunk.trim()) {
+          setSandboxTexts((prev) => ({
+            ...prev,
+            [sandboxKey]: ((prev[sandboxKey] || '') + ' ' + transcriptChunk.trim()).trim(),
+          }));
+        }
+      };
+      rec.onerror = () => {
+        setRecordingKey(null);
+      };
+      rec.onend = () => {
+        setRecordingKey(null);
+      };
+      recognitionRef.current = rec;
+      rec.start();
+      setRecordingKey(sandboxKey);
+      setSandboxErrors((prev) => ({ ...prev, [sandboxKey]: '' }));
+    } catch {
+      setRecordingKey(null);
+    }
+  };
+
+  const handleRunWritingAiSandbox = async (task: WritingTask, sandboxKey: string) => {
+    const text = (sandboxTexts[sandboxKey] || '').trim();
+    const words = countWords(text);
+    if (words < 10) {
+      setSandboxErrors((prev) => ({
+        ...prev,
+        [sandboxKey]: 'Vui lòng viết tối thiểu 10 từ tiếng Anh để Giám khảo AI phân tích và sửa lỗi chi tiết.',
+      }));
+      return;
+    }
+
+    setSandboxLoading((prev) => ({ ...prev, [sandboxKey]: true }));
+    setSandboxErrors((prev) => ({ ...prev, [sandboxKey]: '' }));
+
+    try {
+      const resp = await fetch('/api/ai/writing-coach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          partNumber: task.partNumber,
+          title: task.title,
+          stimulusText: task.stimulusText,
+          bulletPoints: task.bulletPoints,
+          minWords: task.minWords || (task.partNumber === 1 ? 120 : 250),
+          studentText: text,
+        }),
+      });
+      if (!resp.ok) {
+        throw new Error('Không thể kết nối máy chủ chấm AI lúc này.');
+      }
+      const data = await resp.json();
+      setSandboxResults((prev) => ({ ...prev, [sandboxKey]: data }));
+      recordStudyActivity(`Luyện viết tại chỗ & chấm AI: ${task.title}`, currentUser?.uid);
+    } catch (err: any) {
+      setSandboxErrors((prev) => ({
+        ...prev,
+        [sandboxKey]: err?.message || 'Có lỗi khi gọi Giám khảo AI. Vui lòng thử lại.',
+      }));
+    } finally {
+      setSandboxLoading((prev) => ({ ...prev, [sandboxKey]: false }));
+    }
+  };
+
+  const handleRunSpeakingAiSandbox = async (task: SpeakingTask, sandboxKey: string) => {
+    const text = (sandboxTexts[sandboxKey] || '').trim();
+    const words = countWords(text);
+    if (words < 8) {
+      setSandboxErrors((prev) => ({
+        ...prev,
+        [sandboxKey]: 'Vui lòng thu âm hoặc nhập tối thiểu 8 từ tiếng Anh để Giám khảo AI chấm điểm và sửa lỗi.',
+      }));
+      return;
+    }
+
+    setSandboxLoading((prev) => ({ ...prev, [sandboxKey]: true }));
+    setSandboxErrors((prev) => ({ ...prev, [sandboxKey]: '' }));
+
+    try {
+      const promptSummary =
+        task.partNumber === 1
+          ? (task.topicClusters || [])
+              .map((c) => `${c.topicTitle}: ${(c.questions || []).join('; ')}`)
+              .join(' | ')
+          : task.partNumber === 2
+          ? `${task.situation || ''} Options: ${(task.options || []).join(', ')}`
+          : `${task.topicStatement || task.mindMap?.centralIdea || ''} Nodes: ${(
+              task.mindMap?.nodes || []
+            ).join(', ')}`;
+
+      const resp = await fetch('/api/ai/speaking-coach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          partNumber: task.partNumber,
+          title: task.title,
+          promptText: promptSummary,
+          studentTranscript: text,
+        }),
+      });
+      if (!resp.ok) {
+        throw new Error('Không thể kết nối máy chủ chấm AI Speaking lúc này.');
+      }
+      const data = await resp.json();
+      setSandboxResults((prev) => ({ ...prev, [sandboxKey]: data }));
+      recordStudyActivity(`Luyện nói tại chỗ & chấm AI: ${task.title}`, currentUser?.uid);
+    } catch (err: any) {
+      setSandboxErrors((prev) => ({
+        ...prev,
+        [sandboxKey]: err?.message || 'Có lỗi khi gọi Giám khảo AI Speaking. Vui lòng thử lại.',
+      }));
+    } finally {
+      setSandboxLoading((prev) => ({ ...prev, [sandboxKey]: false }));
+    }
   };
 
   const visibleWritingTasks = writingTasks.filter(
@@ -120,6 +300,12 @@ export const WritingSpeakingPracticeView: React.FC<WritingSpeakingPracticeViewPr
 
   return (
     <div className="space-y-6 pb-20">
+      <GlobalSelectionDictionaryPopover
+        sourceLabel={activeSkillTab === 'writing' ? 'Luyện Viết VSTEP' : 'Luyện Nói VSTEP'}
+        testId={selectedTestId}
+        testTitle={activeTestObj?.title}
+      />
+
       {/* Top Hero Banner with Skill Switcher */}
       <div
         className={`rounded-3xl p-6 text-white shadow-md border-2 border-b-4 transition-colors flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${
@@ -149,8 +335,8 @@ export const WritingSpeakingPracticeView: React.FC<WritingSpeakingPracticeViewPr
           </h2>
           <p className="mt-1 text-xs sm:text-sm text-white/90 max-w-2xl leading-relaxed">
             {activeSkillTab === 'writing'
-              ? 'Rèn kỹ năng viết Thư/Email (Task 1 ≥ 120 từ, hệ số 1) và Bài luận Essay (Task 2 ≥ 250 từ, hệ số 2) kèm dàn ý mẫu B1–B2–C1 và Giám khảo AI chấm 4 tiêu chí Bộ GD&ĐT.'
-              : 'Luyện thu âm trực tiếp 3 phần thi Nói VSTEP (Social Interaction, Solution Discussion & Topic Development), tự động nhận diện giọng nói và chấm điểm phát âm - từ vựng - ngữ pháp.'}
+              ? 'Rèn kỹ năng viết Thư/Email (Task 1 ≥ 120 từ) và Bài luận Essay (Task 2 ≥ 250 từ) ngay tại chỗ hoặc trong phòng thi, kèm Giám khảo AI sửa từng câu và bài mẫu B1–B2–C1.'
+              : 'Luyện thu âm trực tiếp hoặc nhập ý tưởng cho 3 phần thi Nói VSTEP ngay tại thẻ bài tập, chấm điểm 5 tiêu chí và đối chiếu bài nói mẫu B1–B2–C1.'}
           </p>
         </div>
 
@@ -274,8 +460,17 @@ export const WritingSpeakingPracticeView: React.FC<WritingSpeakingPracticeViewPr
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {visibleWritingTasks.map((task) => {
               const sampleKey = `w-${selectedTestId}-${task.partNumber}`;
+              const sandboxKey = `w-sandbox-${selectedTestId}-${task.partNumber}`;
               const isSampleOpen = !!expandedSampleIds[sampleKey];
+              const isSandboxOpen = !!openSandboxKeys[sandboxKey];
               const isTask1 = task.partNumber === 1;
+              const minWords = task.minWords || (isTask1 ? 120 : 250);
+              const currentText = sandboxTexts[sandboxKey] || '';
+              const wordCount = countWords(currentText);
+              const aiRes = sandboxResults[sandboxKey];
+              const isLoadingAi = !!sandboxLoading[sandboxKey];
+              const errorMsg = sandboxErrors[sandboxKey];
+              const activeBandTab = sandboxSampleTab[sandboxKey] || 'B2';
 
               return (
                 <div
@@ -297,7 +492,7 @@ export const WritingSpeakingPracticeView: React.FC<WritingSpeakingPracticeViewPr
                         <Clock className="h-3.5 w-3.5 text-[#A560E8]" />
                         <span>{isTask1 ? '20 phút' : '40 phút'}</span>
                         <span>·</span>
-                        <span>≥ {task.minWords || (isTask1 ? 120 : 250)} từ</span>
+                        <span>≥ {minWords} từ</span>
                       </div>
                     </div>
 
@@ -386,26 +581,210 @@ export const WritingSpeakingPracticeView: React.FC<WritingSpeakingPracticeViewPr
                         )}
                       </div>
                     )}
+
+                    {/* IN-PLACE AI WRITING SANDBOX */}
+                    {isSandboxOpen && (
+                      <div className="mt-3 rounded-2xl bg-purple-50/50 dark:bg-slate-900/90 border-2 border-[#CE82FF] p-4 space-y-3 animate-in fade-in duration-200">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-xs font-black text-[#8B3FD9] dark:text-purple-300 flex items-center gap-1.5">
+                            <Sparkles className="h-4 w-4" />
+                            <span>Khung Luyện Viết &amp; Chấm Sửa Lỗi AI Tại Chỗ</span>
+                          </span>
+                          <span
+                            className={`font-mono text-xs font-black tabular-nums px-2.5 py-0.5 rounded-lg ${
+                              wordCount >= minWords
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                            }`}
+                          >
+                            {wordCount}/{minWords} từ tối thiểu
+                          </span>
+                        </div>
+
+                        <textarea
+                          rows={6}
+                          value={currentText}
+                          onChange={(e) =>
+                            setSandboxTexts((prev) => ({ ...prev, [sandboxKey]: e.target.value }))
+                          }
+                          placeholder={
+                            isTask1
+                              ? 'Dear ..., \nI am writing this letter to...'
+                              : 'In recent years, there has been a growing debate over...'
+                          }
+                          className="w-full rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 p-3.5 text-xs sm:text-sm font-medium text-slate-900 dark:text-white focus:border-[#A560E8] focus:outline-none leading-relaxed"
+                        />
+
+                        {errorMsg && (
+                          <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-bold flex items-center gap-2">
+                            <AlertCircle className="h-4 w-4 shrink-0" />
+                            <span>{errorMsg}</span>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => toggleSandbox(sandboxKey)}
+                            className="text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-white cursor-pointer"
+                          >
+                            Thu gọn khung viết
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRunWritingAiSandbox(task, sandboxKey)}
+                            disabled={isLoadingAi}
+                            className="btn-duo-purple px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                          >
+                            {isLoadingAi ? (
+                              <>
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                <span>Đang chấm &amp; sửa lỗi từng câu...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Send className="h-3.5 w-3.5" />
+                                <span>Chấm Điểm &amp; Sửa Lỗi AI Ngay</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+
+                        {/* AI Evaluation Result Box */}
+                        {aiRes && (
+                          <div className="pt-3 border-t border-purple-200 dark:border-slate-700 space-y-3 text-xs">
+                            <div className="flex items-center justify-between gap-2 flex-wrap bg-white dark:bg-slate-900 p-3 rounded-xl border border-purple-200 dark:border-slate-700">
+                              <div>
+                                <span className="text-[10px] font-black uppercase text-slate-400 block">
+                                  Điểm VSTEP Writing AI Chấm
+                                </span>
+                                <span className="text-xl font-black text-[#8B3FD9] dark:text-purple-300 tabular-nums">
+                                  {aiRes.overallScore ?? aiRes.score ?? 6.5}/10
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-bold tabular-nums">
+                                <span className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+                                  Task: <strong>{aiRes.criteria?.taskFulfillment ?? 6.5}</strong>
+                                </span>
+                                <span className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+                                  Mạch lạc: <strong>{aiRes.criteria?.organization ?? 6.5}</strong>
+                                </span>
+                                <span className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+                                  Từ vựng: <strong>{aiRes.criteria?.vocabulary ?? 6.5}</strong>
+                                </span>
+                                <span className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+                                  Ngữ pháp: <strong>{aiRes.criteria?.grammar ?? 6.5}</strong>
+                                </span>
+                              </div>
+                            </div>
+
+                            {aiRes.overallFeedbackVi && (
+                              <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 leading-relaxed">
+                                <strong className="text-[#8B3FD9] dark:text-purple-300">
+                                  Nhận xét Giám khảo:{' '}
+                                </strong>
+                                {aiRes.overallFeedbackVi}
+                              </div>
+                            )}
+
+                            {/* Sentence-by-Sentence Corrections */}
+                            {Array.isArray(aiRes.sentenceCorrections) &&
+                              aiRes.sentenceCorrections.length > 0 && (
+                                <div className="space-y-2">
+                                  <span className="font-black uppercase text-[11px] text-slate-600 dark:text-slate-300 block">
+                                    Sửa lỗi chi tiết từng câu ({aiRes.sentenceCorrections.length} điểm cần nâng cấp):
+                                  </span>
+                                  {aiRes.sentenceCorrections.slice(0, 5).map((corr: any, idx: number) => (
+                                    <div
+                                      key={idx}
+                                      className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1"
+                                    >
+                                      <div className="line-through text-rose-600 dark:text-rose-400 font-semibold">
+                                        ✗ {corr.original}
+                                      </div>
+                                      <div className="text-emerald-700 dark:text-emerald-400 font-black">
+                                        ✓ {corr.improved}
+                                      </div>
+                                      {corr.explanationVi && (
+                                        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                                          💡 {corr.explanationVi}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                            {/* B1 / B2 / C1 Sample Tabs */}
+                            {(aiRes.sampleB1 || aiRes.sampleB2 || aiRes.sampleC1) && (
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-black uppercase text-[11px] text-slate-600 dark:text-slate-300">
+                                    Bài mẫu nâng cấp theo 3 Band:
+                                  </span>
+                                  <div className="flex items-center gap-1">
+                                    {(['B1', 'B2', 'C1'] as const).map((band) => (
+                                      <button
+                                        key={band}
+                                        type="button"
+                                        onClick={() =>
+                                          setSandboxSampleTab((prev) => ({
+                                            ...prev,
+                                            [sandboxKey]: band,
+                                          }))
+                                        }
+                                        className={`px-2.5 py-0.5 rounded-lg text-[11px] font-black cursor-pointer ${
+                                          activeBandTab === band
+                                            ? 'bg-[#8B3FD9] text-white'
+                                            : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                                        }`}
+                                      >
+                                        Band {band}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-purple-200 dark:border-slate-700 whitespace-pre-line leading-relaxed text-slate-800 dark:text-slate-200">
+                                  {activeBandTab === 'B1'
+                                    ? aiRes.sampleB1 || aiRes.sampleB2
+                                    : activeBandTab === 'C1'
+                                    ? aiRes.sampleC1 || aiRes.sampleB2
+                                    : aiRes.sampleB2 || aiRes.sampleB1}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Launch Buttons */}
-                  <div className="grid grid-cols-2 gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-700/70">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-3 border-t border-slate-100 dark:border-slate-700/70">
+                    <button
+                      type="button"
+                      onClick={() => toggleSandbox(sandboxKey)}
+                      className="btn-duo-green py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      <span>{isSandboxOpen ? 'Đóng Khung Viết' : 'Viết & Chấm AI Tại Chỗ'}</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() =>
                         handleLaunchSkillPart('WRITING', task.partNumber as 1 | 2, 'practice')
                       }
-                      className="btn-duo-purple py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5"
+                      className="btn-duo-purple py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <Play className="h-3.5 w-3.5 fill-current" />
-                      <span>Vào Viết &amp; Chấm AI</span>
+                      <span>Phòng Luyện Viết</span>
                     </button>
                     <button
                       type="button"
                       onClick={() =>
                         handleLaunchSkillPart('WRITING', task.partNumber as 1 | 2, 'exam')
                       }
-                      className="btn-duo-white py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 text-slate-700 dark:text-slate-200"
+                      className="btn-duo-white py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 text-slate-700 dark:text-slate-200 cursor-pointer"
                     >
                       <Clock className="h-3.5 w-3.5 text-[#8B3FD9]" />
                       <span>Thi Thử Bấm Giờ</span>
@@ -488,7 +867,16 @@ export const WritingSpeakingPracticeView: React.FC<WritingSpeakingPracticeViewPr
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             {visibleSpeakingTasks.map((task) => {
               const sampleKey = `s-${selectedTestId}-${task.partNumber}`;
+              const sandboxKey = `s-sandbox-${selectedTestId}-${task.partNumber}`;
               const isSampleOpen = !!expandedSampleIds[sampleKey];
+              const isSandboxOpen = !!openSandboxKeys[sandboxKey];
+              const currentText = sandboxTexts[sandboxKey] || '';
+              const wordCount = countWords(currentText);
+              const aiRes = sandboxResults[sandboxKey];
+              const isLoadingAi = !!sandboxLoading[sandboxKey];
+              const errorMsg = sandboxErrors[sandboxKey];
+              const activeBandTab = sandboxSampleTab[sandboxKey] || 'B2';
+              const isRecordingThis = recordingKey === sandboxKey;
 
               return (
                 <div
@@ -656,30 +1044,203 @@ export const WritingSpeakingPracticeView: React.FC<WritingSpeakingPracticeViewPr
                         )}
                       </div>
                     )}
+
+                    {/* IN-PLACE AI SPEAKING SANDBOX */}
+                    {isSandboxOpen && (
+                      <div className="mt-3 rounded-2xl bg-rose-50/50 dark:bg-slate-900/90 border-2 border-[#FF4B4B] p-3.5 space-y-3 animate-in fade-in duration-200">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-xs font-black text-[#EA2B2B] dark:text-rose-400 flex items-center gap-1.5">
+                            <Mic className="h-3.5 w-3.5" />
+                            <span>Thu Âm / Nhập Bài Nói &amp; Chấm AI Tại Chỗ</span>
+                          </span>
+                          <span className="font-mono text-[11px] font-black tabular-nums px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                            {wordCount} từ
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleStartSpeechDictation(sandboxKey)}
+                            className={`flex-1 py-2 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 border-b-3 transition-all cursor-pointer ${
+                              isRecordingThis
+                                ? 'bg-rose-600 text-white border-rose-800 animate-pulse'
+                                : 'bg-white dark:bg-slate-800 text-[#EA2B2B] dark:text-rose-400 border-rose-300 dark:border-rose-800 hover:bg-rose-50'
+                            }`}
+                          >
+                            {isRecordingThis ? (
+                              <>
+                                <Square className="h-3.5 w-3.5 fill-current" />
+                                <span>Đang nghe giọng nói... (Bấm để dừng)</span>
+                              </>
+                            ) : (
+                              <>
+                                <Mic className="h-3.5 w-3.5" />
+                                <span>Bấm Mic Nói Tiếng Anh (Tự chuyển thành chữ)</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+
+                        <textarea
+                          rows={4}
+                          value={currentText}
+                          onChange={(e) =>
+                            setSandboxTexts((prev) => ({ ...prev, [sandboxKey]: e.target.value }))
+                          }
+                          placeholder="Nội dung bạn nói qua Mic sẽ hiện tại đây, hoặc bạn có thể tự gõ câu trả lời Speaking để AI chấm và nâng cấp câu..."
+                          className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 p-3 text-xs font-medium text-slate-900 dark:text-white focus:border-[#FF4B4B] focus:outline-none leading-relaxed"
+                        />
+
+                        {errorMsg && (
+                          <div className="p-2 rounded-xl bg-rose-100 dark:bg-rose-950/70 text-rose-800 dark:text-rose-200 text-[11px] font-bold flex items-center gap-1.5">
+                            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                            <span>{errorMsg}</span>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleSandbox(sandboxKey)}
+                            className="text-[11px] font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
+                          >
+                            Thu gọn
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRunSpeakingAiSandbox(task, sandboxKey)}
+                            disabled={isLoadingAi}
+                            className="btn-duo-red px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                          >
+                            {isLoadingAi ? (
+                              <>
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                <span>Đang chấm AI...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="h-3.5 w-3.5" />
+                                <span>Chấm Điểm &amp; Sửa Lỗi Ngay</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+
+                        {/* AI Speaking Result */}
+                        {aiRes && (
+                          <div className="pt-2.5 border-t border-rose-200 dark:border-slate-700 space-y-2.5 text-xs">
+                            <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-rose-200 dark:border-slate-700">
+                              <span className="font-black text-slate-600 dark:text-slate-300">
+                                Điểm Speaking AI:
+                              </span>
+                              <span className="text-lg font-black text-[#EA2B2B] dark:text-rose-400 tabular-nums">
+                                {aiRes.overallScore ?? aiRes.score ?? 6.5}/10
+                              </span>
+                            </div>
+
+                            {aiRes.overallFeedbackVi && (
+                              <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-700 dark:text-slate-200 leading-relaxed">
+                                <strong className="text-[#EA2B2B]">Nhận xét: </strong>
+                                {aiRes.overallFeedbackVi}
+                              </div>
+                            )}
+
+                            {Array.isArray(aiRes.sentenceCorrections) &&
+                              aiRes.sentenceCorrections.length > 0 && (
+                                <div className="space-y-1.5">
+                                  <span className="font-black text-[11px] text-slate-600 dark:text-slate-300 block">
+                                    Sửa lỗi diễn đạt ({aiRes.sentenceCorrections.length}):
+                                  </span>
+                                  {aiRes.sentenceCorrections.slice(0, 3).map((corr: any, idx: number) => (
+                                    <div
+                                      key={idx}
+                                      className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] space-y-0.5"
+                                    >
+                                      <div className="line-through text-rose-500">{corr.original}</div>
+                                      <div className="font-black text-emerald-600 dark:text-emerald-400">
+                                        → {corr.improved}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                            {(aiRes.sampleB1 || aiRes.sampleB2 || aiRes.sampleC1) && (
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-black text-[10px] uppercase text-slate-500">
+                                    Bài nói mẫu theo Band:
+                                  </span>
+                                  <div className="flex items-center gap-1">
+                                    {(['B1', 'B2', 'C1'] as const).map((b) => (
+                                      <button
+                                        key={b}
+                                        type="button"
+                                        onClick={() =>
+                                          setSandboxSampleTab((prev) => ({
+                                            ...prev,
+                                            [sandboxKey]: b,
+                                          }))
+                                        }
+                                        className={`px-2 py-0.5 rounded text-[10px] font-black cursor-pointer ${
+                                          activeBandTab === b
+                                            ? 'bg-[#EA2B2B] text-white'
+                                            : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                                        }`}
+                                      >
+                                        {b}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-rose-200 dark:border-slate-700 text-[11px] leading-relaxed text-slate-800 dark:text-slate-200">
+                                  {activeBandTab === 'B1'
+                                    ? aiRes.sampleB1 || aiRes.sampleB2
+                                    : activeBandTab === 'C1'
+                                    ? aiRes.sampleC1 || aiRes.sampleB2
+                                    : aiRes.sampleB2 || aiRes.sampleB1}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Launch Buttons */}
-                  <div className="grid grid-cols-2 gap-2 pt-3 border-t border-slate-100 dark:border-slate-700/70">
+                  <div className="grid grid-cols-1 gap-2 pt-3 border-t border-slate-100 dark:border-slate-700/70">
                     <button
                       type="button"
-                      onClick={() =>
-                        handleLaunchSkillPart('SPEAKING', task.partNumber as 1 | 2 | 3, 'practice')
-                      }
-                      className="btn-duo-red py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5"
+                      onClick={() => toggleSandbox(sandboxKey)}
+                      className="btn-duo-green py-2 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      <Mic className="h-3.5 w-3.5" />
-                      <span>Vào Phòng Thu AI</span>
+                      <Sparkles className="h-3.5 w-3.5" />
+                      <span>{isSandboxOpen ? 'Đóng Khung Thu Âm Tại Chỗ' : 'Nói & Chấm AI Ngay Tại Chỗ'}</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleLaunchSkillPart('SPEAKING', task.partNumber as 1 | 2 | 3, 'exam')
-                      }
-                      className="btn-duo-white py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 text-slate-700 dark:text-slate-200"
-                    >
-                      <Clock className="h-3.5 w-3.5 text-[#FF4B4B]" />
-                      <span>Thi Thử Bấm Giờ</span>
-                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleLaunchSkillPart('SPEAKING', task.partNumber as 1 | 2 | 3, 'practice')
+                        }
+                        className="btn-duo-red py-2 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Mic className="h-3.5 w-3.5" />
+                        <span>Phòng Thu AI</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleLaunchSkillPart('SPEAKING', task.partNumber as 1 | 2 | 3, 'exam')
+                        }
+                        className="btn-duo-white py-2 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 text-slate-700 dark:text-slate-200 cursor-pointer"
+                      >
+                        <Clock className="h-3.5 w-3.5 text-[#FF4B4B]" />
+                        <span>Thi Bấm Giờ</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               );

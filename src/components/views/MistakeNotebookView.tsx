@@ -18,6 +18,10 @@ import {
   Award,
   BookmarkPlus,
   Cloud,
+  Clock,
+  Wand2,
+  Loader2,
+  Zap,
 } from 'lucide-react';
 import { TestMetadata, Question, getPartRelativeNumber } from '../../types/exam';
 import {
@@ -34,7 +38,94 @@ import { useAuth } from '../../context/AuthContext';
 import { examAudioManager } from '../../utils/audioManager';
 import { StructuredExplanationBox } from '../StructuredExplanationBox';
 import { QuickSaveVocabModal, QuickSaveVocabPayload } from '../QuickSaveVocabModal';
+import { GlobalSelectionDictionaryPopover } from '../GlobalSelectionDictionaryPopover';
 import { recordStudyActivity } from '../../services/streakService';
+
+export type VstepTrapCategory =
+  | 'MAIN_IDEA'
+  | 'DETAIL_TRAP'
+  | 'VOCAB_CONTEXT'
+  | 'INFERENCE'
+  | 'REFERENCE_INSERT';
+
+export const VSTEP_TRAP_META: Record<
+  VstepTrapCategory,
+  { labelVi: string; shortLabel: string; tipVi: string; badgeClass: string }
+> = {
+  MAIN_IDEA: {
+    labelVi: 'Ý chính & Mục đích (Main Idea / Purpose)',
+    shortLabel: 'Ý chính / Mục đích',
+    tipVi: 'Đọc câu chủ đề đầu mỗi đoạn, tránh phương án quá hẹp (chỉ 1 đoạn) hoặc quá rộng.',
+    badgeClass:
+      'bg-sky-50 dark:bg-sky-950/60 text-[#1899D6] dark:text-sky-300 border-sky-200 dark:border-sky-800',
+  },
+  DETAIL_TRAP: {
+    labelVi: 'Chi tiết & Bẫy phủ định (Detail / NOT / EXCEPT)',
+    shortLabel: 'Chi tiết & Bẫy NOT',
+    tipVi: 'Dò từ khóa (Scanning) và đối chiếu kỹ từ đồng nghĩa/phủ định (NOT, EXCEPT, least).',
+    badgeClass:
+      'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800',
+  },
+  VOCAB_CONTEXT: {
+    labelVi: 'Từ vựng ngữ cảnh (Closest in Meaning)',
+    shortLabel: 'Từ vựng ngữ cảnh',
+    tipVi: 'Thay thế từng đáp án A, B, C, D vào câu gốc xem sắc thái nghĩa có khớp ngữ cảnh không.',
+    badgeClass:
+      'bg-purple-50 dark:bg-purple-950/60 text-[#8438C8] dark:text-purple-300 border-purple-200 dark:border-purple-800',
+  },
+  INFERENCE: {
+    labelVi: 'Suy luận & Thái độ (Inference / Imply / Tone)',
+    shortLabel: 'Suy luận & Thái độ',
+    tipVi: 'Chỉ suy luận dựa trên bằng chứng có thật trong bài, loại bỏ đáp án chứa từ tuyệt đối (always, never).',
+    badgeClass:
+      'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800',
+  },
+  REFERENCE_INSERT: {
+    labelVi: 'Quy chiếu & Chèn câu (Refers to / [A][B][C][D])',
+    shortLabel: 'Quy chiếu & Chèn câu',
+    tipVi: 'Kiểm tra danh từ số ít/số nhiều phía trước đại từ và từ nối chuyển ý (However, Therefore, This).',
+    badgeClass:
+      'bg-emerald-50 dark:bg-emerald-950/60 text-[#2B6600] dark:text-emerald-300 border-emerald-200 dark:border-emerald-800',
+  },
+};
+
+export function classifyVstepQuestionTrap(q: Question): VstepTrapCategory {
+  const prompt = (q.prompt || q.notesData?.label || '').toLowerCase();
+  if (
+    /closest in meaning|mean|synonym|replaced by|word\s+["“']|phrase\s+["“']/i.test(prompt)
+  ) {
+    return 'VOCAB_CONTEXT';
+  }
+  if (
+    /refer\s+to|refers\s+to|square\s+brackets|\[a\]|insert|where\s+would\s+the\s+following/i.test(
+      prompt
+    )
+  ) {
+    return 'REFERENCE_INSERT';
+  }
+  if (
+    /main\s+idea|mainly\s+about|main\s+purpose|best\s+title|topic\s+of|primarily\s+concerned|why\s+does\s+the\s+speaker/i.test(
+      prompt
+    )
+  ) {
+    return 'MAIN_IDEA';
+  }
+  if (
+    /infer|implied|imply|suggest|probably|most\s+likely|attitude|tone|author\s+feel/i.test(
+      prompt
+    )
+  ) {
+    return 'INFERENCE';
+  }
+  return 'DETAIL_TRAP';
+}
+
+interface AiMistakeExplanation {
+  whyCorrectVi: string;
+  whyWrongTrapVi: string;
+  examTipVi: string;
+  keyVocab: Array<{ word: string; meaningVi: string }>;
+}
 
 interface MistakeNotebookViewProps {
   tests: TestMetadata[];
@@ -57,6 +148,7 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
   const [skillFilter, setSkillFilter] = useState<'ALL' | 'LISTENING' | 'READING'>('ALL');
   const [statusFilter, setStatusFilter] = useState<'NEED_REVIEW' | 'MASTERED' | 'ALL'>('NEED_REVIEW');
   const [testFilter, setTestFilter] = useState<string>('ALL');
+  const [trapFilter, setTrapFilter] = useState<'ALL' | VstepTrapCategory>('ALL');
 
   // Redo answers state per mistake key (`${testId}_${questionId}`)
   const [redoAnswers, setRedoAnswers] = useState<Record<string, string>>({});
@@ -66,6 +158,18 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
   // Focused Sprint Mode state
   const [isSprintMode, setIsSprintMode] = useState<boolean>(false);
   const [sprintIndex, setSprintIndex] = useState<number>(0);
+
+  // Timed 10-Question Random Mini-Quiz state
+  const [isMiniQuizActive, setIsMiniQuizActive] = useState<boolean>(false);
+  const [miniQuizQuestions, setMiniQuizQuestions] = useState<MistakeRecord[]>([]);
+  const [miniQuizCurrentIdx, setMiniQuizCurrentIdx] = useState<number>(0);
+  const [miniQuizAnswers, setMiniQuizAnswers] = useState<Record<string, string>>({});
+  const [miniQuizSecondsLeft, setMiniQuizSecondsLeft] = useState<number>(10 * 60);
+  const [isMiniQuizSubmitted, setIsMiniQuizSubmitted] = useState<boolean>(false);
+
+  // AI Distractor Explanation state per mistake key
+  const [aiExplanations, setAiExplanations] = useState<Record<string, AiMistakeExplanation>>({});
+  const [loadingAiExplainKey, setLoadingAiExplainKey] = useState<string | null>(null);
 
   // Quick Save Vocab SRS Modal & Cloud sync state
   const [quickSavePayload, setQuickSavePayload] = useState<QuickSaveVocabPayload | null>(null);
@@ -108,6 +212,22 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
     };
   }, [uid, tests, customQuestionsMap]);
 
+  // Countdown timer for Timed 10-Question Mini-Quiz
+  useEffect(() => {
+    if (!isMiniQuizActive || isMiniQuizSubmitted) return;
+    const interval = window.setInterval(() => {
+      setMiniQuizSecondsLeft((prev) => {
+        if (prev <= 1) {
+          handleSubmitMiniQuiz();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMiniQuizActive, isMiniQuizSubmitted, miniQuizQuestions, miniQuizAnswers]);
+
   const stats = useMemo(() => {
     const total = records.length;
     const mastered = records.filter((r) => r.mastered).length;
@@ -128,15 +248,37 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
     return Array.from(map.entries());
   }, [records]);
 
+  const trapStats = useMemo(() => {
+    const counts: Record<VstepTrapCategory, { total: number; unmastered: number }> = {
+      MAIN_IDEA: { total: 0, unmastered: 0 },
+      DETAIL_TRAP: { total: 0, unmastered: 0 },
+      VOCAB_CONTEXT: { total: 0, unmastered: 0 },
+      INFERENCE: { total: 0, unmastered: 0 },
+      REFERENCE_INSERT: { total: 0, unmastered: 0 },
+    };
+    records.forEach((r) => {
+      const cat = classifyVstepQuestionTrap(r.questionSnapshot);
+      counts[cat].total += 1;
+      if (!r.mastered) counts[cat].unmastered += 1;
+    });
+    return counts;
+  }, [records]);
+
   const filteredRecords = useMemo(() => {
     return records.filter((r) => {
       if (skillFilter !== 'ALL' && r.section !== skillFilter) return false;
       if (statusFilter === 'NEED_REVIEW' && r.mastered) return false;
       if (statusFilter === 'MASTERED' && !r.mastered) return false;
       if (testFilter !== 'ALL' && r.testId !== testFilter) return false;
+      if (
+        trapFilter !== 'ALL' &&
+        classifyVstepQuestionTrap(r.questionSnapshot) !== trapFilter
+      ) {
+        return false;
+      }
       return true;
     });
-  }, [records, skillFilter, statusFilter, testFilter]);
+  }, [records, skillFilter, statusFilter, testFilter, trapFilter]);
 
   const checkAnswerCorrect = (q: Question, ans: string): boolean => {
     const trimmed = (ans || '').trim().toLowerCase();
@@ -172,6 +314,92 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
     setRecords(updated);
   };
 
+  // Start 10-Question Random Timed Mini-Quiz
+  const handleStartRandomMiniQuiz = () => {
+    const unmasteredPool = records.filter((r) => !r.mastered);
+    const sourcePool = unmasteredPool.length > 0 ? unmasteredPool : records;
+    if (sourcePool.length === 0) return;
+
+    const shuffled = [...sourcePool].sort(() => Math.random() - 0.5);
+    const picked = shuffled.slice(0, Math.min(10, shuffled.length));
+    setMiniQuizQuestions(picked);
+    setMiniQuizCurrentIdx(0);
+    setMiniQuizAnswers({});
+    setMiniQuizSecondsLeft(picked.length * 60);
+    setIsMiniQuizSubmitted(false);
+    setIsSprintMode(false);
+    setIsMiniQuizActive(true);
+  };
+
+  const handleSubmitMiniQuiz = () => {
+    setIsMiniQuizSubmitted(true);
+    let latestRecords = getMistakeRecords(uid);
+    let newlyMastered = 0;
+
+    miniQuizQuestions.forEach((rec) => {
+      const chosen = miniQuizAnswers[rec.key] || '';
+      if (checkAnswerCorrect(rec.questionSnapshot, chosen)) {
+        newlyMastered += 1;
+        setRedoAnswers((prev) => ({ ...prev, [rec.key]: chosen }));
+        if (!rec.mastered) {
+          latestRecords = markMistakeMastered(rec.key, true, uid);
+        }
+      } else if (chosen) {
+        setRedoAnswers((prev) => ({ ...prev, [rec.key]: chosen }));
+      }
+    });
+
+    setRecords(latestRecords);
+    if (newlyMastered > 0) {
+      recordStudyActivity(
+        `Hoàn thành Mini-Quiz Sổ tay lỗi sai (${newlyMastered}/${miniQuizQuestions.length} câu đúng)`,
+        currentUser?.uid
+      );
+    }
+  };
+
+  const handleRequestAiMistakeExplanation = async (record: MistakeRecord) => {
+    if (loadingAiExplainKey === record.key) return;
+    setLoadingAiExplainKey(record.key);
+    const q = record.questionSnapshot;
+    const contextText =
+      q.audioScript ||
+      (q.readingArticle ? q.readingArticle.paragraphs.join('\n') : '') ||
+      q.stimulusCard?.content ||
+      q.evidenceQuote ||
+      '';
+
+    try {
+      const res = await fetch('/api/ai/explain-mistake', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          section: record.section,
+          partNumber: record.partNumber,
+          prompt: (q.prompt || q.notesData?.label || '').replace(/<\/?(?:u|b|strong|mark)>/gi, ''),
+          options: q.options || [],
+          correctAnswer: record.correctAnswer,
+          userWrongAnswer: record.userWrongAnswer,
+          contextText,
+        }),
+      });
+      if (res.ok) {
+        const data: AiMistakeExplanation = await res.json();
+        setAiExplanations((prev) => ({ ...prev, [record.key]: data }));
+      }
+    } catch {
+      // Ignore network error
+    } finally {
+      setLoadingAiExplainKey(null);
+    }
+  };
+
+  const formatMiniQuizTimer = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+
   const renderMistakeCard = (record: MistakeRecord, indexLabel?: string) => {
     const q = record.questionSnapshot;
     const relNum = getPartRelativeNumber(record.questionId);
@@ -180,6 +408,7 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
     const isRedoCorrect = hasAnsweredRedo && checkAnswerCorrect(q, currentRedoVal);
     const isPassageExpanded = !!expandedPassages[record.key];
     const isTranslated = !!showTranslations[record.key];
+    const aiExpl = aiExplanations[record.key];
 
     const options =
       q.options && q.options.length > 0
@@ -238,9 +467,36 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
             <span className="font-bold text-rose-600 dark:text-rose-400">
               Đã sai {record.wrongCount} lần (Chọn nhầm: {record.userWrongAnswer})
             </span>
+            {(() => {
+              const trapCat = classifyVstepQuestionTrap(q);
+              const meta = VSTEP_TRAP_META[trapCat];
+              return (
+                <span
+                  className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[11px] font-black ${meta.badgeClass}`}
+                  title={meta.tipVi}
+                >
+                  <span>Dạng bẫy: {meta.shortLabel}</span>
+                </span>
+              );
+            })()}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleRequestAiMistakeExplanation(record)}
+              disabled={loadingAiExplainKey === record.key}
+              className="inline-flex items-center gap-1 rounded-xl bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 px-2.5 py-1 text-xs font-black text-[#E58700] dark:text-amber-300 border border-[#FF9600] cursor-pointer disabled:opacity-60"
+              title="Nhờ AI giải thích vì sao đáp án bạn chọn là bẫy nhiễu và phân tích bằng chứng đáp án đúng"
+            >
+              {loadingAiExplainKey === record.key ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-[#FF9600]" />
+              ) : (
+                <Wand2 className="h-3.5 w-3.5 text-[#FF9600]" />
+              )}
+              <span>{aiExpl ? 'Phân tích lại bẫy AI' : 'AI Giải mã bẫy đáp án'}</span>
+            </button>
+
             <button
               type="button"
               onClick={() => {
@@ -446,6 +702,70 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
           </div>
         )}
 
+        {/* AI Distractor Trap Analysis Panel */}
+        {aiExpl && (
+          <div className="mt-4 rounded-2xl border-2 border-[#FF9600] border-b-4 border-b-[#E58700] bg-amber-50/70 dark:bg-amber-950/35 p-4 text-xs space-y-2.5">
+            <div className="flex items-center justify-between gap-2 font-black uppercase tracking-wider text-[#E58700] dark:text-amber-300">
+              <span className="flex items-center gap-1.5">
+                <Wand2 className="h-4 w-4 text-[#FF9600]" />
+                <span>AI Giải Mã Bẫy Đáp Án Nhiễu (Distractor Analysis)</span>
+              </span>
+              <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700">
+                Chọn nhầm: {record.userWrongAnswer} → Đúng: {record.correctAnswer}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+              <div className="rounded-xl bg-white dark:bg-slate-900 p-3 border border-rose-200 dark:border-rose-900/60 space-y-1">
+                <span className="font-black text-rose-700 dark:text-rose-300 block">
+                  Vì sao phương án {record.userWrongAnswer} là bẫy nhiễu?
+                </span>
+                <p className="text-slate-700 dark:text-slate-200 leading-relaxed font-medium">
+                  {aiExpl.whyWrongTrapVi}
+                </p>
+              </div>
+              <div className="rounded-xl bg-white dark:bg-slate-900 p-3 border border-emerald-200 dark:border-emerald-900/60 space-y-1">
+                <span className="font-black text-emerald-700 dark:text-emerald-300 block">
+                  Vì sao đáp án {record.correctAnswer} chính xác?
+                </span>
+                <p className="text-slate-700 dark:text-slate-200 leading-relaxed font-medium">
+                  {aiExpl.whyCorrectVi}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <span className="font-bold text-amber-900 dark:text-amber-200">
+                💡 {aiExpl.examTipVi}
+              </span>
+              {aiExpl.keyVocab && aiExpl.keyVocab.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {aiExpl.keyVocab.map((kv, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() =>
+                        setQuickSavePayload({
+                          initialWord: kv.word,
+                          contextSentence: `${kv.word}: ${kv.meaningVi}`,
+                          sourceLabel: `AI Giải mã câu sai · Câu ${relNum}`,
+                          testId: record.testId,
+                          testTitle: record.testTitle,
+                        })
+                      }
+                      className="inline-flex items-center gap-1 rounded-lg bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800 px-2 py-0.5 text-[11px] font-bold text-[#8438C8] dark:text-purple-300 hover:bg-purple-50 cursor-pointer"
+                      title="Bấm để lưu nhanh từ này vào SRS"
+                    >
+                      <BookmarkPlus className="h-3 w-3" />
+                      <span>
+                        {kv.word} ({kv.meaningVi})
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Instant Explanation & Audio Script after Redo Selection */}
         {hasAnsweredRedo && (
           <div className="mt-4 rounded-2xl bg-lime-50/90 dark:bg-lime-950/40 p-4 border-2 border-lime-300 dark:border-lime-800 text-xs space-y-2.5 animate-in fade-in duration-150">
@@ -537,33 +857,50 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
               Kho Câu Hỏi Hay Sai &amp; Làm Lại
             </h2>
             <p className="text-xs sm:text-sm font-semibold text-slate-500 dark:text-slate-400 mt-1 max-w-2xl">
-              Hệ thống tự động thu thập mọi câu Listening &amp; Reading bạn từng làm sai qua các lần luyện đề để bạn ôn tập lại và lưu trực tiếp từ mới vào kho Flashcard SRS.
+              Hệ thống tự động thu thập mọi câu Listening &amp; Reading bạn từng làm sai qua các lần luyện đề để bạn ôn tập lại, giải mã bẫy nhiễu bằng AI và kiểm tra phản xạ qua Mini-Quiz 10 câu bấm giờ.
             </p>
           </div>
 
-          {filteredRecords.length > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                setSprintIndex(0);
-                setIsSprintMode((prev) => !prev);
-              }}
-              className={`${
-                isSprintMode ? 'btn-duo-white' : 'btn-duo-green'
-              } px-5 py-3.5 rounded-2xl text-xs sm:text-sm font-black flex items-center justify-center gap-2 shrink-0 cursor-pointer`}
-            >
-              {isSprintMode ? (
-                <>
-                  <RotateCcw className="h-4 w-4" />
-                  <span>Xem dạng danh sách đầy đủ</span>
-                </>
-              ) : (
-                <>
-                  <Play className="h-4 w-4 fill-white" />
-                  <span>Luyện chuỗi câu đang lọc ({filteredRecords.length} câu)</span>
-                </>
+          {records.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleStartRandomMiniQuiz}
+                className="btn-duo-orange px-4 py-3 rounded-2xl text-xs sm:text-sm font-black flex items-center justify-center gap-2 cursor-pointer"
+                title="Rút ngẫu nhiên 10 câu cần ôn lại kèm đồng hồ đếm ngược 10 phút"
+              >
+                <Zap className="h-4 w-4 fill-white" />
+                <span>
+                  Thi nhanh 10 câu ngẫu nhiên ({Math.min(10, stats.needReview || records.length)} câu · Bấm giờ)
+                </span>
+              </button>
+
+              {filteredRecords.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMiniQuizActive(false);
+                    setSprintIndex(0);
+                    setIsSprintMode((prev) => !prev);
+                  }}
+                  className={`${
+                    isSprintMode ? 'btn-duo-white' : 'btn-duo-green'
+                  } px-4 py-3 rounded-2xl text-xs sm:text-sm font-black flex items-center justify-center gap-2 cursor-pointer`}
+                >
+                  {isSprintMode ? (
+                    <>
+                      <RotateCcw className="h-4 w-4" />
+                      <span>Xem danh sách đầy đủ</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-4 w-4 fill-white" />
+                      <span>Luyện tuần tự ({filteredRecords.length} câu)</span>
+                    </>
+                  )}
+                </button>
               )}
-            </button>
+            </div>
           )}
         </div>
 
@@ -617,7 +954,279 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
             </div>
           </div>
         </div>
+
+        {/* 5 VSTEP Exam Trap Breakdown Studio */}
+        {records.length > 0 && (
+          <div className="mt-5 pt-5 border-t border-slate-100 dark:border-slate-800 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-black uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                Phân Tích &amp; Luyện Tập Thông Minh Theo 5 Dạng Bẫy Đề Thi VSTEP Hay Sai Nhất
+              </div>
+              {trapFilter !== 'ALL' && (
+                <button
+                  type="button"
+                  onClick={() => setTrapFilter('ALL')}
+                  className="text-xs font-black text-[#1CB0F6] hover:underline cursor-pointer"
+                >
+                  Bỏ lọc dạng bẫy (Xem tất cả)
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+              {(Object.keys(VSTEP_TRAP_META) as VstepTrapCategory[]).map((catKey) => {
+                const meta = VSTEP_TRAP_META[catKey];
+                const stat = trapStats[catKey];
+                const isSelected = trapFilter === catKey;
+                return (
+                  <button
+                    key={catKey}
+                    type="button"
+                    onClick={() => {
+                      setTrapFilter((prev) => (prev === catKey ? 'ALL' : catKey));
+                      setSprintIndex(0);
+                    }}
+                    className={`rounded-2xl border-2 border-b-4 p-3 text-left transition-all cursor-pointer ${
+                      isSelected
+                        ? 'border-[#58CC02] border-b-[#46A302] bg-[#D7FFB8]/40 dark:bg-emerald-950/40'
+                        : 'border-slate-200 dark:border-slate-800 border-b-slate-300 dark:border-b-slate-950 bg-slate-50/70 dark:bg-slate-800/40 hover:border-[#1CB0F6]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-xs font-black text-slate-900 dark:text-white">
+                        {meta.shortLabel}
+                      </span>
+                      <span className="font-mono text-xs font-black tabular-nums px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-rose-600 dark:text-rose-400">
+                        {stat.unmastered} cần ôn
+                      </span>
+                    </div>
+                    <p className="mt-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400 line-clamp-2">
+                      {meta.tipVi}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Timed 10-Question Random Mini-Quiz Arena */}
+      {isMiniQuizActive && miniQuizQuestions.length > 0 && (
+        <div className="rounded-3xl border-2 border-[#FF9600] border-b-4 border-b-[#E58700] bg-white dark:bg-slate-900 p-5 sm:p-6 shadow-md space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
+            <div>
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-[#E58700] dark:text-amber-400">
+                <Zap className="h-3.5 w-3.5 fill-current" />
+                <span>MINI-QUIZ 10 CÂU NGẪU NHIÊN CÓ BẤM GIỜ</span>
+              </span>
+              <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5">
+                {isMiniQuizSubmitted
+                  ? 'Kết Quả Mini-Quiz Khắc Phục Lỗi Sai'
+                  : `Câu ${miniQuizCurrentIdx + 1} / ${miniQuizQuestions.length}`}
+              </h3>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              {!isMiniQuizSubmitted && (
+                <div
+                  className={`inline-flex items-center gap-2 rounded-2xl border-2 border-b-4 px-3.5 py-2 font-mono text-xs sm:text-sm font-black tabular-nums ${
+                    miniQuizSecondsLeft <= 60
+                      ? 'border-rose-400 border-b-rose-600 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 animate-pulse'
+                      : 'border-amber-300 border-b-amber-500 bg-amber-50 dark:bg-amber-950/50 text-amber-900 dark:text-amber-200'
+                  }`}
+                >
+                  <Clock className="h-4 w-4 text-[#FF9600]" />
+                  <span>Còn lại: {formatMiniQuizTimer(miniQuizSecondsLeft)}</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setIsMiniQuizActive(false)}
+                className="btn-duo-white px-3.5 py-2 rounded-xl text-xs font-black cursor-pointer"
+              >
+                Thoát Mini-Quiz
+              </button>
+            </div>
+          </div>
+
+          {/* Question Number Pills */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {miniQuizQuestions.map((qItem, idx) => {
+              const userAns = miniQuizAnswers[qItem.key] || '';
+              const isCorrect =
+                isMiniQuizSubmitted && checkAnswerCorrect(qItem.questionSnapshot, userAns);
+              return (
+                <button
+                  key={qItem.key}
+                  type="button"
+                  onClick={() => setMiniQuizCurrentIdx(idx)}
+                  className={`h-8 min-w-8 px-2 rounded-xl font-mono text-xs font-black border-2 transition-all cursor-pointer tabular-nums ${
+                    miniQuizCurrentIdx === idx
+                      ? 'ring-2 ring-[#FF9600] border-[#FF9600] bg-amber-100 dark:bg-amber-900 text-amber-950 dark:text-white'
+                      : isMiniQuizSubmitted
+                      ? isCorrect
+                        ? 'border-[#58CC02] bg-[#D7FFB8] text-[#2B6600]'
+                        : 'border-[#FF4B4B] bg-[#FFDFE0] text-[#EA2B2B]'
+                      : userAns
+                      ? 'border-[#1CB0F6] bg-sky-50 dark:bg-sky-950/60 text-[#1899D6] dark:text-sky-300'
+                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  {idx + 1}
+                </button>
+              );
+            })}
+          </div>
+
+          {isMiniQuizSubmitted ? (
+            <div className="space-y-4">
+              {(() => {
+                const rightCount = miniQuizQuestions.filter((qItem) =>
+                  checkAnswerCorrect(qItem.questionSnapshot, miniQuizAnswers[qItem.key] || '')
+                ).length;
+                const pct = Math.round((rightCount / miniQuizQuestions.length) * 100);
+                return (
+                  <div className="rounded-2xl bg-lime-50 dark:bg-emerald-950/40 border-2 border-[#58CC02] p-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-black uppercase text-[#2B6600] dark:text-emerald-300">
+                        Tổng kết Mini-Quiz
+                      </div>
+                      <div className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tabular-nums">
+                        Đúng {rightCount}/{miniQuizQuestions.length} câu ({pct}%) — Đã tự động cập nhật trạng thái Đã khắc phục!
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleStartRandomMiniQuiz}
+                      className="btn-duo-orange px-4 py-2.5 rounded-xl text-xs font-black cursor-pointer inline-flex items-center gap-1.5"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      <span>Đổi 10 câu ngẫu nhiên khác</span>
+                    </button>
+                  </div>
+                );
+              })()}
+
+              {renderMistakeCard(
+                miniQuizQuestions[miniQuizCurrentIdx] || miniQuizQuestions[0],
+                `Mini-Quiz #${miniQuizCurrentIdx + 1}`
+              )}
+            </div>
+          ) : (
+            (() => {
+              const activeRec = miniQuizQuestions[miniQuizCurrentIdx] || miniQuizQuestions[0];
+              const q = activeRec.questionSnapshot;
+              const relNum = getPartRelativeNumber(activeRec.questionId);
+              const selectedVal = miniQuizAnswers[activeRec.key] || '';
+              const opts =
+                q.options && q.options.length > 0
+                  ? q.options
+                  : [
+                      { id: 'A', text: 'Option A' },
+                      { id: 'B', text: 'Option B' },
+                      { id: 'C', text: 'Option C' },
+                      { id: 'D', text: 'Option D' },
+                    ];
+
+              return (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-500 dark:text-slate-400">
+                    <span>
+                      {activeRec.section === 'LISTENING' ? 'Listening' : 'Reading'} Part{' '}
+                      {activeRec.partNumber} · Câu {relNum} ({activeRec.testTitle})
+                    </span>
+                    {q.audioScript && (
+                      <button
+                        type="button"
+                        onClick={() => examAudioManager.speakText(q.audioScript!)}
+                        className="inline-flex items-center gap-1 rounded-xl bg-sky-50 dark:bg-sky-950/60 px-3 py-1 text-xs font-black text-[#1899D6] dark:text-sky-300 border border-sky-200 dark:border-sky-800 cursor-pointer"
+                      >
+                        <Volume2 className="h-3.5 w-3.5" />
+                        <span>Nghe đoạn hội thoại</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
+                    {(q.prompt || q.notesData?.label || `Question ${relNum}`).replace(
+                      /<\/?(?:u|b|strong|mark)>/gi,
+                      ''
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {opts.map((opt) => {
+                      const isPicked = selectedVal === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() =>
+                            setMiniQuizAnswers((prev) => ({ ...prev, [activeRec.key]: opt.id }))
+                          }
+                          className={`flex items-center gap-3 rounded-2xl border-2 border-b-4 p-3.5 text-left text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+                            isPicked
+                              ? 'border-[#1CB0F6] border-b-[#1899D6] bg-sky-50 dark:bg-sky-950/50 text-[#1899D6] dark:text-sky-200'
+                              : 'border-slate-200 dark:border-slate-700 border-b-slate-300 dark:border-b-slate-950 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-[#1CB0F6]'
+                          }`}
+                        >
+                          <span
+                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-xl text-xs font-black ${
+                              isPicked
+                                ? 'bg-[#1CB0F6] text-white'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            {opt.id}
+                          </span>
+                          <span className="flex-1">
+                            {opt.text.replace(/<\/?(?:u|b|strong|mark)>/gi, '')}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <button
+                      type="button"
+                      disabled={miniQuizCurrentIdx <= 0}
+                      onClick={() => setMiniQuizCurrentIdx((i) => Math.max(0, i - 1))}
+                      className="btn-duo-white px-4 py-2 rounded-xl text-xs font-black disabled:opacity-40 cursor-pointer"
+                    >
+                      ← Câu trước
+                    </button>
+
+                    {miniQuizCurrentIdx < miniQuizQuestions.length - 1 ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setMiniQuizCurrentIdx((i) =>
+                            Math.min(miniQuizQuestions.length - 1, i + 1)
+                          )
+                        }
+                        className="btn-duo-blue px-4 py-2 rounded-xl text-xs font-black cursor-pointer"
+                      >
+                        Câu tiếp theo →
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleSubmitMiniQuiz}
+                        className="btn-duo-green px-5 py-2.5 rounded-xl text-xs font-black cursor-pointer"
+                      >
+                        Nộp bài Mini-Quiz &amp; Chấm điểm
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()
+          )}
+        </div>
+      )}
 
       {/* Interactive Filter Controls */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white dark:bg-slate-900 p-4 border-2 border-slate-200 dark:border-slate-800">
@@ -766,6 +1375,9 @@ export const MistakeNotebookView: React.FC<MistakeNotebookViewProps> = ({
         onClose={() => setQuickSavePayload(null)}
         payload={quickSavePayload}
       />
+
+      {/* Global Floating Dictionary & 1-Click SRS Save on Text Selection */}
+      <GlobalSelectionDictionaryPopover sourceLabel="Sổ Tay Câu Sai VSTEP" />
     </div>
   );
 };

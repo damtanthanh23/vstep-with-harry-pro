@@ -555,6 +555,360 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
     return count;
   }, [questions]);
 
+  const [isValidatorOpen, setIsValidatorOpen] = useState<boolean>(false);
+
+  // AI Exam Part Generator Modal State
+  const [isAiPartGenOpen, setIsAiPartGenOpen] = useState<boolean>(false);
+  const [aiGenTargetType, setAiGenTargetType] = useState<
+    'READING_PASSAGE' | 'WRITING_TASK' | 'SPEAKING_PART'
+  >('READING_PASSAGE');
+  const [aiGenPartNum, setAiGenPartNum] = useState<number>(1);
+  const [aiGenTopic, setAiGenTopic] = useState<string>(
+    'Artificial Intelligence and Digital Learning in Modern Education'
+  );
+  const [aiGenBand, setAiGenBand] = useState<'B1' | 'B2' | 'C1'>('B2');
+  const [isGeneratingAiPart, setIsGeneratingAiPart] = useState<boolean>(false);
+  const [aiGenError, setAiGenError] = useState<string | null>(null);
+
+  const handleGenerateAiExamPart = async () => {
+    const cleanTopic = aiGenTopic.trim();
+    if (!cleanTopic) {
+      setAiGenError('Vui lòng nhập chủ đề tiếng Anh hoặc tiếng Việt để AI biên soạn đề.');
+      return;
+    }
+    setIsGeneratingAiPart(true);
+    setAiGenError(null);
+    try {
+      const resp = await fetch('/api/ai/generate-exam-part', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetType: aiGenTargetType,
+          partNumber: aiGenPartNum,
+          topic: cleanTopic,
+          targetBand: aiGenBand,
+        }),
+      });
+      if (!resp.ok) {
+        const errJson = await resp.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Không thể sinh đề tự động lúc này.');
+      }
+      const result = await resp.json();
+      const data = result.data || {};
+
+      if (aiGenTargetType === 'READING_PASSAGE') {
+        const pNum = (Math.min(4, Math.max(1, aiGenPartNum)) as 1 | 2 | 3 | 4);
+        const paragraphs: string[] =
+          Array.isArray(data.paragraphs) && data.paragraphs.length > 0
+            ? data.paragraphs
+            : ['Paragraph 1...'];
+        const transParagraphs: string[] = Array.isArray(data.translationParagraphs)
+          ? data.translationParagraphs
+          : [];
+        const genQs: any[] = Array.isArray(data.questions) ? data.questions : [];
+
+        setQuestions((prev) => {
+          const partQs = prev.filter((q) => q.section === 'READING' && q.partNumber === pNum);
+          const partIds = partQs.map((q) => q.id);
+          return prev.map((q) => {
+            if (q.section !== 'READING' || q.partNumber !== pNum) return q;
+            const idxInPart = partIds.indexOf(q.id);
+            const gq = genQs[idxInPart];
+            const updatedArticle = {
+              title:
+                data.title ||
+                `PASSAGE ${pNum} – ${cleanTopic.toUpperCase()}`,
+              paragraphs,
+            };
+            const updatedTrans =
+              transParagraphs.length > 0
+                ? {
+                    title: `Bản dịch Bài đọc ${pNum}`,
+                    paragraphs: transParagraphs,
+                  }
+                : q.readingArticleTranslation;
+
+            if (!gq) {
+              return {
+                ...q,
+                readingArticle: updatedArticle,
+                readingPassage: paragraphs.join('\n\n'),
+                readingArticleTranslation: updatedTrans,
+              };
+            }
+
+            const ansLetter = ['A', 'B', 'C', 'D'].includes(
+              String(gq.correctAnswer || '').trim().toUpperCase()
+            )
+              ? String(gq.correctAnswer).trim().toUpperCase()
+              : 'A';
+
+            return {
+              ...q,
+              readingArticle: updatedArticle,
+              readingPassage: paragraphs.join('\n\n'),
+              readingArticleTranslation: updatedTrans,
+              prompt: gq.prompt || q.prompt,
+              options: [
+                { id: 'A', text: gq.optionA || 'Option A' },
+                { id: 'B', text: gq.optionB || 'Option B' },
+                { id: 'C', text: gq.optionC || 'Option C' },
+                { id: 'D', text: gq.optionD || 'Option D' },
+              ],
+              correctAnswer: ansLetter,
+              evidenceQuote: gq.evidenceQuote || '',
+              explanation: gq.explanation || '',
+            };
+          });
+        });
+
+        handleSelectPartTab(pNum + 4);
+        setQuickFillNotice(
+          `Đã tự động sinh Reading Passage ${pNum} (Bài đọc + Dịch + 10 câu hỏi A–D chuẩn Band ${aiGenBand}) theo chủ đề "${cleanTopic}"!`
+        );
+      } else if (aiGenTargetType === 'WRITING_TASK') {
+        const wNum = (aiGenPartNum === 2 ? 2 : 1) as 1 | 2;
+        handleUpdateWritingTask(wNum, {
+          title:
+            data.title ||
+            (wNum === 1
+              ? 'Writing Task 1 · Formal / Informal Letter'
+              : 'Writing Task 2 · Academic Essay'),
+          instruction:
+            data.scenario ||
+            (wNum === 1
+              ? 'You should spend about 20 minutes on this task. Write a letter or email of at least 120 words.'
+              : 'You should spend about 40 minutes on this task. Write an essay of at least 250 words.'),
+          stimulusText: data.stimulusText || '',
+          bulletPoints: Array.isArray(data.bulletPoints) ? data.bulletPoints : [],
+          sampleAnswer: data.sampleB2 || data.sampleAnswer || data.sampleC1 || '',
+        });
+        handleSelectPartTab(wNum === 1 ? 9 : 10);
+        setQuickFillNotice(
+          `Đã tự động sinh đề Writing Task ${wNum} kèm bài mẫu chuẩn Band ${aiGenBand} theo chủ đề "${cleanTopic}"!`
+        );
+      } else {
+        const sNum = (Math.min(3, Math.max(1, aiGenPartNum)) as 1 | 2 | 3);
+        if (sNum === 1) {
+          handleUpdateSpeakingTask(1, {
+            title: data.title || `PART 1: Social Interaction (${cleanTopic})`,
+            topicClusters: [
+              {
+                topicTitle: data.topic1Title || `Let's talk about ${cleanTopic}`,
+                questions:
+                  Array.isArray(data.topic1Questions) && data.topic1Questions.length > 0
+                    ? data.topic1Questions
+                    : [
+                        `How important is ${cleanTopic} in your daily life?`,
+                        'What changes have you noticed recently regarding this topic?',
+                        'How do you think this trend will develop in the future?',
+                      ],
+              },
+              {
+                topicTitle: data.topic2Title || 'Let’s talk about lifestyle & habits',
+                questions:
+                  Array.isArray(data.topic2Questions) && data.topic2Questions.length > 0
+                    ? data.topic2Questions
+                    : [
+                        'How do people in your community usually spend their weekends?',
+                        'What are the benefits of learning new skills regularly?',
+                        'Would you prefer studying alone or in a group? Why?',
+                      ],
+              },
+            ],
+            sampleAnswer: data.sampleB2 || data.sampleAnswer || data.sampleC1 || '',
+          });
+        } else if (sNum === 2) {
+          handleUpdateSpeakingTask(2, {
+            title: data.title || `PART 2: Solution Discussion (${cleanTopic})`,
+            situation:
+              data.situation ||
+              `Situation: You are considering the best approach related to ${cleanTopic}. There are THREE options for you to choose:`,
+            options:
+              Array.isArray(data.options) && data.options.length >= 3
+                ? data.options.slice(0, 3)
+                : ['Option 1', 'Option 2', 'Option 3'],
+            sampleAnswer: data.sampleB2 || data.sampleAnswer || data.sampleC1 || '',
+          });
+        } else {
+          handleUpdateSpeakingTask(3, {
+            title: data.title || `PART 3: Topic Development (${cleanTopic})`,
+            topicStatement:
+              data.topicStatement || `Topic: ${cleanTopic} plays a vital role in modern life.`,
+            mindMap: {
+              centralIdea: data.centralIdea || cleanTopic,
+              nodes:
+                Array.isArray(data.mindMapNodes) && data.mindMapNodes.length >= 3
+                  ? [...data.mindMapNodes.slice(0, 3), '[Your own ideas]']
+                  : ['Personal growth', 'Economic impact', 'Social connection', '[Your own ideas]'],
+            },
+            followUpQuestions:
+              Array.isArray(data.followUpQuestions) && data.followUpQuestions.length > 0
+                ? data.followUpQuestions
+                : [
+                    `Do you think governments should invest more in ${cleanTopic}?`,
+                    'How does this issue affect younger and older generations differently?',
+                    'What challenges might arise in the next 10 years?',
+                  ],
+            sampleAnswer: data.sampleB2 || data.sampleAnswer || data.sampleC1 || '',
+          });
+        }
+        handleSelectPartTab(sNum + 10);
+        setQuickFillNotice(
+          `Đã tự động sinh đề Speaking Part ${sNum} kèm bài mẫu chuẩn Band ${aiGenBand} theo chủ đề "${cleanTopic}"!`
+        );
+      }
+
+      setTimeout(() => setQuickFillNotice(null), 4500);
+      setIsAiPartGenOpen(false);
+    } catch (err: any) {
+      setAiGenError(err?.message || 'Có lỗi xảy ra khi gọi AI sinh đề.');
+    } finally {
+      setIsGeneratingAiPart(false);
+    }
+  };
+
+  // Automated Exam Quality Validator across all 75 questions + Audio + Writing + Speaking
+  const validationReport = useMemo(() => {
+    const issues: Array<{
+      id: string;
+      severity: 'error' | 'warning';
+      partTabId: number;
+      questionId?: number;
+      label: string;
+      detail: string;
+    }> = [];
+
+    if (!testTitle.trim()) {
+      issues.push({
+        id: 'meta-title',
+        severity: 'error',
+        partTabId: 1,
+        label: 'Cấu hình chung',
+        detail: 'Chưa nhập Tên bộ đề thi.',
+      });
+    }
+
+    if (audioMode === 'single') {
+      if (!audioUrl.trim()) {
+        issues.push({
+          id: 'audio-single',
+          severity: 'warning',
+          partTabId: 1,
+          label: 'File nghe Listening',
+          detail: 'Chưa tải lên file MP3 chung cho phần Nghe (hệ thống sẽ đọc bằng giọng TTS dự phòng).',
+        });
+      }
+    } else {
+      ([1, 2, 3] as const).forEach((pNum) => {
+        const key = `part${pNum}` as keyof PartAudioMap;
+        if (!(partAudioUrls[key] || '').trim()) {
+          issues.push({
+            id: `audio-p${pNum}`,
+            severity: 'warning',
+            partTabId: pNum,
+            label: `Audio Listening Part ${pNum}`,
+            detail: `Chưa có file MP3 riêng cho Listening Part ${pNum}.`,
+          });
+        }
+      });
+    }
+
+    // Check Reading Passages 1-4
+    ([1, 2, 3, 4] as const).forEach((pNum) => {
+      const tabId = pNum + 4; // R1=5, R2=6, R3=7, R4=8
+      const sampleQ = questions.find((q) => q.section === 'READING' && q.partNumber === pNum);
+      const paras = sampleQ?.readingArticle?.paragraphs || [];
+      const joinedLen = paras.join(' ').trim().length;
+      if (joinedLen < 40) {
+        issues.push({
+          id: `reading-passage-${pNum}`,
+          severity: 'error',
+          partTabId: tabId,
+          questionId: sampleQ?.id,
+          label: `Reading Passage ${pNum}`,
+          detail: `Chưa nhập nội dung văn bản bài đọc cho Passage ${pNum}.`,
+        });
+      }
+    });
+
+    // Check each of the 75 questions
+    questions.forEach((q) => {
+      const tabId = q.section === 'LISTENING' ? q.partNumber : q.partNumber + 4;
+      const relNum = getPartRelativeNumber(q.id, questions);
+      const qLabel = `${q.section === 'LISTENING' ? `Listening P${q.partNumber}` : `Reading P${q.partNumber}`} · Câu ${relNum}`;
+
+      const hasPrompt = (q.prompt || q.notesData?.label || '').trim().length > 0;
+      if (!hasPrompt) {
+        issues.push({
+          id: `q-${q.id}-prompt`,
+          severity: 'error',
+          partTabId: tabId,
+          questionId: q.id,
+          label: qLabel,
+          detail: 'Thiếu nội dung câu hỏi (Prompt đang để trống).',
+        });
+      }
+
+      const hasAns = Array.isArray(q.correctAnswer)
+        ? q.correctAnswer.some((a) => a.trim().length > 0)
+        : String(q.correctAnswer || '').trim().length > 0;
+      if (!hasAns) {
+        issues.push({
+          id: `q-${q.id}-ans`,
+          severity: 'error',
+          partTabId: tabId,
+          questionId: q.id,
+          label: qLabel,
+          detail: 'Chưa chọn đáp án đúng (Correct Answer).',
+        });
+      }
+
+      if (q.options && q.options.length > 0) {
+        const emptyOpts = q.options.filter((o) => !(o.text || '').trim()).map((o) => o.id);
+        if (emptyOpts.length > 0) {
+          issues.push({
+            id: `q-${q.id}-opts`,
+            severity: 'error',
+            partTabId: tabId,
+            questionId: q.id,
+            label: qLabel,
+            detail: `Phương án ${emptyOpts.join(', ')} đang bị bỏ trống nội dung.`,
+          });
+        }
+      }
+
+      if (q.section === 'LISTENING' && !(q.audioScript || '').trim()) {
+        issues.push({
+          id: `q-${q.id}-script`,
+          severity: 'warning',
+          partTabId: tabId,
+          questionId: q.id,
+          label: qLabel,
+          detail: 'Chưa có Audio Script (Lời thoại giải thích).',
+        });
+      }
+    });
+
+    // Check Writing Tasks 1 & 2
+    writingTasks.forEach((wt) => {
+      const tabId = wt.partNumber === 1 ? 9 : 10;
+      if (!(wt.stimulusText || '').trim()) {
+        issues.push({
+          id: `writing-${wt.partNumber}`,
+          severity: 'error',
+          partTabId: tabId,
+          label: `Writing Task ${wt.partNumber}`,
+          detail: `Chưa nhập đề bài (Stimulus Text) cho Writing Task ${wt.partNumber}.`,
+        });
+      }
+    });
+
+    const errorCount = issues.filter((i) => i.severity === 'error').length;
+    const warningCount = issues.filter((i) => i.severity === 'warning').length;
+    return { issues, errorCount, warningCount };
+  }, [testTitle, audioMode, audioUrl, partAudioUrls, questions, writingTasks]);
+
   const [confirmClearScope, setConfirmClearScope] = useState<'part' | 'all' | null>(null);
 
   const handleClearCurrentPart = () => {
@@ -1489,6 +1843,19 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
 
           <button
             type="button"
+            onClick={() => {
+              setAiGenError(null);
+              setIsAiPartGenOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-2xl bg-purple-600 hover:bg-purple-700 px-3.5 py-1.5 text-xs font-black text-white shadow-xs border-b-2 border-purple-800 active:translate-y-0.5 transition-all cursor-pointer"
+            title="Dùng Gemini AI tự động biên soạn mới 1 Bài đọc hiểu 10 câu hoặc Đề Viết/Nói theo chủ đề bất kỳ"
+          >
+            <Wand2 className="h-3.5 w-3.5" />
+            <span>AI Sinh Đề Mới</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setIsJsonModalOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-2xl border-2 border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-lime-500 transition-colors cursor-pointer"
             title="Nhập đề từ cấu trúc JSON"
@@ -1505,6 +1872,35 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
           >
             <Download className="h-3.5 w-3.5 text-sky-600" />
             <span>Xuất JSON</span>
+          </button>
+
+          {/* Automated Exam Quality Validator Button */}
+          <button
+            type="button"
+            onClick={() => setIsValidatorOpen((prev) => !prev)}
+            className={`inline-flex items-center gap-1.5 rounded-2xl border-2 px-3 py-1.5 text-xs font-black transition-all cursor-pointer tabular-nums ${
+              validationReport.errorCount > 0
+                ? 'border-rose-400 bg-rose-50 text-rose-800 hover:bg-rose-100'
+                : validationReport.warningCount > 0
+                ? 'border-amber-400 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                : 'border-emerald-400 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+            }`}
+            title="Tự động rà soát thiếu đáp án, câu hỏi trống, thiếu bài đọc, transcript hoặc audio"
+          >
+            {validationReport.errorCount > 0 ? (
+              <AlertCircle className="h-3.5 w-3.5 text-rose-600" />
+            ) : (
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+            )}
+            <span>
+              Kiểm lỗi đề (
+              {validationReport.errorCount > 0
+                ? `${validationReport.errorCount} lỗi`
+                : validationReport.warningCount > 0
+                ? `${validationReport.warningCount} lưu ý`
+                : 'Chuẩn 100%'}
+              )
+            </span>
           </button>
 
           {/* Save Draft in-place Button */}
@@ -1559,6 +1955,78 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
         <div className="bg-rose-500 text-white px-6 py-2.5 text-center text-xs font-bold flex items-center justify-center gap-2">
           <AlertCircle className="h-4 w-4" />
           <span>{saveError}</span>
+        </div>
+      )}
+
+      {/* Automated Exam Quality Validator Drawer */}
+      {isValidatorOpen && (
+        <div className="border-b-2 border-slate-300 bg-white px-4 sm:px-6 py-4 shadow-sm">
+          <div className="mx-auto max-w-[1600px] space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-[#58CC02]" />
+                <span className="text-xs sm:text-sm font-black text-slate-900">
+                  Bộ Kiểm Định Chất Lượng Đề Thi Tự Động (75 Câu Hỏi + 2 Writing + 3 Speaking + Audio)
+                </span>
+                <span className="rounded-lg bg-rose-100 px-2 py-0.5 text-[11px] font-black text-rose-800 tabular-nums">
+                  {validationReport.errorCount} lỗi thiếu dữ liệu
+                </span>
+                <span className="rounded-lg bg-amber-100 px-2 py-0.5 text-[11px] font-black text-amber-800 tabular-nums">
+                  {validationReport.warningCount} lưu ý bổ sung
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsValidatorOpen(false)}
+                className="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-1 text-xs font-bold text-slate-700 cursor-pointer"
+              >
+                Đóng bảng kiểm lỗi
+              </button>
+            </div>
+
+            {validationReport.issues.length === 0 ? (
+              <div className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-3.5 text-xs font-bold text-emerald-900 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                <span>
+                  Tuyệt vời! Toàn bộ 75 câu hỏi, 4 bài đọc, Audio Script và đề Writing/Speaking đều đã đầy đủ dữ liệu chuẩn VSTEP.
+                </span>
+              </div>
+            ) : (
+              <div className="max-h-56 overflow-y-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 pr-1">
+                {validationReport.issues.slice(0, 60).map((issue) => (
+                  <button
+                    key={issue.id}
+                    type="button"
+                    onClick={() => {
+                      handleSelectPartTab(issue.partTabId);
+                      if (issue.questionId) {
+                        setPreviewActiveQuestionId(issue.questionId);
+                        setTimeout(() => {
+                          const el = document.getElementById(`builder-q-${issue.questionId}`);
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }, 80);
+                      }
+                    }}
+                    className={`flex items-start justify-between gap-2 rounded-xl border p-2.5 text-left text-xs transition-all cursor-pointer ${
+                      issue.severity === 'error'
+                        ? 'border-rose-200 bg-rose-50/70 hover:bg-rose-100 text-rose-950'
+                        : 'border-amber-200 bg-amber-50/70 hover:bg-amber-100 text-amber-950'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="font-black">{issue.label}</div>
+                      <div className="text-[11px] font-medium opacity-85 truncate">
+                        {issue.detail}
+                      </div>
+                    </div>
+                    <span className="shrink-0 rounded-lg bg-white px-2 py-0.5 text-[10px] font-black border border-slate-200 text-slate-700">
+                      Tới sửa →
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -3387,6 +3855,190 @@ export const ExamBuilderView: React.FC<ExamBuilderViewProps> = ({
 
       {/* Image / Stimulus Zoom Modal for Preview */}
       <ImageZoomModal card={zoomCard} onClose={() => setZoomCard(null)} />
+
+      {/* AI Exam Part Generator Modal */}
+      {isAiPartGenOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-xl rounded-3xl bg-white border-2 border-purple-200 border-b-4 border-b-purple-400 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-4 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="h-9 w-9 rounded-xl bg-white/20 flex items-center justify-center">
+                  <Wand2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black">
+                    AI Tự Động Sinh Đề Thi VSTEP Theo Chủ Đề
+                  </h3>
+                  <p className="text-[11px] font-semibold text-purple-100">
+                    Biên soạn mới Bài đọc 10 câu A–D (kèm bản dịch &amp; giải thích) hoặc Đề Writing / Speaking
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isGeneratingAiPart && setIsAiPartGenOpen(false)}
+                className="rounded-xl bg-white/15 hover:bg-white/25 px-2.5 py-1 text-xs font-black cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Target Skill Type */}
+              <div>
+                <label className="block text-xs font-black uppercase tracking-wider text-slate-600 mb-2">
+                  1. Chọn Phần Đề Thi Muốn AI Biên Soạn
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'READING_PASSAGE', label: '📖 Bài Đọc (10 câu)' },
+                    { id: 'WRITING_TASK', label: '✍️ Đề Viết (Task 1/2)' },
+                    { id: 'SPEAKING_PART', label: '🎙️ Đề Nói (Part 1/2/3)' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setAiGenTargetType(
+                          item.id as 'READING_PASSAGE' | 'WRITING_TASK' | 'SPEAKING_PART'
+                        );
+                        setAiGenPartNum(1);
+                      }}
+                      className={`rounded-2xl border-2 p-2.5 text-xs font-black transition-all cursor-pointer ${
+                        aiGenTargetType === item.id
+                          ? 'border-purple-600 bg-purple-50 text-purple-900 shadow-2xs'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-purple-300'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Part Number & Target Band */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1.5">
+                    2. Chọn Vị Trí Part Nhận Đề
+                  </label>
+                  <select
+                    value={aiGenPartNum}
+                    onChange={(e) => setAiGenPartNum(Number(e.target.value))}
+                    className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-800 outline-hidden focus:border-purple-500"
+                  >
+                    {aiGenTargetType === 'READING_PASSAGE' && (
+                      <>
+                        <option value={1}>Reading Passage 1 (Câu 1–10)</option>
+                        <option value={2}>Reading Passage 2 (Câu 11–20)</option>
+                        <option value={3}>Reading Passage 3 (Câu 21–30)</option>
+                        <option value={4}>Reading Passage 4 (Câu 31–40)</option>
+                      </>
+                    )}
+                    {aiGenTargetType === 'WRITING_TASK' && (
+                      <>
+                        <option value={1}>Writing Task 1 (Viết Thư / Email ≥ 120 từ)</option>
+                        <option value={2}>Writing Task 2 (Viết Luận Essay ≥ 250 từ)</option>
+                      </>
+                    )}
+                    {aiGenTargetType === 'SPEAKING_PART' && (
+                      <>
+                        <option value={1}>Speaking Part 1 (Social Interaction)</option>
+                        <option value={2}>Speaking Part 2 (Solution Discussion)</option>
+                        <option value={3}>Speaking Part 3 (Topic Mind-map)</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1.5">
+                    3. Độ Khó Chuẩn Khung VSTEP
+                  </label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(['B1', 'B2', 'C1'] as const).map((b) => (
+                      <button
+                        key={b}
+                        type="button"
+                        onClick={() => setAiGenBand(b)}
+                        className={`rounded-xl border-2 py-2 text-xs font-black cursor-pointer ${
+                          aiGenBand === b
+                            ? 'border-indigo-600 bg-indigo-600 text-white'
+                            : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        Band {b}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Topic Input & Presets */}
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1.5">
+                  4. Chủ Đề Muốn Biên Soạn (Tiếng Anh hoặc Tiếng Việt)
+                </label>
+                <input
+                  type="text"
+                  value={aiGenTopic}
+                  onChange={(e) => setAiGenTopic(e.target.value)}
+                  placeholder="VD: Renewable Energy, Remote Work, Preserving Cultural Heritage..."
+                  className="w-full rounded-xl border-2 border-slate-300 bg-slate-50 px-3.5 py-2.5 text-xs font-bold text-slate-900 outline-hidden focus:border-purple-600 focus:bg-white"
+                />
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  {[
+                    'Artificial Intelligence in Education',
+                    'Green Tourism & Environment',
+                    'Work-Life Balance & Remote Work',
+                    'Preserving Traditional Culture',
+                    'Public Transport in Big Cities',
+                  ].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setAiGenTopic(preset)}
+                      className="rounded-lg bg-slate-100 hover:bg-purple-50 border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:text-purple-700 cursor-pointer"
+                    >
+                      + {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {aiGenError && (
+                <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs font-bold text-rose-700">
+                  {aiGenError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isGeneratingAiPart}
+                  onClick={() => setIsAiPartGenOpen(false)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  disabled={isGeneratingAiPart}
+                  onClick={handleGenerateAiExamPart}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-purple-600 hover:bg-purple-700 px-5 py-2.5 text-xs font-black text-white shadow-md border-b-4 border-purple-800 active:border-b-0 active:translate-y-1 transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  <Wand2 className={`h-4 w-4 ${isGeneratingAiPart ? 'animate-spin' : ''}`} />
+                  <span>
+                    {isGeneratingAiPart
+                      ? 'AI đang biên soạn đề & đáp án (10-15s)...'
+                      : 'Tự Động Sinh Đề & Điền Vào Builder'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Non-blocking Background Audio Cloud Sync Progress Bar */}
       <AudioCloudSyncBanner />

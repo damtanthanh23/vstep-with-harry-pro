@@ -11,3 +11,14 @@ createRoot(document.getElementById('root')!).render(
     </ThemeProvider>
   </AuthProvider>
 );
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js')
+      .catch((error) => {
+        console.warn('Service Worker registration skipped:', error);
+      });
+  });
+}
+

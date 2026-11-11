@@ -29,7 +29,13 @@ import {
   GripVertical,
   AlertTriangle,
 } from 'lucide-react';
-import { TestMetadata, InProgressAttempt, isDraftTest, UserTargetScores } from '../../types/exam';
+import {
+  TestMetadata,
+  InProgressAttempt,
+  isDraftTest,
+  UserTargetScores,
+  UserExamAttempt,
+} from '../../types/exam';
 import { NavTabType } from '../navigation/Sidebar';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -43,7 +49,9 @@ import {
   getMistakeRecords,
   MISTAKES_UPDATED_EVENT,
   syncMistakesWithCloud,
+  MistakeRecord,
 } from '../../services/mistakeService';
+import { fetchUserAttempts } from '../../services/examService';
 import {
   getDailyQuote,
   getRandomDifferentQuote,
@@ -210,11 +218,14 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
   );
   const [isEditingGoals, setIsEditingGoals] = useState<boolean>(false);
 
-  // Daily Study Mission real-time metrics (SRS Due, Unmastered Mistakes)
+  // Daily Study Mission real-time metrics (SRS Due, Unmastered Mistakes, Historical Attempts)
   const [dueSrsCount, setDueSrsCount] = useState<number>(0);
   const [enrolledSrsCount, setEnrolledSrsCount] = useState<number>(0);
   const [unmasteredMistakesCount, setUnmasteredMistakesCount] = useState<number>(0);
   const [masteredMistakesCount, setMasteredMistakesCount] = useState<number>(0);
+  const [allMistakeRecords, setAllMistakeRecords] = useState<MistakeRecord[]>([]);
+  const [userAttemptsHistory, setUserAttemptsHistory] = useState<UserExamAttempt[]>([]);
+  const [showSkillAnalytics, setShowSkillAnalytics] = useState<boolean>(true);
 
   useEffect(() => {
     const uid = currentUser?.uid || 'guest';
@@ -235,6 +246,7 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
 
       try {
         const mistakes = getMistakeRecords(uid);
+        setAllMistakeRecords(mistakes);
         setUnmasteredMistakesCount(mistakes.filter((m) => !m.mastered).length);
         setMasteredMistakesCount(mistakes.filter((m) => m.mastered).length);
       } catch {
@@ -243,6 +255,16 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
     };
 
     refreshDailyMissionData();
+    fetchUserAttempts(uid)
+      .then((list) => {
+        if (Array.isArray(list)) {
+          setUserAttemptsHistory(
+            [...list].sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0))
+          );
+        }
+      })
+      .catch(() => {});
+
     if (uid !== 'guest') {
       syncMistakesWithCloud({ uid, tests }).then(() => {
         refreshDailyMissionData();
@@ -868,36 +890,100 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
           (srsTaskDone ? 1 : 0) + (mistakeTaskDone ? 1 : 0) + (practiceTaskDone ? 1 : 0);
         const missionProgressPct = Math.round((completedMissions / 3) * 100);
 
+        // Compute weakest skill from userAttemptsHistory to personalize daily mission
+        const lBest = userAttemptsHistory.length
+          ? Math.max(...userAttemptsHistory.map((a) => Math.round((a.listeningScore / 35) * 20) / 2))
+          : 0;
+        const rBest = userAttemptsHistory.length
+          ? Math.max(...userAttemptsHistory.map((a) => Math.round((a.readingScore / 40) * 20) / 2))
+          : 0;
+        const wBest = userAttemptsHistory.length
+          ? Math.max(
+              ...userAttemptsHistory.map((a) =>
+                typeof a.writingScore === 'number' ? Math.round((a.writingScore / 2.4) * 2) / 2 : 0
+              )
+            )
+          : 0;
+        const sBest = userAttemptsHistory.length
+          ? Math.max(
+              ...userAttemptsHistory.map((a) =>
+                typeof a.speakingScore === 'number' ? Math.round(a.speakingScore * 2) / 2 : 0
+              )
+            )
+          : 0;
+
+        const skillCandidates = [
+          { key: 'listening', name: 'Listening (Nghe)', score: lBest, tab: 'listening' as NavTabType },
+          { key: 'reading', name: 'Reading (Đọc)', score: rBest, tab: 'reading' as NavTabType },
+          { key: 'writing', name: 'Writing (Viết)', score: wBest, tab: 'writing_speaking' as NavTabType },
+          { key: 'speaking', name: 'Speaking (Nói)', score: sBest, tab: 'writing_speaking' as NavTabType },
+        ].sort((a, b) => a.score - b.score);
+        const weakestFocus = skillCandidates[0];
+
         return (
           <div className="rounded-3xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 border-b-4 border-b-slate-300 dark:border-b-slate-950 p-5 sm:p-6 shadow-2xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <div className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-[#1899D6] dark:text-[#1CB0F6]">
                   <Sparkles className="h-3.5 w-3.5" />
-                  <span>LỘ TRÌNH TỰ ĐỘNG HẰNG NGÀY</span>
+                  <span>LỘ TRÌNH TỰ ĐỘNG HẰNG NGÀY • ƯU TIÊN KỸ NĂNG YẾU NHẤT</span>
                 </div>
                 <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5">
                   Nhiệm Vụ Học Tập Hôm Nay (3 Bước Tăng Band VSTEP)
                 </h3>
               </div>
 
-              <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/80 px-3.5 py-2 rounded-2xl border border-slate-200 dark:border-slate-700">
-                <div className="text-right">
-                  <div className="text-[10px] font-black uppercase text-slate-400">
-                    Tiến độ hôm nay
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => handleStartPracticeMode(nextRecommendedTest?.id || 'test-1')}
+                  className="btn-duo-orange px-3.5 py-2 rounded-2xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                  title="Thi thử rút gọn Mini VSTEP 30 phút cho người bận rộn"
+                >
+                  <Clock className="h-3.5 w-3.5" />
+                  <span>⚡ Mini VSTEP 30 Phút</span>
+                </button>
+
+                <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/80 px-3.5 py-2 rounded-2xl border border-slate-200 dark:border-slate-700">
+                  <div className="text-right">
+                    <div className="text-[10px] font-black uppercase text-slate-400">
+                      Tiến độ hôm nay
+                    </div>
+                    <div className="font-mono text-xs sm:text-sm font-black tabular-nums text-slate-800 dark:text-white">
+                      {completedMissions}/3 nhiệm vụ ({missionProgressPct}%)
+                    </div>
                   </div>
-                  <div className="font-mono text-xs sm:text-sm font-black tabular-nums text-slate-800 dark:text-white">
-                    {completedMissions}/3 nhiệm vụ ({missionProgressPct}%)
+                  <div className="w-20 h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-[#58CC02] transition-all duration-300"
+                      style={{ width: `${missionProgressPct}%` }}
+                    />
                   </div>
-                </div>
-                <div className="w-20 h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-[#58CC02] transition-all duration-300"
-                    style={{ width: `${missionProgressPct}%` }}
-                  />
                 </div>
               </div>
             </div>
+
+            {userAttemptsHistory.length > 0 && weakestFocus && (
+              <div className="rounded-2xl bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/70 px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-200">
+                  <Target className="h-4 w-4 text-[#1CB0F6] shrink-0" />
+                  <span>
+                    Gợi ý cá nhân hóa: Kỹ năng cần ưu tiên bứt phá hôm nay của bạn là{' '}
+                    <strong className="text-[#1899D6] dark:text-sky-300 font-black">
+                      {weakestFocus.name} (Hiện tại: {weakestFocus.score.toFixed(1)}/10)
+                    </strong>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab(weakestFocus.tab)}
+                  className="text-xs font-black text-[#1899D6] dark:text-sky-300 hover:underline flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <span>Luyện chuyên sâu {weakestFocus.name} ngay</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
               {/* Mission 1: SRS Vocabulary Review */}
@@ -1028,6 +1114,397 @@ export const DashboardHomeView: React.FC<DashboardHomeViewProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        );
+      })()}
+
+      {/* ========================================================= */}
+      {/* BIỂU ĐỒ TIẾN ĐỘ 4 KỸ NĂNG & PHÂN TÍCH ĐIỂM YẾU THEO PART  */}
+      {/* ========================================================= */}
+      {(() => {
+        const latestAttempt = userAttemptsHistory[0] || null;
+        const recentAttemptsChronological = [...userAttemptsHistory].slice(0, 6).reverse();
+
+        // Compute best or latest 10-point scores per skill
+        const listeningBest10 = userAttemptsHistory.length
+          ? Math.max(...userAttemptsHistory.map((a) => Math.round((a.listeningScore / 35) * 20) / 2))
+          : 0;
+        const readingBest10 = userAttemptsHistory.length
+          ? Math.max(...userAttemptsHistory.map((a) => Math.round((a.readingScore / 40) * 20) / 2))
+          : 0;
+        const writingBest10 = userAttemptsHistory.length
+          ? Math.max(
+              ...userAttemptsHistory.map((a) =>
+                typeof a.writingScore === 'number' ? Math.round((a.writingScore / 2.4) * 2) / 2 : 0
+              )
+            )
+          : 0;
+        const speakingBest10 = userAttemptsHistory.length
+          ? Math.max(
+              ...userAttemptsHistory.map((a) =>
+                typeof a.speakingScore === 'number' ? Math.round(a.speakingScore * 2) / 2 : 0
+              )
+            )
+          : 0;
+
+        const targetL = userProfile?.targetScores?.listening ?? 6.5;
+        const targetR = userProfile?.targetScores?.reading ?? 6.5;
+        const targetW = userProfile?.targetScores?.writing ?? 6.0;
+        const targetS = userProfile?.targetScores?.speaking ?? 6.0;
+        const targetOverall = userProfile?.targetScores?.overall ?? 6.5;
+
+        const skillRows = [
+          {
+            key: 'listening' as const,
+            label: 'Listening (Nghe)',
+            subLabel: 'Part 1–3 · 35 câu',
+            current: listeningBest10,
+            target: targetL,
+            colorBar: 'bg-[#1CB0F6]',
+            colorBadge: 'text-[#1899D6] dark:text-sky-400 bg-sky-50 dark:bg-sky-950/50 border-sky-200 dark:border-sky-800',
+            tabId: 'listening' as NavTabType,
+          },
+          {
+            key: 'reading' as const,
+            label: 'Reading (Đọc)',
+            subLabel: 'Passage 1–4 · 40 câu',
+            current: readingBest10,
+            target: targetR,
+            colorBar: 'bg-[#58CC02]',
+            colorBadge: 'text-[#46A302] dark:text-lime-400 bg-lime-50 dark:bg-emerald-950/50 border-lime-200 dark:border-emerald-800',
+            tabId: 'reading' as NavTabType,
+          },
+          {
+            key: 'writing' as const,
+            label: 'Writing (Viết)',
+            subLabel: 'Task 1 Thư · Task 2 Luận',
+            current: writingBest10,
+            target: targetW,
+            colorBar: 'bg-[#CE82FF]',
+            colorBadge: 'text-[#A560E8] dark:text-purple-400 bg-purple-50 dark:bg-purple-950/50 border-purple-200 dark:border-purple-800',
+            tabId: 'writing_speaking' as NavTabType,
+          },
+          {
+            key: 'speaking' as const,
+            label: 'Speaking (Nói)',
+            subLabel: 'Part 1–3 · Phản xạ ghi âm',
+            current: speakingBest10,
+            target: targetS,
+            colorBar: 'bg-[#FF9600]',
+            colorBadge: 'text-[#E58700] dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800',
+            tabId: 'writing_speaking' as NavTabType,
+          },
+        ];
+
+        // Identify weakest skill (largest gap to target or lowest score)
+        const sortedByGap = [...skillRows].sort(
+          (a, b) => b.target - b.current - (a.target - a.current)
+        );
+        const weakestSkill = sortedByGap[0];
+
+        // Part-level mistake counts from MistakeNotebook
+        const unmasteredMistakes = allMistakeRecords.filter((m) => !m.mastered);
+        const partWeaknesses = [
+          {
+            id: 'L1',
+            label: 'Listening Part 1 (Thông báo ngắn)',
+            section: 'LISTENING',
+            part: 1,
+            wrongCount: unmasteredMistakes.filter((m) => m.section === 'LISTENING' && m.partNumber === 1).length,
+            totalMistakes: allMistakeRecords.filter((m) => m.section === 'LISTENING' && m.partNumber === 1).length,
+            tabId: 'listening' as NavTabType,
+          },
+          {
+            id: 'L2',
+            label: 'Listening Part 2 (Hội thoại dài)',
+            section: 'LISTENING',
+            part: 2,
+            wrongCount: unmasteredMistakes.filter((m) => m.section === 'LISTENING' && m.partNumber === 2).length,
+            totalMistakes: allMistakeRecords.filter((m) => m.section === 'LISTENING' && m.partNumber === 2).length,
+            tabId: 'listening' as NavTabType,
+          },
+          {
+            id: 'L3',
+            label: 'Listening Part 3 (Bài giảng học thuật)',
+            section: 'LISTENING',
+            part: 3,
+            wrongCount: unmasteredMistakes.filter((m) => m.section === 'LISTENING' && m.partNumber === 3).length,
+            totalMistakes: allMistakeRecords.filter((m) => m.section === 'LISTENING' && m.partNumber === 3).length,
+            tabId: 'listening' as NavTabType,
+          },
+          {
+            id: 'R1',
+            label: 'Reading Passage 1 (Đọc hiểu cơ bản)',
+            section: 'READING',
+            part: 1,
+            wrongCount: unmasteredMistakes.filter((m) => m.section === 'READING' && m.partNumber === 1).length,
+            totalMistakes: allMistakeRecords.filter((m) => m.section === 'READING' && m.partNumber === 1).length,
+            tabId: 'reading' as NavTabType,
+          },
+          {
+            id: 'R2',
+            label: 'Reading Passage 2 (Đọc hiểu trung cấp)',
+            section: 'READING',
+            part: 2,
+            wrongCount: unmasteredMistakes.filter((m) => m.section === 'READING' && m.partNumber === 2).length,
+            totalMistakes: allMistakeRecords.filter((m) => m.section === 'READING' && m.partNumber === 2).length,
+            tabId: 'reading' as NavTabType,
+          },
+          {
+            id: 'R3',
+            label: 'Reading Passage 3 (Đọc suy luận B2)',
+            section: 'READING',
+            part: 3,
+            wrongCount: unmasteredMistakes.filter((m) => m.section === 'READING' && m.partNumber === 3).length,
+            totalMistakes: allMistakeRecords.filter((m) => m.section === 'READING' && m.partNumber === 3).length,
+            tabId: 'reading' as NavTabType,
+          },
+          {
+            id: 'R4',
+            label: 'Reading Passage 4 (Đọc học thuật C1)',
+            section: 'READING',
+            part: 4,
+            wrongCount: unmasteredMistakes.filter((m) => m.section === 'READING' && m.partNumber === 4).length,
+            totalMistakes: allMistakeRecords.filter((m) => m.section === 'READING' && m.partNumber === 4).length,
+            tabId: 'reading' as NavTabType,
+          },
+        ];
+
+        const topWeakPart = [...partWeaknesses].sort(
+          (a, b) => b.wrongCount - a.wrongCount || b.totalMistakes - a.totalMistakes
+        )[0];
+
+        return (
+          <div className="rounded-3xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 border-b-4 border-b-slate-300 dark:border-b-slate-950 p-5 sm:p-6 space-y-5 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 rounded-2xl bg-[#1CB0F6] border-b-4 border-[#1899D6] text-white flex items-center justify-center shrink-0">
+                  <Target className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                      Biểu đồ Tiến độ 4 Kỹ năng &amp; Chẩn đoán Điểm yếu theo Part
+                    </h3>
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-sky-100 dark:bg-sky-950/80 text-[#1899D6] dark:text-sky-300 border border-[#1CB0F6]">
+                      Mục tiêu Band: {targetOverall.toFixed(1)}/10
+                    </span>
+                  </div>
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
+                    So sánh kỷ lục điểm 4 kỹ năng hiện tại với mục tiêu VSTEP và thống kê các Part bạn hay mắc bẫy nhất.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {weakestSkill && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigateTab(weakestSkill.tabId)}
+                    className="btn-duo-blue px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>Cải thiện {weakestSkill.label.split(' ')[0]} ngay</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowSkillAnalytics((prev) => !prev)}
+                  className="px-3 py-2 rounded-xl border-2 border-slate-200 dark:border-slate-700 text-xs font-black text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  {showSkillAnalytics ? 'Thu gọn' : 'Mở rộng'}
+                </button>
+              </div>
+            </div>
+
+            {showSkillAnalytics && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 pt-1">
+                {/* Left Column (7 cols): 4-Skill Progress vs Target + Historical Trend */}
+                <div className="lg:col-span-7 space-y-4">
+                  <div className="rounded-2xl bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 p-4 space-y-3.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                        1. So sánh Điểm 4 Kỹ năng Hiện tại vs. Mục tiêu Cá nhân
+                      </span>
+                      <span className="font-mono text-[11px] font-bold text-slate-500 dark:text-slate-400 tabular-nums">
+                        Đã lưu {userAttemptsHistory.length} lượt thi
+                      </span>
+                    </div>
+
+                    <div className="space-y-3">
+                      {skillRows.map((row) => {
+                        const currentPct = Math.min(100, Math.round((row.current / 10) * 100));
+                        const targetPct = Math.min(100, Math.round((row.target / 10) * 100));
+                        const isReached = row.current >= row.target && row.current > 0;
+                        return (
+                          <div key={row.key} className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => onNavigateTab(row.tabId)}
+                                  className="font-black text-slate-800 dark:text-slate-100 hover:text-[#1CB0F6] transition-colors cursor-pointer"
+                                >
+                                  {row.label}
+                                </button>
+                                <span className="text-[11px] font-semibold text-slate-400 hidden sm:inline">
+                                  ({row.subLabel})
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 font-mono tabular-nums">
+                                <span
+                                  className={`px-2 py-0.5 rounded-md border text-[11px] font-black ${row.colorBadge}`}
+                                >
+                                  Hiện đạt: {row.current > 0 ? row.current.toFixed(1) : '—'} / 10
+                                </span>
+                                <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                                  Đích: {row.target.toFixed(1)}
+                                </span>
+                                {isReached && (
+                                  <span className="text-[10px] font-black text-[#46A302] dark:text-lime-400">
+                                    ✓ Đạt
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="relative h-3 w-full rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${row.colorBar}`}
+                                style={{ width: `${currentPct}%` }}
+                              />
+                              {/* Target Marker Line */}
+                              <div
+                                className="absolute top-0 bottom-0 w-0.5 bg-slate-900 dark:bg-white z-10"
+                                style={{ left: `${targetPct}%` }}
+                                title={`Mục tiêu: ${row.target.toFixed(1)}/10`}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Recent Exam Band Trend Bars */}
+                    {recentAttemptsChronological.length > 0 && (
+                      <div className="pt-3 border-t border-slate-200 dark:border-slate-700/80 space-y-2">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                          <span>Biểu đồ tiến trình {recentAttemptsChronological.length} lần nộp bài gần nhất:</span>
+                          {latestAttempt && (
+                            <span className="font-mono font-black text-slate-700 dark:text-slate-200 tabular-nums">
+                              Gần nhất: {(latestAttempt.vstepBandScore ?? 0).toFixed(1)}/10 ({latestAttempt.grade || 'VSTEP'})
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-6 gap-2 items-end h-20 pt-2 px-1">
+                          {recentAttemptsChronological.map((att, idx) => {
+                            const band =
+                              typeof att.vstepBandScore === 'number'
+                                ? att.vstepBandScore
+                                : Math.round(((att.listeningScore / 35 + att.readingScore / 40) / 2) * 20) / 2;
+                            const heightPct = Math.max(18, Math.min(100, Math.round((band / 10) * 100)));
+                            return (
+                              <div
+                                key={att.attemptId || idx}
+                                className="flex flex-col items-center justify-end h-full gap-1 group"
+                                title={`${att.testTitle}: ${band.toFixed(1)}/10`}
+                              >
+                                <span className="font-mono text-[10px] font-black tabular-nums text-slate-700 dark:text-slate-200">
+                                  {band.toFixed(1)}
+                                </span>
+                                <div className="w-full max-w-[36px] bg-slate-200 dark:bg-slate-700 rounded-t-lg h-12 flex items-end overflow-hidden">
+                                  <div
+                                    className={`w-full rounded-t-lg transition-all ${
+                                      band >= targetOverall
+                                        ? 'bg-[#58CC02]'
+                                        : band >= 4.0
+                                        ? 'bg-[#1CB0F6]'
+                                        : 'bg-[#FF9600]'
+                                    }`}
+                                    style={{ height: `${heightPct}%` }}
+                                  />
+                                </div>
+                                <span className="text-[9px] font-bold text-slate-400 truncate max-w-full">
+                                  Lần {idx + 1}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right Column (5 cols): Part-by-Part Weakness Analysis */}
+                <div className="lg:col-span-5 flex flex-col justify-between rounded-2xl bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 p-4 space-y-3.5">
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                        2. Bản đồ Điểm yếu theo từng Part
+                      </span>
+                      <span className="font-mono text-[11px] font-black text-rose-600 dark:text-rose-400 tabular-nums">
+                        {unmasteredMistakes.length} câu chưa thuộc
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {partWeaknesses.map((pw) => {
+                        const isHotspot = pw.wrongCount > 0 && pw.id === topWeakPart?.id;
+                        return (
+                          <div
+                            key={pw.id}
+                            className={`rounded-xl border px-3 py-2 flex items-center justify-between gap-2 text-xs transition-all ${
+                              isHotspot
+                                ? 'bg-rose-50/80 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800'
+                                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
+                            }`}
+                          >
+                            <div className="min-w-0">
+                              <div className="font-black text-slate-800 dark:text-slate-100 truncate flex items-center gap-1.5">
+                                {isHotspot && (
+                                  <span className="inline-block h-2 w-2 rounded-full bg-rose-500 shrink-0" />
+                                )}
+                                <span className="truncate">{pw.label}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0 font-mono tabular-nums">
+                              {pw.wrongCount > 0 ? (
+                                <span className="px-2 py-0.5 rounded-lg bg-rose-100 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300 font-black text-[11px]">
+                                  {pw.wrongCount} câu sai
+                                </span>
+                              ) : pw.totalMistakes > 0 ? (
+                                <span className="px-2 py-0.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 font-black text-[11px]">
+                                  Đã sửa {pw.totalMistakes} câu
+                                </span>
+                              ) : (
+                                <span className="text-[11px] font-bold text-slate-400">An toàn</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-200 dark:border-slate-700/80 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                      {topWeakPart && topWeakPart.wrongCount > 0
+                        ? `Điểm yếu cần ưu tiên: ${topWeakPart.label}`
+                        : 'Sổ tay lỗi sai có sẵn Mini-Quiz 10 câu ngẫu nhiên & AI giải thích bẫy.'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onNavigateTab('mistakes')}
+                      className="btn-duo-orange px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <span>Mở Sổ Tay &amp; Mini-Quiz</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}

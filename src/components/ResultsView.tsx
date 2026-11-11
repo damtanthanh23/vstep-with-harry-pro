@@ -32,8 +32,9 @@ import {
   RefreshCw,
   Mic,
   Volume2,
+  Download,
 } from 'lucide-react';
-import { Question, StimulusCard, getPartRelativeNumber } from '../types/exam';
+import { Question, StimulusCard, TeacherAttemptFeedback, getPartRelativeNumber } from '../types/exam';
 import {
   calculateExamResults,
   ComprehensiveExamResult,
@@ -41,6 +42,9 @@ import {
   DetailedWritingEvaluation,
   evaluateSpeakingStrictRubric,
   DetailedSpeakingEvaluation,
+  computeAiContentHash,
+  getCachedAiEvaluation,
+  setCachedAiEvaluation,
 } from '../utils/scoringEngine';
 import { WritingSubmission, WritingTask, SAMPLE_B1_WRITING_TASKS } from '../types/writing';
 import {
@@ -55,6 +59,9 @@ import { WritingSectionStage } from './WritingSectionStage';
 import { SpeakingSectionStage } from './SpeakingSectionStage';
 import { ImageZoomModal } from './ImageZoomModal';
 import { StructuredExplanationBox } from './StructuredExplanationBox';
+import { GlobalSelectionDictionaryPopover } from './GlobalSelectionDictionaryPopover';
+import { QuickSaveVocabModal } from './QuickSaveVocabModal';
+import { playDictionaryAudio } from '../utils/dictionaryAudio';
 import { useAuth } from '../context/AuthContext';
 
 interface ResultsViewProps {
@@ -89,6 +96,7 @@ interface ResultsViewProps {
     fullEvaluation?: DetailedSpeakingEvaluation
   ) => void;
   initialAiDiagnostic?: AIDiagnosticData | null;
+  teacherFeedback?: TeacherAttemptFeedback;
   onAiDiagnosticGenerated?: (report: AIDiagnosticData) => void;
   onRetake: () => void;
   onBackToTests: () => void;
@@ -152,12 +160,22 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   initialSpeakingEvaluation,
   onSpeakingGraded,
   initialAiDiagnostic,
+  teacherFeedback,
   onAiDiagnosticGenerated,
   onRetake,
   onBackToTests,
   onOpenFeedback,
 }) => {
   const { currentUser, isAdmin, canManageExams, signInWithGoogle } = useAuth();
+
+  // Interactive Result Flashcard & Quick Save Vocab State
+  const [activeFlashcardIdx, setActiveFlashcardIdx] = useState<number>(0);
+  const [isFlashcardFlipped, setIsFlashcardFlipped] = useState<boolean>(false);
+  const [quickSaveSeedWord, setQuickSaveSeedWord] = useState<{
+    word: string;
+    meaningVi?: string;
+    exampleEn?: string;
+  } | null>(null);
 
   // Main Tab Navigation: 'certificate' | 'analytics' | 'review'
   const [activeMainTab, setActiveMainTab] = useState<'certificate' | 'analytics' | 'review'>('certificate');
@@ -192,6 +210,17 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   );
   const [isGradingSpeakingAi, setIsGradingSpeakingAi] = useState(false);
 
+  // Band sample tier selector state ('B1' | 'B2' | 'C1') per Writing task & Speaking part
+  const [writingSampleTier, setWritingSampleTier] = useState<Record<number, 'B1' | 'B2' | 'C1'>>({
+    0: 'B2',
+    1: 'B2',
+  });
+  const [speakingSampleTier, setSpeakingSampleTier] = useState<Record<number, 'B1' | 'B2' | 'C1'>>({
+    0: 'B2',
+    1: 'B2',
+    2: 'B2',
+  });
+
   // Keep deterministic rubric in sync if writingSubmission or speakingSubmission changes
   useEffect(() => {
     if (initialWritingEvaluation) {
@@ -211,12 +240,30 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
     setSpeakingEvaluation(baseSpeakEval);
   }, [speakingSubmission, speakingTasks, initialSpeakingEvaluation]);
 
-  const handleTriggerAiWritingGrader = async () => {
+  const handleTriggerAiWritingGrader = async (forceRefresh: boolean = false) => {
     if (!writingSubmission) return;
     const hasEssay =
       writingSubmission.task1Text.trim().length > 0 ||
       writingSubmission.task2Text.trim().length > 0;
     if (!hasEssay) return;
+
+    const cacheHash = computeAiContentHash(
+      `writing_v2::${writingSubmission.task1Text.trim()}::${writingSubmission.task2Text.trim()}`
+    );
+    if (!forceRefresh) {
+      const cached = getCachedAiEvaluation<DetailedWritingEvaluation>(cacheHash);
+      if (cached && cached.task1Criteria && cached.task2Criteria) {
+        setWritingEvaluation(cached);
+        onWritingGraded?.(
+          {
+            task1Score: cached.task1Score,
+            task2Score: cached.task2Score,
+          },
+          cached
+        );
+        return;
+      }
+    }
 
     setIsGradingWritingAi(true);
     try {
@@ -236,6 +283,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
           aiEval.task1Criteria &&
           aiEval.task2Criteria
         ) {
+          setCachedAiEvaluation(cacheHash, aiEval);
           setWritingEvaluation(aiEval);
           onWritingGraded?.(
             {
@@ -253,13 +301,33 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
     }
   };
 
-  const handleTriggerAiSpeakingGrader = async () => {
+  const handleTriggerAiSpeakingGrader = async (forceRefresh: boolean = false) => {
     if (!speakingSubmission) return;
     const hasSpeechText =
       speakingSubmission.part1Text.trim().length > 0 ||
       speakingSubmission.part2Text.trim().length > 0 ||
       speakingSubmission.part3Text.trim().length > 0;
     if (!hasSpeechText) return;
+
+    const cacheHash = computeAiContentHash(
+      `speaking_v2::${speakingSubmission.part1Text.trim()}::${speakingSubmission.part2Text.trim()}::${speakingSubmission.part3Text.trim()}`
+    );
+    if (!forceRefresh) {
+      const cached = getCachedAiEvaluation<DetailedSpeakingEvaluation>(cacheHash);
+      if (cached && cached.part1Criteria && cached.part2Criteria && cached.part3Criteria) {
+        setSpeakingEvaluation(cached);
+        onSpeakingGraded?.(
+          {
+            part1Score: cached.part1Score,
+            part2Score: cached.part2Score,
+            part3Score: cached.part3Score,
+            overallBand10: cached.overallBand10,
+          },
+          cached
+        );
+        return;
+      }
+    }
 
     setIsGradingSpeakingAi(true);
     try {
@@ -279,6 +347,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
           aiSpeakEval.part2Criteria &&
           aiSpeakEval.part3Criteria
         ) {
+          setCachedAiEvaluation(cacheHash, aiSpeakEval);
           setSpeakingEvaluation(aiSpeakEval);
           onSpeakingGraded?.(
             {
@@ -543,6 +612,51 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
     window.print();
   };
 
+  // Export self-contained printable HTML/PDF report for offline review or when iframe print is restricted
+  const handleDownloadPrintableReport = () => {
+    const printEl = printAreaRef.current;
+    const reportHtml = printEl ? printEl.innerHTML : '';
+    const safeTitle = (testTitle || 'VSTEP_Report').replace(/[^a-zA-Z0-9_-]+/g, '_');
+    const fullDoc = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phieu_Diem_VSTEP_${safeTitle}_${candidateName}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .no-print { display: none !important; }
+    }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #0f172a; padding: 24px; }
+  </style>
+</head>
+<body>
+  <div class="no-print max-w-4xl mx-auto mb-6 p-4 rounded-2xl bg-lime-50 border-2 border-lime-400 flex items-center justify-between">
+    <div>
+      <strong class="text-sm text-lime-900 block">Bản xuất Phiếu Báo Điểm & Phụ Lục Chấm Chữa Chi Tiết VSTEP (${testTitle})</strong>
+      <span class="text-xs text-lime-700">Bấm nút "In / Lưu ra PDF" bên phải rồi chọn "Save as PDF" để lưu thành file PDF chuẩn.</span>
+    </div>
+    <button onclick="window.print()" style="background:#58CC02;color:#fff;font-weight:800;padding:10px 18px;border-radius:12px;border:none;cursor:pointer;">
+      🖨️ In / Lưu ra PDF
+    </button>
+  </div>
+  ${reportHtml}
+</body>
+</html>`;
+
+    const blob = new Blob([fullDoc], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Bao_Cao_VSTEP_${safeTitle}.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   // Trigger Gemini AI Diagnostic (Standardized to VSTEP 10-point scale)
   const handleRequestAiDiagnostic = async () => {
     setIsAiLoading(true);
@@ -591,6 +705,132 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   const donutCircumference = 2 * Math.PI * donutRadius;
   const donutStrokeDashoffset =
     donutCircumference - (donutCircumference * Math.min(100, Math.max(0, results.percentage))) / 100;
+
+  // Curated High-Value VSTEP Vocabulary extracted from the exam questions & student's missed questions
+  const examFlashcards = useMemo(() => {
+    const cards: Array<{
+      word: string;
+      pos: string;
+      ipa: string;
+      meaningVi: string;
+      exampleEn: string;
+      sourceLabel: string;
+      isFromWrongAnswer: boolean;
+    }> = [];
+    const seen = new Set<string>();
+
+    // 1. Prioritize vocabulary from questions the student got wrong or left blank
+    const sortedQuestions = [...questions].sort((a, b) => {
+      const aOk = isQuestionCorrect(a) ? 1 : 0;
+      const bOk = isQuestionCorrect(b) ? 1 : 0;
+      return aOk - bOk;
+    });
+
+    for (const q of sortedQuestions) {
+      const wrong = !isQuestionCorrect(q);
+      const secLabel =
+        q.section === 'LISTENING' ? `Listening Part ${q.partNumber}` : `Reading Passage ${q.partNumber}`;
+      // Extract bolded or quoted vocabulary terms from explanation or prompt if present
+      const textPool = `${q.prompt || ''} ${q.explanation || ''}`;
+      const matchBold = textPool.match(/["'“”]([A-Za-z][A-Za-z\s-]{3,22})["'“”]/g);
+      if (matchBold) {
+        for (const rawM of matchBold) {
+          const cleanW = rawM.replace(/["'“”]/g, '').trim();
+          const lowerW = cleanW.toLowerCase();
+          if (
+            cleanW.length >= 4 &&
+            !seen.has(lowerW) &&
+            !['question', 'passage', 'paragraph', 'listening', 'reading', 'speaker'].includes(lowerW)
+          ) {
+            seen.add(lowerW);
+            cards.push({
+              word: cleanW,
+              pos: cleanW.includes(' ') ? 'phrase' : 'vocab',
+              ipa: '/VSTEP B1–C1/',
+              meaningVi: q.explanation
+                ? q.explanation.slice(0, 140) + (q.explanation.length > 140 ? '...' : '')
+                : 'Từ vựng trọng tâm xuất hiện trong câu hỏi và giải thích đáp án đề thi.',
+              exampleEn: q.evidenceQuote || q.prompt || `Key expression tested in ${secLabel}.`,
+              sourceLabel: `${secLabel} · Câu #${q.id}`,
+              isFromWrongAnswer: wrong,
+            });
+            if (cards.length >= 8) break;
+          }
+        }
+      }
+      if (cards.length >= 8) break;
+    }
+
+    // Fallback high-frequency VSTEP B1-B2-C1 academic flashcards so every exam result has rich cards
+    const coreFallbacks = [
+      {
+        word: 'sustainable development',
+        pos: 'n.phr',
+        ipa: '/səˌsteɪnəbl dɪˈveləpmənt/',
+        meaningVi: 'Sự phát triển bền vững (chủ đề cốt lõi Reading & Writing Task 2)',
+        exampleEn: 'Governments should prioritize sustainable development to protect natural resources.',
+        sourceLabel: 'VSTEP Core B2 · Environment & Society',
+        isFromWrongAnswer: false,
+      },
+      {
+        word: 'take into account',
+        pos: 'idiom',
+        ipa: '/teɪk ˈɪntuː əˈkaʊnt/',
+        meaningVi: 'Cân nhắc, tính đến yếu tố gì (= consider / bear in mind)',
+        exampleEn: 'Policy makers must take environmental impacts into account before approving new projects.',
+        sourceLabel: 'VSTEP Core B2 · Academic Collocation',
+        isFromWrongAnswer: false,
+      },
+      {
+        word: 'indispensable',
+        pos: 'adj',
+        ipa: '/ˌɪndɪˈspensəbl/',
+        meaningVi: 'Không thể thiếu được, tối quan trọng (= essential / vital)',
+        exampleEn: 'Digital literacy has become an indispensable skill in the modern workplace.',
+        sourceLabel: 'VSTEP Core C1 · Lexical Resource',
+        isFromWrongAnswer: false,
+      },
+      {
+        word: 'strike a balance',
+        pos: 'v.phr',
+        ipa: '/straɪk ə ˈbæləns/',
+        meaningVi: 'Giữ sự cân bằng hài hòa (rất ăn điểm trong Writing & Speaking Part 2-3)',
+        exampleEn: 'University students need to strike a balance between academic studies and part-time jobs.',
+        sourceLabel: 'VSTEP Core B2 · Speaking & Writing',
+        isFromWrongAnswer: false,
+      },
+      {
+        word: 'detrimental',
+        pos: 'adj',
+        ipa: '/ˌdetrɪˈmentl/',
+        meaningVi: 'Có hại, gây bất lợi (= harmful / adverse, đi với giới từ "to")',
+        exampleEn: 'Excessive screen time can have a detrimental effect on children’s sleep quality.',
+        sourceLabel: 'VSTEP Core B2-C1 · Health & Lifestyle',
+        isFromWrongAnswer: false,
+      },
+      {
+        word: 'foster',
+        pos: 'verb',
+        ipa: '/ˈfɒstə(r)/',
+        meaningVi: 'Thúc đẩy, nuôi dưỡng, khuyến khích sự phát triển (= promote / encourage)',
+        exampleEn: 'International exchange programs help foster mutual understanding among young people.',
+        sourceLabel: 'VSTEP Core C1 · Education & Culture',
+        isFromWrongAnswer: false,
+      },
+    ];
+
+    for (const fb of coreFallbacks) {
+      if (cards.length >= 10) break;
+      if (!seen.has(fb.word.toLowerCase())) {
+        seen.add(fb.word.toLowerCase());
+        cards.push(fb);
+      }
+    }
+
+    return cards;
+  }, [questions, answers]);
+
+  const currentFlashcard = examFlashcards[activeFlashcardIdx] || examFlashcards[0];
 
   return (
     <div className="min-h-screen bg-slate-100/90 dark:bg-slate-950 py-6 sm:py-8 px-3 sm:px-6 lg:px-8 text-slate-800 dark:text-slate-100 transition-colors">
@@ -697,6 +937,228 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
           </div>
         )}
 
+        {/* Teacher Direct Review & Score Override Banner (if graded by Teacher) */}
+        {teacherFeedback && (teacherFeedback.commentVi || teacherFeedback.writingScoreOverride !== undefined || teacherFeedback.speakingScoreOverride !== undefined) && (
+          <div className="rounded-3xl bg-gradient-to-r from-indigo-50 via-purple-50 to-sky-50 dark:from-indigo-950/60 dark:via-purple-950/50 dark:to-sky-950/50 p-5 sm:p-6 border-2 border-indigo-300 dark:border-indigo-700 border-b-4 border-b-indigo-400 shadow-sm space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 rounded-2xl bg-indigo-600 border-b-4 border-indigo-800 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <GraduationCap className="h-6 w-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-indigo-600 text-white">
+                      Đã Được Giáo Viên Chấm &amp; Duyệt Bài
+                    </span>
+                    {teacherFeedback.teacherName && (
+                      <span className="text-xs font-extrabold text-indigo-900 dark:text-indigo-200">
+                        Giảng viên: {teacherFeedback.teacherName}
+                      </span>
+                    )}
+                    {teacherFeedback.updatedAt && (
+                      <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                        · Cập nhật {new Date(teacherFeedback.updatedAt).toLocaleString('vi-VN')}
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-white mt-0.5">
+                    Lời Phê &amp; Điểm Chấm Trực Tiếp Từ Giáo Viên
+                  </h3>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {typeof teacherFeedback.writingScoreOverride === 'number' && (
+                  <div className="rounded-2xl bg-white dark:bg-slate-900 border-2 border-purple-300 dark:border-purple-700 px-3.5 py-1.5 text-xs font-black text-purple-900 dark:text-purple-200">
+                    Writing (GV chấm): <span className="text-sm text-purple-600 dark:text-purple-400">{teacherFeedback.writingScoreOverride.toFixed(1)}/10</span>
+                  </div>
+                )}
+                {typeof teacherFeedback.speakingScoreOverride === 'number' && (
+                  <div className="rounded-2xl bg-white dark:bg-slate-900 border-2 border-rose-300 dark:border-rose-700 px-3.5 py-1.5 text-xs font-black text-rose-900 dark:text-rose-200">
+                    Speaking (GV chấm): <span className="text-sm text-rose-600 dark:text-rose-400">{teacherFeedback.speakingScoreOverride.toFixed(1)}/10</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {teacherFeedback.commentVi && (
+              <div className="rounded-2xl bg-white/90 dark:bg-slate-900/90 border border-indigo-200 dark:border-indigo-800 p-4 text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">
+                {teacherFeedback.commentVi}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Interactive 3D Flashcards & Pronunciation Deck right inside ResultsView */}
+        {currentFlashcard && (
+          <div className="rounded-3xl bg-white dark:bg-slate-900 p-4 sm:p-5 border-2 border-slate-200 dark:border-slate-800 border-b-4 border-b-slate-300 dark:border-b-slate-950 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3.5">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#FFF4E5] dark:bg-amber-950 text-[#FF9600] border-2 border-[#FF9600]">
+                  <BookMarked className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                      Flashcard Từ Vựng Cốt Lõi &amp; Từ Vựng Câu Sai Trong Đề Thi
+                    </h3>
+                    <span className="rounded-lg bg-amber-100 dark:bg-amber-950 px-2 py-0.5 text-[10px] font-black text-amber-800 dark:text-amber-300 tabular-nums">
+                      Thẻ {activeFlashcardIdx + 1}/{examFlashcards.length}
+                    </span>
+                  </div>
+                  <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    Bấm vào thẻ để lật xem nghĩa tiếng Việt + câu ví dụ, nghe phát âm UK/US và lưu 1 chạm vào Sổ tay SRS
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => playDictionaryAudio(currentFlashcard.word, 'uk')}
+                  className="inline-flex items-center gap-1 rounded-xl border-2 border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/60 hover:bg-sky-100 px-3 py-1.5 text-xs font-black text-sky-700 dark:text-sky-300 cursor-pointer"
+                  title="Nghe phát âm chuẩn Anh-Anh (UK)"
+                >
+                  <Volume2 className="h-3.5 w-3.5" />
+                  <span>UK</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => playDictionaryAudio(currentFlashcard.word, 'us')}
+                  className="inline-flex items-center gap-1 rounded-xl border-2 border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 px-3 py-1.5 text-xs font-black text-indigo-700 dark:text-indigo-300 cursor-pointer"
+                  title="Nghe phát âm chuẩn Anh-Mỹ (US)"
+                >
+                  <Volume2 className="h-3.5 w-3.5" />
+                  <span>US</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setQuickSaveSeedWord({
+                      word: currentFlashcard.word,
+                      meaningVi: currentFlashcard.meaningVi,
+                      exampleEn: currentFlashcard.exampleEn,
+                    })
+                  }
+                  className="btn-duo-green px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                >
+                  <BookMarked className="h-3.5 w-3.5" />
+                  <span>+ Lưu vào SRS</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
+              <div className="lg:col-span-8">
+                <div
+                  onClick={() => setIsFlashcardFlipped((prev) => !prev)}
+                  className={`group relative rounded-2xl border-2 border-b-4 p-5 transition-all cursor-pointer select-none min-h-[132px] flex flex-col justify-between ${
+                    isFlashcardFlipped
+                      ? 'border-emerald-400 border-b-emerald-600 bg-emerald-50/70 dark:bg-emerald-950/40'
+                      : 'border-amber-300 border-b-amber-500 bg-gradient-to-br from-amber-50/70 to-orange-50/50 dark:from-slate-800 dark:to-slate-800/90'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 dark:bg-slate-900 px-2.5 py-0.5 text-[10px] font-black text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                      <span>{currentFlashcard.sourceLabel}</span>
+                      {currentFlashcard.isFromWrongAnswer && (
+                        <span className="text-rose-600 dark:text-rose-400 font-black">• Từ câu làm sai</span>
+                      )}
+                    </span>
+                    <span className="text-[11px] font-extrabold text-amber-700 dark:text-amber-300">
+                      {isFlashcardFlipped ? '🔄 Đang xem Mặt sau (Nghĩa & Ví dụ)' : '👆 Bấm để lật xem nghĩa tiếng Việt'}
+                    </span>
+                  </div>
+
+                  {!isFlashcardFlipped ? (
+                    <div className="my-2">
+                      <div className="flex items-baseline gap-2.5 flex-wrap">
+                        <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
+                          {currentFlashcard.word}
+                        </span>
+                        <span className="text-xs font-bold italic text-amber-700 dark:text-amber-400">
+                          ({currentFlashcard.pos})
+                        </span>
+                        <span className="text-xs font-mono font-semibold text-slate-500 dark:text-slate-400">
+                          {currentFlashcard.ipa}
+                        </span>
+                      </div>
+                      <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 mt-1.5 line-clamp-2 italic">
+                        “{currentFlashcard.exampleEn}”
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="my-2 space-y-1.5">
+                      <div className="text-sm sm:text-base font-black text-emerald-950 dark:text-emerald-200">
+                        {currentFlashcard.word}: <span className="font-bold">{currentFlashcard.meaningVi}</span>
+                      </div>
+                      <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 italic">
+                        Ví dụ: “{currentFlashcard.exampleEn}”
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="lg:col-span-4 flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsFlashcardFlipped(false);
+                      setActiveFlashcardIdx((prev) =>
+                        prev > 0 ? prev - 1 : examFlashcards.length - 1
+                      );
+                    }}
+                    className="btn-duo-white flex-1 py-2 rounded-xl text-xs font-black cursor-pointer"
+                  >
+                    ← Thẻ trước
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsFlashcardFlipped((prev) => !prev)}
+                    className="btn-duo-orange px-3.5 py-2 rounded-xl text-xs font-black cursor-pointer"
+                  >
+                    Lật thẻ
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsFlashcardFlipped(false);
+                      setActiveFlashcardIdx((prev) =>
+                        prev < examFlashcards.length - 1 ? prev + 1 : 0
+                      );
+                    }}
+                    className="btn-duo-white flex-1 py-2 rounded-xl text-xs font-black cursor-pointer"
+                  >
+                    Thẻ tiếp →
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                  {examFlashcards.map((fc, idx) => (
+                    <button
+                      key={fc.word + idx}
+                      type="button"
+                      onClick={() => {
+                        setActiveFlashcardIdx(idx);
+                        setIsFlashcardFlipped(false);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer truncate max-w-[130px] ${
+                        idx === activeFlashcardIdx
+                          ? 'bg-[#FF9600] text-white font-black shadow-2xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-amber-50'
+                      }`}
+                    >
+                      {fc.word}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* =================================================================== */}
         {/* MAIN 3-TAB NAVIGATION BAR                                           */}
         {/* =================================================================== */}
@@ -792,7 +1254,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                 <button
                   type="button"
                   onClick={handlePrint}
-                  className="btn-duo-blue px-4 py-2 rounded-2xl text-xs flex items-center gap-1.5"
+                  className="btn-duo-blue px-4 py-2 rounded-2xl text-xs flex items-center gap-1.5 cursor-pointer"
                   title="In trực tiếp hoặc Lưu dưới dạng file PDF (Bao gồm Chứng chỉ/Phiếu điểm và Phụ lục sửa bài)"
                 >
                   <Printer className="h-4 w-4" />
@@ -801,8 +1263,18 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
                 <button
                   type="button"
+                  onClick={handleDownloadPrintableReport}
+                  className="btn-duo-white px-3.5 py-2 rounded-2xl text-xs font-black text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
+                  title="Tải xuống file Báo cáo Phiếu điểm & Bài chấm chữa AI để mở/lưu PDF mọi lúc"
+                >
+                  <Download className="h-4 w-4 text-[#1CB0F6]" />
+                  <span>Tải File Báo Cáo</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setActiveMainTab('analytics')}
-                  className="btn-duo-green px-4 py-2 rounded-2xl text-xs flex items-center gap-1.5"
+                  className="btn-duo-green px-4 py-2 rounded-2xl text-xs flex items-center gap-1.5 cursor-pointer"
                 >
                   <BarChart3 className="h-4 w-4" />
                   <span>Xem Phân Tích Điểm</span>
@@ -1328,81 +1800,94 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                         </h4>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                          <div className="rounded-2xl border border-slate-200 p-4 space-y-2 bg-slate-50/50">
-                            <div className="flex items-center justify-between font-black text-slate-900">
-                              <span>Task 1 (Thư / Email · {writingSubmission.task1WordCount} từ)</span>
-                              <span className="text-purple-700 font-mono">
-                                {writingEvaluation.task1Score} / {writingTasks[0]?.marks || 12} điểm
-                              </span>
-                            </div>
-                            <p className="text-slate-700 leading-relaxed font-medium">
-                              {writingEvaluation.task1Criteria.feedbackVi}
-                            </p>
-                            {writingEvaluation.task1Criteria.strengthsVi &&
-                              writingEvaluation.task1Criteria.strengthsVi.length > 0 && (
-                                <div>
-                                  <strong className="text-emerald-700 block">Điểm mạnh:</strong>
-                                  <ul className="list-disc list-inside text-slate-600 space-y-0.5">
-                                    {writingEvaluation.task1Criteria.strengthsVi.map(
-                                      (s: string, idx: number) => (
-                                        <li key={idx}>{s}</li>
-                                      )
-                                    )}
-                                  </ul>
-                                </div>
-                              )}
-                            {writingEvaluation.task1Criteria.improvementsVi &&
-                              writingEvaluation.task1Criteria.improvementsVi.length > 0 && (
-                                <div>
-                                  <strong className="text-amber-700 block">Cần khắc phục:</strong>
-                                  <ul className="list-disc list-inside text-slate-600 space-y-0.5">
-                                    {writingEvaluation.task1Criteria.improvementsVi.map(
-                                      (s: string, idx: number) => (
-                                        <li key={idx}>{s}</li>
-                                      )
-                                    )}
-                                  </ul>
-                                </div>
-                              )}
-                          </div>
+                          {(
+                            [
+                              {
+                                label: `Task 1 (Thư / Email · ${writingSubmission.task1WordCount} từ)`,
+                                text: writingSubmission.task1Text,
+                                score: writingEvaluation.task1Score,
+                                maxMarks: writingTasks[0]?.marks || 12,
+                                criteria: writingEvaluation.task1Criteria,
+                              },
+                              {
+                                label: `Task 2 (Bài luận Essay · ${writingSubmission.task2WordCount} từ)`,
+                                text: writingSubmission.task2Text,
+                                score: writingEvaluation.task2Score,
+                                maxMarks: writingTasks[1]?.marks || 12,
+                                criteria: writingEvaluation.task2Criteria,
+                              },
+                            ] as const
+                          ).map((taskBlock, tIdx) => (
+                            <div
+                              key={tIdx}
+                              className="rounded-2xl border border-slate-200 p-4 space-y-2.5 bg-slate-50/50"
+                            >
+                              <div className="flex items-center justify-between font-black text-slate-900">
+                                <span>{taskBlock.label}</span>
+                                <span className="text-purple-700 font-mono tabular-nums">
+                                  {taskBlock.score} / {taskBlock.maxMarks} điểm
+                                </span>
+                              </div>
 
-                          <div className="rounded-2xl border border-slate-200 p-4 space-y-2 bg-slate-50/50">
-                            <div className="flex items-center justify-between font-black text-slate-900">
-                              <span>Task 2 (Bài luận Essay · {writingSubmission.task2WordCount} từ)</span>
-                              <span className="text-purple-700 font-mono">
-                                {writingEvaluation.task2Score} / {writingTasks[1]?.marks || 12} điểm
-                              </span>
+                              {/* 4-Criteria Mini Breakdown */}
+                              <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono bg-white p-2 rounded-xl border border-slate-200">
+                                <div>Task Fulfilment: <strong>{taskBlock.criteria.taskFulfilment}/3</strong></div>
+                                <div>Organization: <strong>{taskBlock.criteria.organization}/3</strong></div>
+                                <div>Vocabulary: <strong>{taskBlock.criteria.vocabulary}/3</strong></div>
+                                <div>Grammar: <strong>{taskBlock.criteria.grammar}/3</strong></div>
+                              </div>
+
+                              {taskBlock.text && taskBlock.text.trim().length > 0 && (
+                                <div className="rounded-xl bg-white p-2.5 border border-slate-200 space-y-1">
+                                  <strong className="text-[10px] uppercase tracking-wider text-slate-500 block">
+                                    Bài làm của học viên:
+                                  </strong>
+                                  <p className="text-slate-800 whitespace-pre-wrap leading-relaxed font-medium">
+                                    {taskBlock.text}
+                                  </p>
+                                </div>
+                              )}
+
+                              <p className="text-slate-700 leading-relaxed font-medium">
+                                {taskBlock.criteria.feedbackVi}
+                              </p>
+
+                              {taskBlock.criteria.strengthsVi &&
+                                taskBlock.criteria.strengthsVi.length > 0 && (
+                                  <div>
+                                    <strong className="text-emerald-700 block">Điểm mạnh:</strong>
+                                    <ul className="list-disc list-inside text-slate-600 space-y-0.5">
+                                      {taskBlock.criteria.strengthsVi.map((s: string, idx: number) => (
+                                        <li key={idx}>{s}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                              {taskBlock.criteria.improvementsVi &&
+                                taskBlock.criteria.improvementsVi.length > 0 && (
+                                  <div>
+                                    <strong className="text-amber-700 block">Cần khắc phục:</strong>
+                                    <ul className="list-disc list-inside text-slate-600 space-y-0.5">
+                                      {taskBlock.criteria.improvementsVi.map((s: string, idx: number) => (
+                                        <li key={idx}>{s}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                              {taskBlock.criteria.correctedSample && (
+                                <div className="rounded-xl bg-purple-50/70 p-2.5 border border-purple-200 space-y-1">
+                                  <strong className="text-[10px] uppercase tracking-wider text-purple-800 block">
+                                    Bài mẫu nâng band B2–C1 tham khảo:
+                                  </strong>
+                                  <p className="text-slate-800 whitespace-pre-wrap leading-relaxed">
+                                    {taskBlock.criteria.correctedSample}
+                                  </p>
+                                </div>
+                              )}
                             </div>
-                            <p className="text-slate-700 leading-relaxed font-medium">
-                              {writingEvaluation.task2Criteria.feedbackVi}
-                            </p>
-                            {writingEvaluation.task2Criteria.strengthsVi &&
-                              writingEvaluation.task2Criteria.strengthsVi.length > 0 && (
-                                <div>
-                                  <strong className="text-emerald-700 block">Điểm mạnh:</strong>
-                                  <ul className="list-disc list-inside text-slate-600 space-y-0.5">
-                                    {writingEvaluation.task2Criteria.strengthsVi.map(
-                                      (s: string, idx: number) => (
-                                        <li key={idx}>{s}</li>
-                                      )
-                                    )}
-                                  </ul>
-                                </div>
-                              )}
-                            {writingEvaluation.task2Criteria.improvementsVi &&
-                              writingEvaluation.task2Criteria.improvementsVi.length > 0 && (
-                                <div>
-                                  <strong className="text-amber-700 block">Cần khắc phục:</strong>
-                                  <ul className="list-disc list-inside text-slate-600 space-y-0.5">
-                                    {writingEvaluation.task2Criteria.improvementsVi.map(
-                                      (s: string, idx: number) => (
-                                        <li key={idx}>{s}</li>
-                                      )
-                                    )}
-                                  </ul>
-                                </div>
-                              )}
-                          </div>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -1419,39 +1904,66 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                         </h4>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                          <div className="rounded-2xl border border-slate-200 p-3.5 space-y-1.5 bg-slate-50/50">
-                            <div className="flex items-center justify-between font-black text-slate-900">
-                              <span>Part 1 (Social)</span>
-                              <span className="text-rose-600 font-mono">
-                                {speakingEvaluation.part1Score.toFixed(1)}/10
-                              </span>
+                          {(
+                            [
+                              {
+                                label: 'Part 1 (Social Interaction)',
+                                score: speakingEvaluation.part1Score,
+                                text: speakingSubmission.part1Text,
+                                criteria: speakingEvaluation.part1Criteria,
+                              },
+                              {
+                                label: 'Part 2 (Solution Discussion)',
+                                score: speakingEvaluation.part2Score,
+                                text: speakingSubmission.part2Text,
+                                criteria: speakingEvaluation.part2Criteria,
+                              },
+                              {
+                                label: 'Part 3 (Topic Development)',
+                                score: speakingEvaluation.part3Score,
+                                text: speakingSubmission.part3Text,
+                                criteria: speakingEvaluation.part3Criteria,
+                              },
+                            ] as const
+                          ).map((spBlock, sIdx) => (
+                            <div
+                              key={sIdx}
+                              className="rounded-2xl border border-slate-200 p-3.5 space-y-2 bg-slate-50/50"
+                            >
+                              <div className="flex items-center justify-between font-black text-slate-900">
+                                <span>{spBlock.label}</span>
+                                <span className="text-rose-600 font-mono tabular-nums">
+                                  {spBlock.score.toFixed(1)}/10
+                                </span>
+                              </div>
+                              {spBlock.text && spBlock.text.trim().length > 0 && (
+                                <div className="rounded-lg bg-white p-2 border border-slate-200">
+                                  <span className="text-[10px] font-bold uppercase text-slate-400 block">
+                                    Transcript bài nói:
+                                  </span>
+                                  <p className="text-slate-800 whitespace-pre-wrap leading-relaxed">
+                                    {spBlock.text}
+                                  </p>
+                                </div>
+                              )}
+                              <p className="text-slate-600 leading-relaxed">
+                                {spBlock.criteria.feedbackVi}
+                              </p>
+                              {spBlock.criteria.improvementsVi &&
+                                spBlock.criteria.improvementsVi.length > 0 && (
+                                  <div className="space-y-1 pt-1">
+                                    {spBlock.criteria.improvementsVi.slice(0, 2).map((imp: string, idx: number) => (
+                                      <div
+                                        key={idx}
+                                        className="rounded-lg bg-white p-1.5 border border-rose-200 text-[11px] text-slate-700"
+                                      >
+                                        • {imp}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
                             </div>
-                            <p className="text-slate-600 leading-relaxed">
-                              {speakingEvaluation.part1Criteria.feedbackVi}
-                            </p>
-                          </div>
-                          <div className="rounded-2xl border border-slate-200 p-3.5 space-y-1.5 bg-slate-50/50">
-                            <div className="flex items-center justify-between font-black text-slate-900">
-                              <span>Part 2 (Solution)</span>
-                              <span className="text-rose-600 font-mono">
-                                {speakingEvaluation.part2Score.toFixed(1)}/10
-                              </span>
-                            </div>
-                            <p className="text-slate-600 leading-relaxed">
-                              {speakingEvaluation.part2Criteria.feedbackVi}
-                            </p>
-                          </div>
-                          <div className="rounded-2xl border border-slate-200 p-3.5 space-y-1.5 bg-slate-50/50">
-                            <div className="flex items-center justify-between font-black text-slate-900">
-                              <span>Part 3 (Mind-map)</span>
-                              <span className="text-rose-600 font-mono">
-                                {speakingEvaluation.part3Score.toFixed(1)}/10
-                              </span>
-                            </div>
-                            <p className="text-slate-600 leading-relaxed">
-                              {speakingEvaluation.part3Criteria.feedbackVi}
-                            </p>
-                          </div>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -1785,7 +2297,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                     <button
                       type="button"
                       disabled={isGradingWritingAi}
-                      onClick={handleTriggerAiWritingGrader}
+                      onClick={() => handleTriggerAiWritingGrader(true)}
                       className="btn-duo-green inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-xs font-black disabled:opacity-50 cursor-pointer"
                     >
                       <RefreshCw className={`h-4 w-4 ${isGradingWritingAi ? 'animate-spin' : ''}`} />
@@ -1810,97 +2322,156 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                       wordCount: writingSubmission.task2WordCount,
                       breakdown: writingEvaluation.task2Criteria,
                     },
-                  ].map((item, idx) => (
-                    <div
-                      key={idx}
-                      className="rounded-3xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 bg-slate-50/60 dark:bg-slate-800/40 p-5 space-y-4 flex flex-col justify-between"
-                    >
-                      <div className="space-y-3.5">
-                        <div className="flex items-center justify-between border-b-2 border-[#E5E5E5] dark:border-slate-700 pb-3">
-                          <div>
-                            <span className="text-xs font-black uppercase tracking-wider text-[#A560E8] dark:text-purple-400">
-                              {item.partLabel} ({item.wordCount} từ / mục tiêu {item.task?.minWords || 120}–{item.task?.maxWords || 180} từ)
-                            </span>
-                            <h4 className="text-sm font-black text-slate-900 dark:text-white mt-0.5">
-                              {item.task?.title || item.partLabel}
-                            </h4>
-                          </div>
-                          <div className="rounded-2xl bg-[#F3E5FF] dark:bg-purple-950 px-3.5 py-1.5 font-mono text-sm font-black text-[#A560E8] dark:text-purple-200 border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8]">
-                            {item.breakdown.total} / 12
-                          </div>
-                        </div>
+                  ].map((item, idx) => {
+                    const activeTier = writingSampleTier[idx] || 'B2';
+                    const bandSamples = item.breakdown.bandSamples;
+                    const activeSampleText =
+                      activeTier === 'B1'
+                        ? bandSamples?.b1Sample || item.breakdown.correctedSample
+                        : activeTier === 'C1'
+                        ? bandSamples?.c1Sample || item.breakdown.correctedSample
+                        : bandSamples?.b2Sample || item.breakdown.correctedSample;
 
-                        {/* 4 Criteria Rubric Bars */}
-                        <div className="grid grid-cols-2 gap-3 text-xs">
-                          {[
-                            { label: 'Task Fulfilment', val: item.breakdown.taskFulfilment },
-                            { label: 'Grammar Range & Acc.', val: item.breakdown.grammar },
-                            { label: 'Vocabulary Range', val: item.breakdown.vocabulary },
-                            { label: 'Organization & Cohesion', val: item.breakdown.organization },
-                          ].map((crit, cIdx) => (
-                            <div
-                              key={cIdx}
-                              className="rounded-2xl bg-white dark:bg-slate-900 p-3 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-800"
-                            >
-                              <div className="flex items-center justify-between font-black text-[11px] mb-1.5">
-                                <span className="text-slate-700 dark:text-slate-200 truncate">{crit.label}</span>
-                                <span className="font-mono text-[#A560E8] dark:text-purple-400">{crit.val}/3</span>
-                              </div>
-                              <div className="h-2.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 border border-[#E5E5E5] dark:border-slate-700 overflow-hidden">
-                                <div
-                                  className="h-full bg-[#CE82FF] rounded-full transition-all"
-                                  style={{ width: `${(crit.val / 3) * 100}%` }}
-                                />
-                              </div>
+                    return (
+                      <div
+                        key={idx}
+                        className="rounded-3xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 bg-slate-50/60 dark:bg-slate-800/40 p-5 space-y-4 flex flex-col justify-between"
+                      >
+                        <div className="space-y-3.5">
+                          <div className="flex items-center justify-between border-b-2 border-[#E5E5E5] dark:border-slate-700 pb-3">
+                            <div>
+                              <span className="text-xs font-black uppercase tracking-wider text-[#A560E8] dark:text-purple-400">
+                                {item.partLabel} ({item.wordCount} từ / mục tiêu {item.task?.minWords || 120}–{item.task?.maxWords || 180} từ)
+                              </span>
+                              <h4 className="text-sm font-black text-slate-900 dark:text-white mt-0.5">
+                                {item.task?.title || item.partLabel}
+                              </h4>
                             </div>
-                          ))}
-                        </div>
-
-                        {/* Candidate Submitted Essay Preview */}
-                        <div className="rounded-2xl bg-white dark:bg-slate-900 p-3.5 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-800 text-xs">
-                          <span className="block text-[10px] font-black uppercase text-slate-400 mb-1">
-                            Bài làm đã ghi nhận của học sinh:
-                          </span>
-                          {item.text && item.text.trim().length > 0 ? (
-                            <p className="whitespace-pre-line text-slate-700 dark:text-slate-200 font-sans leading-relaxed max-h-36 overflow-y-auto">
-                              {item.text}
-                            </p>
-                          ) : (
-                            <p className="italic font-bold text-[#EA2B2B]">Học sinh bỏ trống phần viết này (0 điểm).</p>
-                          )}
-                        </div>
-
-                        {/* Examiner Commentary */}
-                        <div className="rounded-2xl bg-[#D7FFB8]/40 dark:bg-emerald-950/30 border-2 border-[#58CC02] dark:border-emerald-700 border-b-4 border-b-[#46A302] p-3.5 text-xs space-y-1.5">
-                          <span className="font-black text-[#46A302] dark:text-emerald-300 block">
-                            Nhận xét từ Giám khảo:
-                          </span>
-                          <p className="text-slate-800 dark:text-slate-200 font-semibold leading-relaxed">
-                            {item.breakdown.feedbackVi}
-                          </p>
-                          {item.breakdown.improvementsVi && item.breakdown.improvementsVi.length > 0 && (
-                            <ul className="list-disc pl-4 space-y-0.5 text-slate-600 dark:text-slate-300 pt-1">
-                              {item.breakdown.improvementsVi.map((imp: string, i: number) => (
-                                <li key={i}>{imp}</li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-
-                        {/* Corrected Sample / Upgraded Version if available */}
-                        {item.breakdown.correctedSample && (
-                          <div className="rounded-2xl bg-[#F3E5FF]/50 dark:bg-purple-950/30 border-2 border-[#CE82FF] dark:border-purple-800 border-b-4 border-b-[#A560E8] p-3.5 text-xs space-y-1">
-                            <span className="font-black text-[#A560E8] dark:text-purple-300 block">
-                              ✨ Bài sửa nâng cấp chuẩn B1 High Pass:
-                            </span>
-                            <p className="whitespace-pre-line text-slate-700 dark:text-slate-200 leading-relaxed">
-                              {item.breakdown.correctedSample}
-                            </p>
+                            <div className="rounded-2xl bg-[#F3E5FF] dark:bg-purple-950 px-3.5 py-1.5 font-mono text-sm font-black tabular-nums text-[#A560E8] dark:text-purple-200 border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8]">
+                              {item.breakdown.total} / 12
+                            </div>
                           </div>
-                        )}
+
+                          {/* 4 Criteria Rubric Bars */}
+                          <div className="grid grid-cols-2 gap-3 text-xs">
+                            {[
+                              { label: 'Task Fulfilment', val: item.breakdown.taskFulfilment },
+                              { label: 'Grammar Range & Acc.', val: item.breakdown.grammar },
+                              { label: 'Vocabulary Range', val: item.breakdown.vocabulary },
+                              { label: 'Organization & Cohesion', val: item.breakdown.organization },
+                            ].map((crit, cIdx) => (
+                              <div
+                                key={cIdx}
+                                className="rounded-2xl bg-white dark:bg-slate-900 p-3 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-800"
+                              >
+                                <div className="flex items-center justify-between font-black text-[11px] mb-1.5">
+                                  <span className="text-slate-700 dark:text-slate-200 truncate">{crit.label}</span>
+                                  <span className="font-mono tabular-nums text-[#A560E8] dark:text-purple-400">{crit.val}/3</span>
+                                </div>
+                                <div className="h-2.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 border border-[#E5E5E5] dark:border-slate-700 overflow-hidden">
+                                  <div
+                                    className="h-full bg-[#CE82FF] rounded-full transition-all"
+                                    style={{ width: `${(crit.val / 3) * 100}%` }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Candidate Submitted Essay Preview */}
+                          <div className="rounded-2xl bg-white dark:bg-slate-900 p-3.5 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-800 text-xs">
+                            <span className="block text-[10px] font-black uppercase text-slate-400 mb-1">
+                              Bài làm đã ghi nhận của học sinh:
+                            </span>
+                            {item.text && item.text.trim().length > 0 ? (
+                              <p className="whitespace-pre-line text-slate-700 dark:text-slate-200 font-sans leading-relaxed max-h-36 overflow-y-auto">
+                                {item.text}
+                              </p>
+                            ) : (
+                              <p className="italic font-bold text-[#EA2B2B]">Học sinh bỏ trống phần viết này (0 điểm).</p>
+                            )}
+                          </div>
+
+                          {/* Examiner Commentary */}
+                          <div className="rounded-2xl bg-[#D7FFB8]/40 dark:bg-emerald-950/30 border-2 border-[#58CC02] dark:border-emerald-700 border-b-4 border-b-[#46A302] p-3.5 text-xs space-y-1.5">
+                            <span className="font-black text-[#46A302] dark:text-emerald-300 block">
+                              Nhận xét từ Giám khảo:
+                            </span>
+                            <p className="text-slate-800 dark:text-slate-200 font-semibold leading-relaxed">
+                              {item.breakdown.feedbackVi}
+                            </p>
+                            {item.breakdown.improvementsVi && item.breakdown.improvementsVi.length > 0 && (
+                              <ul className="list-disc pl-4 space-y-0.5 text-slate-600 dark:text-slate-300 pt-1">
+                                {item.breakdown.improvementsVi.map((imp: string, i: number) => (
+                                  <li key={i}>{imp}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+
+                          {/* Sentence-by-Sentence Inline Corrections (Original vs Upgraded B2-C1) */}
+                          {item.breakdown.sentenceCorrections &&
+                            item.breakdown.sentenceCorrections.length > 0 && (
+                              <div className="rounded-2xl bg-amber-50/70 dark:bg-amber-950/25 border-2 border-amber-300 dark:border-amber-800 p-3.5 text-xs space-y-2.5">
+                                <span className="font-black uppercase tracking-wider text-amber-800 dark:text-amber-300 block">
+                                  Sửa Lỗi Chi Tiết Từng Câu (Inline Correction Diff):
+                                </span>
+                                <div className="space-y-2">
+                                  {item.breakdown.sentenceCorrections.map((corr, cIdx) => (
+                                    <div
+                                      key={cIdx}
+                                      className="rounded-xl bg-white dark:bg-slate-900 p-2.5 border border-amber-200 dark:border-slate-700 space-y-1"
+                                    >
+                                      <div className="text-rose-600 dark:text-rose-400 line-through font-medium">
+                                        ✗ {corr.original}
+                                      </div>
+                                      <div className="text-emerald-700 dark:text-emerald-300 font-bold">
+                                        ✓ {corr.improved}
+                                      </div>
+                                      <div className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                                        💡 {corr.reasonVi}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                          {/* 3-Tier Band Samples (B1 / B2 / C1 Tabs) */}
+                          {activeSampleText && (
+                            <div className="rounded-2xl bg-[#F3E5FF]/50 dark:bg-purple-950/30 border-2 border-[#CE82FF] dark:border-purple-800 border-b-4 border-b-[#A560E8] p-3.5 text-xs space-y-2.5">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="font-black text-[#A560E8] dark:text-purple-300">
+                                  Bài Mẫu Tham Khảo Theo Bậc VSTEP:
+                                </span>
+                                <div className="inline-flex rounded-xl bg-white dark:bg-slate-900 p-1 border border-purple-200 dark:border-purple-800 gap-1">
+                                  {(['B1', 'B2', 'C1'] as const).map((tier) => (
+                                    <button
+                                      key={tier}
+                                      type="button"
+                                      onClick={() =>
+                                        setWritingSampleTier((prev) => ({ ...prev, [idx]: tier }))
+                                      }
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer ${
+                                        activeTier === tier
+                                          ? 'bg-[#CE82FF] text-white'
+                                          : 'text-slate-600 dark:text-slate-300 hover:bg-purple-50 dark:hover:bg-slate-800'
+                                      }`}
+                                    >
+                                      Mẫu {tier}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                              <p className="whitespace-pre-line text-slate-700 dark:text-slate-200 leading-relaxed max-h-56 overflow-y-auto bg-white/80 dark:bg-slate-900/80 p-3 rounded-xl border border-purple-200/70 dark:border-slate-700">
+                                {activeSampleText}
+                              </p>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1952,7 +2523,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                     <button
                       type="button"
                       disabled={isGradingSpeakingAi}
-                      onClick={handleTriggerAiSpeakingGrader}
+                      onClick={() => handleTriggerAiSpeakingGrader(true)}
                       className="btn-duo-green inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-xs font-black disabled:opacity-50 cursor-pointer"
                     >
                       <RefreshCw className={`h-4 w-4 ${isGradingSpeakingAi ? 'animate-spin' : ''}`} />
@@ -1990,108 +2561,165 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                       durationSec: speakingSubmission.part3DurationSeconds,
                       breakdown: speakingEvaluation.part3Criteria,
                     },
-                  ].map((item, idx) => (
-                    <div
-                      key={idx}
-                      className="rounded-3xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 bg-slate-50/60 dark:bg-slate-800/40 p-4 sm:p-5 space-y-3.5 flex flex-col justify-between"
-                    >
-                      <div className="space-y-3.5">
-                        <div className="flex items-center justify-between border-b-2 border-[#E5E5E5] dark:border-slate-700 pb-3">
-                          <div>
-                            <span className="text-[11px] font-black uppercase tracking-wider text-[#EA2B2B] dark:text-rose-400 block">
-                              {item.partLabel}
-                            </span>
-                            <span className="text-[11px] font-bold text-slate-500">
-                              {item.wordCount} từ {item.durationSec ? `· Thu âm ${item.durationSec}s` : ''}
-                            </span>
-                          </div>
-                          <div className="rounded-2xl bg-[#FFDADC] dark:bg-rose-950 px-3 py-1 font-mono text-xs font-black text-[#EA2B2B] dark:text-rose-200 border-2 border-[#FF4B4B] border-b-4 border-b-[#EA2B2B]">
-                            {item.breakdown.total10.toFixed(1)} / 10
-                          </div>
-                        </div>
+                  ].map((item, idx) => {
+                    const activeTier = speakingSampleTier[idx] || 'B2';
+                    const bandSamples = item.breakdown.bandSamples;
+                    const activeSampleText =
+                      activeTier === 'B1'
+                        ? bandSamples?.b1Sample || item.task?.sampleAnswer
+                        : activeTier === 'C1'
+                        ? bandSamples?.c1Sample || item.task?.sampleAnswer
+                        : bandSamples?.b2Sample || item.task?.sampleAnswer;
 
-                        {/* 5 Criteria Rubric Bars */}
-                        <div className="space-y-2 text-xs">
-                          {[
-                            { label: 'Grammar', val: item.breakdown.grammar },
-                            { label: 'Vocabulary', val: item.breakdown.vocabulary },
-                            { label: 'Pronunciation', val: item.breakdown.pronunciation },
-                            { label: 'Fluency', val: item.breakdown.fluency },
-                            { label: 'Discourse Mgmt', val: item.breakdown.discourseManagement },
-                          ].map((crit, cIdx) => (
-                            <div
-                              key={cIdx}
-                              className="rounded-2xl bg-white dark:bg-slate-900 px-3 py-2 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-800"
-                            >
-                              <div className="flex items-center justify-between font-black text-[11px] mb-1">
-                                <span className="text-slate-700 dark:text-slate-200">{crit.label}</span>
-                                <span className="font-mono text-[#EA2B2B] dark:text-rose-400">{crit.val}/10</span>
-                              </div>
-                              <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 border border-[#E5E5E5] dark:border-slate-700 overflow-hidden">
-                                <div
-                                  className="h-full bg-[#FF4B4B] rounded-full transition-all"
-                                  style={{ width: `${(crit.val / 10) * 100}%` }}
-                                />
-                              </div>
+                    return (
+                      <div
+                        key={idx}
+                        className="rounded-3xl border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#CECECE] dark:border-b-slate-800 bg-slate-50/60 dark:bg-slate-800/40 p-4 sm:p-5 space-y-3.5 flex flex-col justify-between"
+                      >
+                        <div className="space-y-3.5">
+                          <div className="flex items-center justify-between border-b-2 border-[#E5E5E5] dark:border-slate-700 pb-3">
+                            <div>
+                              <span className="text-[11px] font-black uppercase tracking-wider text-[#EA2B2B] dark:text-rose-400 block">
+                                {item.partLabel}
+                              </span>
+                              <span className="text-[11px] font-bold text-slate-500">
+                                {item.wordCount} từ {item.durationSec ? `· Thu âm ${item.durationSec}s` : ''}
+                              </span>
                             </div>
-                          ))}
-                        </div>
-
-                        {/* Audio playback if recorded */}
-                        {item.audioUrl && (
-                          <div className="rounded-2xl bg-[#FFDADC]/50 dark:bg-rose-950/30 p-3 border-2 border-[#FF4B4B] dark:border-rose-800 border-b-3 border-b-[#EA2B2B]">
-                            <span className="block text-[10px] font-black uppercase text-[#EA2B2B] dark:text-rose-300 mb-1.5">
-                              🎙️ Bản thu âm của thí sinh:
-                            </span>
-                            <audio src={item.audioUrl} controls className="h-8 w-full" />
+                            <div className="rounded-2xl bg-[#FFDADC] dark:bg-rose-950 px-3 py-1 font-mono text-xs font-black tabular-nums text-[#EA2B2B] dark:text-rose-200 border-2 border-[#FF4B4B] border-b-4 border-b-[#EA2B2B]">
+                              {item.breakdown.total10.toFixed(1)} / 10
+                            </div>
                           </div>
-                        )}
 
-                        {/* Candidate Submitted Transcript */}
-                        <div className="rounded-2xl bg-white dark:bg-slate-900 p-3 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-800 text-xs">
-                          <span className="block text-[10px] font-black uppercase text-slate-400 mb-1">
-                            Nội dung bài nói (Transcript):
-                          </span>
-                          {item.text && item.text.trim().length > 0 ? (
-                            <p className="whitespace-pre-line text-slate-700 dark:text-slate-200 leading-relaxed max-h-32 overflow-y-auto">
-                              {item.text}
+                          {/* 5 Criteria Rubric Bars */}
+                          <div className="space-y-2 text-xs">
+                            {[
+                              { label: 'Grammar', val: item.breakdown.grammar },
+                              { label: 'Vocabulary', val: item.breakdown.vocabulary },
+                              { label: 'Pronunciation', val: item.breakdown.pronunciation },
+                              { label: 'Fluency', val: item.breakdown.fluency },
+                              { label: 'Discourse Mgmt', val: item.breakdown.discourseManagement },
+                            ].map((crit, cIdx) => (
+                              <div
+                                key={cIdx}
+                                className="rounded-2xl bg-white dark:bg-slate-900 px-3 py-2 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-800"
+                              >
+                                <div className="flex items-center justify-between font-black text-[11px] mb-1">
+                                  <span className="text-slate-700 dark:text-slate-200">{crit.label}</span>
+                                  <span className="font-mono tabular-nums text-[#EA2B2B] dark:text-rose-400">{crit.val}/10</span>
+                                </div>
+                                <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 border border-[#E5E5E5] dark:border-slate-700 overflow-hidden">
+                                  <div
+                                    className="h-full bg-[#FF4B4B] rounded-full transition-all"
+                                    style={{ width: `${(crit.val / 10) * 100}%` }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Audio playback if recorded */}
+                          {item.audioUrl && (
+                            <div className="rounded-2xl bg-[#FFDADC]/50 dark:bg-rose-950/30 p-3 border-2 border-[#FF4B4B] dark:border-rose-800 border-b-3 border-b-[#EA2B2B]">
+                              <span className="block text-[10px] font-black uppercase text-[#EA2B2B] dark:text-rose-300 mb-1.5">
+                                🎙️ Bản thu âm của thí sinh:
+                              </span>
+                              <audio src={item.audioUrl} controls className="h-8 w-full" />
+                            </div>
+                          )}
+
+                          {/* Candidate Submitted Transcript */}
+                          <div className="rounded-2xl bg-white dark:bg-slate-900 p-3 border-2 border-[#E5E5E5] dark:border-slate-700 border-b-3 border-b-[#CECECE] dark:border-b-slate-800 text-xs">
+                            <span className="block text-[10px] font-black uppercase text-slate-400 mb-1">
+                              Nội dung bài nói (Transcript):
+                            </span>
+                            {item.text && item.text.trim().length > 0 ? (
+                              <p className="whitespace-pre-line text-slate-700 dark:text-slate-200 leading-relaxed max-h-32 overflow-y-auto">
+                                {item.text}
+                              </p>
+                            ) : (
+                              <p className="italic font-bold text-[#EA2B2B]">Chưa có nội dung văn bản cho phần này.</p>
+                            )}
+                          </div>
+
+                          {/* Examiner Commentary */}
+                          <div className="rounded-2xl bg-[#FFDADC]/40 dark:bg-rose-950/30 border-2 border-[#FF4B4B] dark:border-rose-800 border-b-4 border-b-[#EA2B2B] p-3 text-xs space-y-1.5">
+                            <span className="font-black text-[#EA2B2B] dark:text-rose-300 block">
+                              Nhận xét từ Giám khảo VSTEP:
+                            </span>
+                            <p className="text-slate-800 dark:text-slate-200 font-semibold leading-relaxed">
+                              {item.breakdown.feedbackVi}
                             </p>
-                          ) : (
-                            <p className="italic font-bold text-[#EA2B2B]">Chưa có nội dung văn bản cho phần này.</p>
+                            {item.breakdown.improvementsVi && item.breakdown.improvementsVi.length > 0 && (
+                              <ul className="list-disc pl-4 space-y-0.5 text-slate-600 dark:text-slate-300 pt-1">
+                                {item.breakdown.improvementsVi.map((imp: string, i: number) => (
+                                  <li key={i}>{imp}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+
+                          {/* Sentence-by-Sentence Speaking Corrections */}
+                          {item.breakdown.sentenceCorrections &&
+                            item.breakdown.sentenceCorrections.length > 0 && (
+                              <div className="rounded-2xl bg-amber-50/70 dark:bg-amber-950/25 border-2 border-amber-300 dark:border-amber-800 p-3 text-xs space-y-2">
+                                <span className="font-black uppercase tracking-wider text-amber-800 dark:text-amber-300 block">
+                                  Sửa Lỗi Diễn Đạt Từng Câu:
+                                </span>
+                                {item.breakdown.sentenceCorrections.map((corr, cIdx) => (
+                                  <div
+                                    key={cIdx}
+                                    className="rounded-xl bg-white dark:bg-slate-900 p-2.5 border border-amber-200 dark:border-slate-700 space-y-1"
+                                  >
+                                    <div className="text-rose-600 dark:text-rose-400 line-through font-medium">
+                                      ✗ {corr.original}
+                                    </div>
+                                    <div className="text-emerald-700 dark:text-emerald-300 font-bold">
+                                      ✓ {corr.improved}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                                      💡 {corr.reasonVi}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                          {/* 3-Tier Band Speaking Samples (B1 / B2 / C1 Tabs) */}
+                          {activeSampleText && (
+                            <div className="rounded-2xl bg-[#FFF5D6] dark:bg-amber-950/30 border-2 border-[#FFC800] dark:border-amber-800 border-b-4 border-b-[#E5B400] p-3 text-xs space-y-2">
+                              <div className="flex flex-wrap items-center justify-between gap-1.5">
+                                <span className="font-black text-[#FF9600] dark:text-amber-300">
+                                  Bài Nói Mẫu B1–B2–C1:
+                                </span>
+                                <div className="inline-flex rounded-xl bg-white dark:bg-slate-900 p-0.5 border border-amber-300 dark:border-amber-800 gap-1">
+                                  {(['B1', 'B2', 'C1'] as const).map((tier) => (
+                                    <button
+                                      key={tier}
+                                      type="button"
+                                      onClick={() =>
+                                        setSpeakingSampleTier((prev) => ({ ...prev, [idx]: tier }))
+                                      }
+                                      className={`px-2 py-0.5 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                                        activeTier === tier
+                                          ? 'bg-[#FF9600] text-white'
+                                          : 'text-slate-600 dark:text-slate-300 hover:bg-amber-50'
+                                      }`}
+                                    >
+                                      {tier}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                              <p className="whitespace-pre-line text-slate-800 dark:text-slate-200 font-medium leading-relaxed max-h-44 overflow-y-auto bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-xl border border-amber-200/70 dark:border-slate-700">
+                                {activeSampleText}
+                              </p>
+                            </div>
                           )}
                         </div>
-
-                        {/* Examiner Commentary */}
-                        <div className="rounded-2xl bg-[#FFDADC]/40 dark:bg-rose-950/30 border-2 border-[#FF4B4B] dark:border-rose-800 border-b-4 border-b-[#EA2B2B] p-3 text-xs space-y-1.5">
-                          <span className="font-black text-[#EA2B2B] dark:text-rose-300 block">
-                            Nhận xét từ Giám khảo VSTEP:
-                          </span>
-                          <p className="text-slate-800 dark:text-slate-200 font-semibold leading-relaxed">
-                            {item.breakdown.feedbackVi}
-                          </p>
-                          {item.breakdown.improvementsVi && item.breakdown.improvementsVi.length > 0 && (
-                            <ul className="list-disc pl-4 space-y-0.5 text-slate-600 dark:text-slate-300 pt-1">
-                              {item.breakdown.improvementsVi.map((imp: string, i: number) => (
-                                <li key={i}>{imp}</li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-
-                        {/* Sample Answer */}
-                        {item.task?.sampleAnswer && (
-                          <div className="rounded-2xl bg-[#FFF5D6] dark:bg-amber-950/30 border-2 border-[#FFC800] dark:border-amber-800 border-b-4 border-b-[#E5B400] p-3 text-xs space-y-1">
-                            <span className="font-black text-[#FF9600] dark:text-amber-300 block">
-                              ✨ Bài nói mẫu B2–C1:
-                            </span>
-                            <p className="whitespace-pre-line text-slate-800 dark:text-slate-200 font-medium leading-relaxed max-h-40 overflow-y-auto">
-                              {item.task.sampleAnswer}
-                            </p>
-                          </div>
-                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -2621,6 +3249,28 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
             onClose={() => setZoomCard(null)}
           />
         )}
+
+        {/* Global Floating Selection Dictionary & 1-Click SRS Save */}
+        <GlobalSelectionDictionaryPopover
+          sourceLabel={`Kết Quả & Chữa Bài · ${testTitle}`}
+          testTitle={testTitle}
+        />
+
+        {/* Quick Save Vocab Modal for Result Flashcards */}
+        <QuickSaveVocabModal
+          isOpen={Boolean(quickSaveSeedWord)}
+          onClose={() => setQuickSaveSeedWord(null)}
+          payload={
+            quickSaveSeedWord
+              ? {
+                  initialWord: quickSaveSeedWord.word,
+                  contextSentence: quickSaveSeedWord.exampleEn,
+                  sourceLabel: `Flashcard Kết Quả · ${testTitle}`,
+                  testTitle,
+                }
+              : null
+          }
+        />
       </div>
     </div>
   );

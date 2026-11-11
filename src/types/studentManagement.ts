@@ -178,6 +178,14 @@ export interface UserExamAttempt {
   aiWritingEvaluation?: any;
   aiSpeakingEvaluation?: any;
   aiDiagnosticReport?: any;
+  teacherFeedback?: {
+    writingScoreOverride?: number;
+    speakingScoreOverride?: number;
+    commentVi: string;
+    teacherName: string;
+    teacherEmail?: string;
+    updatedAt: number;
+  };
   tabSwitchCount?: number;
 }
 

@@ -21,11 +21,18 @@ import {
   Eraser,
   EyeOff,
   BookmarkPlus,
+  StickyNote,
   Keyboard,
+  HelpCircle,
   Loader2,
   X,
 } from 'lucide-react';
-import { Question, StimulusCard, getPartRelativeNumber } from '../types/exam';
+import {
+  Question,
+  StimulusCard,
+  ExamUserHighlight,
+  getPartRelativeNumber,
+} from '../types/exam';
 import { examAudioManager } from '../utils/audioManager';
 import { StructuredExplanationBox } from './StructuredExplanationBox';
 import { InteractiveScriptPanel, ScriptSectionItem } from './InteractiveTranscriptModal';
@@ -43,12 +50,7 @@ import {
 } from '../services/vocabCloudService';
 import { useAuth } from '../context/AuthContext';
 
-interface UserPassageHighlight {
-  id: string;
-  partKey: string;
-  text: string;
-  color: 'yellow' | 'green' | 'pink';
-}
+type UserPassageHighlight = ExamUserHighlight;
 
 interface SelectionPopoverState {
   text: string;
@@ -64,6 +66,7 @@ interface SelectionPopoverState {
   collocations?: string;
   isLoadingMeaning?: boolean;
   isSavedSrs?: boolean;
+  isSavedNote?: boolean;
 }
 
 interface QuestionStageProps {
@@ -74,6 +77,14 @@ interface QuestionStageProps {
   mode: 'exam' | 'practice';
   isReviewMode?: boolean;
   externalScriptToggleCounter?: number;
+  userHighlights?: ExamUserHighlight[];
+  onUserHighlightsChange?: React.Dispatch<React.SetStateAction<ExamUserHighlight[]>>;
+  eliminatedOptions?: Record<number, string[]>;
+  onEliminatedOptionsChange?: React.Dispatch<React.SetStateAction<Record<number, string[]>>>;
+  isScratchpadOpen?: boolean;
+  onToggleScratchpad?: () => void;
+  onAppendToScratchpad?: (snippet: string, sourceLabel: string) => void;
+  onOpenShortcutsModal?: () => void;
   onAnswerChange: (questionId: number, value: string) => void;
   onToggleFlag?: (questionId: number) => void;
   onSelectQuestion: (questionId: number) => void;
@@ -94,6 +105,14 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
   mode,
   isReviewMode = false,
   externalScriptToggleCounter = 0,
+  userHighlights: controlledHighlights,
+  onUserHighlightsChange,
+  eliminatedOptions: controlledEliminated,
+  onEliminatedOptionsChange,
+  isScratchpadOpen = false,
+  onToggleScratchpad,
+  onAppendToScratchpad,
+  onOpenShortcutsModal,
   onAnswerChange,
   onToggleFlag,
   onSelectQuestion,
@@ -130,9 +149,9 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
   const { currentUser } = useAuth();
   const uid = currentUser?.uid || 'guest';
 
-  // Reading Passage User Highlighter & MCQ Option Elimination (Strikethrough)
+  // Reading Passage & Question Stem User Highlighter & MCQ Option Elimination (Strikethrough)
   const [highlightPenColor, setHighlightPenColor] = useState<'yellow' | 'green' | 'pink' | null>(null);
-  const [userHighlights, setUserHighlights] = useState<UserPassageHighlight[]>(() => {
+  const [internalHighlights, setInternalHighlights] = useState<UserPassageHighlight[]>(() => {
     try {
       const saved =
         localStorage.getItem('vstep_user_passage_highlights') ||
@@ -142,7 +161,12 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
       return [];
     }
   });
-  const [eliminatedOptions, setEliminatedOptions] = useState<Record<number, string[]>>({});
+  const [internalEliminated, setInternalEliminated] = useState<Record<number, string[]>>({});
+  const userHighlights = controlledHighlights ?? internalHighlights;
+  const setUserHighlights = onUserHighlightsChange ?? setInternalHighlights;
+  const eliminatedOptions = controlledEliminated ?? internalEliminated;
+  const setEliminatedOptions = onEliminatedOptionsChange ?? setInternalEliminated;
+
   const [quickSavePayload, setQuickSavePayload] = useState<QuickSaveVocabPayload | null>(null);
 
   // Floating Text Selection Popover & Keyboard Shortcut States
@@ -163,6 +187,9 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
   const currentPartKey = activeQuestion ? `${activeQuestion.section}_${activeQuestion.partNumber}` : '';
   const prevPartKeyRef = useRef<string>(currentPartKey);
 
+  // Responsive mobile/tablet split-screen switcher ('both' | 'passage' | 'questions')
+  const [mobileSplitView, setMobileSplitView] = useState<'both' | 'passage' | 'questions'>('both');
+
   useEffect(() => {
     if (prevPartKeyRef.current !== currentPartKey) {
       prevPartKeyRef.current = currentPartKey;
@@ -170,6 +197,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
       setShowReadingTranslation(false);
       setActiveHighlightQuote(null);
       setSelectionPopover(null);
+      setMobileSplitView('both');
     }
   }, [currentPartKey]);
 
@@ -178,7 +206,11 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
     [userHighlights, currentPartKey]
   );
 
-  const addSelectionHighlight = (color: 'yellow' | 'green' | 'pink', explicitText?: string) => {
+  const addSelectionHighlight = (
+    color: 'yellow' | 'green' | 'pink',
+    explicitText?: string,
+    targetType: 'passage' | 'question' = 'passage'
+  ) => {
     const sel = window.getSelection();
     const rawText = explicitText || (sel ? sel.toString() : '');
     const selectedText = rawText.trim().replace(/\s+/g, ' ');
@@ -202,6 +234,9 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
           partKey: currentPartKey,
           text: selectedText,
           color,
+          targetType,
+          questionId: activeQuestionId,
+          createdAt: Date.now(),
         },
       ];
     });
@@ -213,7 +248,13 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
 
   const handlePassageMouseUp = () => {
     if (highlightPenColor) {
-      addSelectionHighlight(highlightPenColor);
+      addSelectionHighlight(highlightPenColor, undefined, 'passage');
+    }
+  };
+
+  const handleQuestionMouseUp = () => {
+    if (highlightPenColor) {
+      addSelectionHighlight(highlightPenColor, undefined, 'question');
     }
   };
 
@@ -558,6 +599,38 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
         return;
       }
 
+      if (e.key.toLowerCase() === 'h') {
+        e.preventDefault();
+        const highlightedNow = addSelectionHighlight(highlightPenColor || 'yellow');
+        if (highlightedNow) {
+          showHint('Đã tô sáng cụm từ đã chọn');
+        } else {
+          setHighlightPenColor((prev) => {
+            const next = prev ? null : 'yellow';
+            showHint(next ? 'Đã BẬT Bút tô sáng (Vàng)' : 'Đã TẮT Bút tô sáng');
+            return next;
+          });
+        }
+        return;
+      }
+
+      if (e.key.toLowerCase() === 'n') {
+        if (onToggleScratchpad) {
+          e.preventDefault();
+          onToggleScratchpad();
+          showHint(isScratchpadOpen ? 'Đã đóng Sổ ghi chú nháp' : 'Đã mở Sổ ghi chú nháp');
+        }
+        return;
+      }
+
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        if (onOpenShortcutsModal) {
+          e.preventDefault();
+          onOpenShortcutsModal();
+        }
+        return;
+      }
+
       const keyMap: Record<string, string> = {
         a: 'A',
         b: 'B',
@@ -613,6 +686,10 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
     flagged,
     mode,
     isReviewMode,
+    highlightPenColor,
+    isScratchpadOpen,
+    onToggleScratchpad,
+    onOpenShortcutsModal,
     onAnswerChange,
     onSelectQuestion,
     onToggleFlag,
@@ -1065,21 +1142,43 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
             )}
           </div>
 
-          {/* Bottom Row: 1-Click Direct SRS Save + Open Full Modal */}
-          <div className="pt-1.5 border-t border-slate-700/80 flex items-center justify-between gap-2">
+          {/* Bottom Row: 1-Click Direct SRS Save + Add to Scratchpad + Open Full Modal */}
+          <div className="pt-1.5 border-t border-slate-700/80 flex items-center justify-between gap-1.5">
             {selectionPopover.isSavedSrs ? (
               <span className="inline-flex items-center gap-1 text-[11px] font-black text-[#58CC02]">
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                <span>Đã lưu vào Sổ từ SRS!</span>
+                <span>Đã lưu SRS!</span>
               </span>
             ) : (
               <button
                 type="button"
                 onClick={handleDirectSaveFromPopover}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#A560E8] hover:bg-[#8B3FD9] px-3 py-1.5 text-[11px] font-black text-white transition-colors cursor-pointer"
+                className="flex-1 inline-flex items-center justify-center gap-1 rounded-xl bg-[#A560E8] hover:bg-[#8B3FD9] px-2.5 py-1.5 text-[11px] font-black text-white transition-colors cursor-pointer whitespace-nowrap"
               >
-                <BookmarkPlus className="h-3.5 w-3.5" />
-                <span>+ Lưu nhanh vào SRS</span>
+                <BookmarkPlus className="h-3.5 w-3.5 shrink-0" />
+                <span>+ Lưu SRS</span>
+              </button>
+            )}
+
+            {onAppendToScratchpad && (
+              <button
+                type="button"
+                onClick={() => {
+                  const noteLine = selectionPopover.meaningVi
+                    ? `• ${selectionPopover.text} (${selectionPopover.meaningVi})`
+                    : `• ${selectionPopover.text}`;
+                  onAppendToScratchpad(noteLine, selectionPopover.sourceLabel);
+                  setSelectionPopover((prev) => (prev ? { ...prev, isSavedNote: true } : null));
+                }}
+                className={`inline-flex items-center justify-center gap-1 rounded-xl px-2.5 py-1.5 text-[11px] font-black transition-colors cursor-pointer whitespace-nowrap ${
+                  selectionPopover.isSavedNote
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-[#FFC800] hover:bg-[#E5B400] text-amber-950'
+                }`}
+                title="Chèn nhanh cụm từ này vào Sổ Ghi Chú Nháp (Phím tắt: N)"
+              >
+                <StickyNote className="h-3.5 w-3.5 shrink-0" />
+                <span>{selectionPopover.isSavedNote ? 'Đã chèn nháp!' : '+ Ghi nháp'}</span>
               </button>
             )}
 
@@ -1093,7 +1192,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                 });
                 setSelectionPopover(null);
               }}
-              className="rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 px-2.5 py-1.5 text-[11px] font-bold text-slate-200 transition-colors cursor-pointer"
+              className="rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 px-2 py-1.5 text-[11px] font-bold text-slate-200 transition-colors cursor-pointer shrink-0"
             >
               Chi tiết
             </button>
@@ -1103,22 +1202,22 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
     </>
   );
 
-  const renderKeyboardShortcutsBar = () => (
+  const renderKeyboardShortcutsBar = (includeHighlightToolbar = false) => (
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-100/90 dark:bg-slate-800/70 px-3.5 py-2 border border-slate-200/80 dark:border-slate-700/80 text-[11px]">
       <div className="flex flex-wrap items-center gap-2 text-slate-600 dark:text-slate-300 font-bold">
         <span className="inline-flex items-center gap-1 font-black text-slate-800 dark:text-slate-100">
           <Keyboard className="h-3.5 w-3.5 text-[#58CC02]" />
-          <span>Phím tắt phòng thi:</span>
+          <span>Phím tắt:</span>
         </span>
         <span className="inline-flex items-center gap-1">
           <kbd className="rounded bg-white dark:bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-black border border-slate-300 dark:border-slate-700 shadow-2xs">
             A–D
           </kbd>
-          <span>hoặc</span>
+          <span>/</span>
           <kbd className="rounded bg-white dark:bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-black border border-slate-300 dark:border-slate-700 shadow-2xs">
             1–4
           </kbd>
-          <span>Chọn đáp án</span>
+          <span>Chọn</span>
         </span>
         <span className="text-slate-300 dark:text-slate-600">·</span>
         <span className="inline-flex items-center gap-1">
@@ -1137,13 +1236,54 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
               <kbd className="rounded bg-white dark:bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-black border border-slate-300 dark:border-slate-700 shadow-2xs">
                 F
               </kbd>
-              <span>Gắn cờ</span>
+              <span>Cờ</span>
+            </span>
+            <span className="text-slate-300 dark:text-slate-600">·</span>
+            <span className="inline-flex items-center gap-1">
+              <kbd className="rounded bg-white dark:bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-black border border-slate-300 dark:border-slate-700 shadow-2xs">
+                H
+              </kbd>
+              <span>Tô sáng</span>
+            </span>
+            <span className="text-slate-300 dark:text-slate-600">·</span>
+            <span className="inline-flex items-center gap-1">
+              <kbd className="rounded bg-white dark:bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-black border border-slate-300 dark:border-slate-700 shadow-2xs">
+                N
+              </kbd>
+              <span>Sổ nháp</span>
             </span>
           </>
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {includeHighlightToolbar && renderHighlightToolbar()}
+        {onToggleScratchpad && (
+          <button
+            type="button"
+            onClick={onToggleScratchpad}
+            className={`inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[10px] font-black border transition-colors cursor-pointer ${
+              isScratchpadOpen
+                ? 'bg-[#FFC800] border-[#E58700] text-amber-950'
+                : 'bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 hover:bg-amber-100'
+            }`}
+            title="Mở Sổ Ghi Chú Nháp & Danh sách Highlight (Phím tắt: N)"
+          >
+            <StickyNote className="h-3 w-3" />
+            <span>Sổ nháp (N)</span>
+          </button>
+        )}
+        {onOpenShortcutsModal && (
+          <button
+            type="button"
+            onClick={onOpenShortcutsModal}
+            className="inline-flex items-center gap-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-2 py-0.5 text-[10px] font-black text-slate-700 dark:text-slate-300 hover:border-[#58CC02] cursor-pointer"
+            title="Xem đầy đủ bảng phím tắt phòng thi CBT (Phím tắt: ?)"
+          >
+            <HelpCircle className="h-3 w-3 text-[#58CC02]" />
+            <span>Bảng phím tắt (?)</span>
+          </button>
+        )}
         {lastShortcutHint && (
           <span className="rounded-lg bg-[#58CC02] px-2 py-0.5 text-[10px] font-black text-white animate-in fade-in duration-150">
             {lastShortcutHint}
@@ -2504,6 +2644,9 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
     const handleHighlightPassageEvidence = (quote?: string) => {
       if (!quote) return;
       setActiveHighlightQuote(quote);
+      if (mobileSplitView === 'questions') {
+        setMobileSplitView('passage');
+      }
       setTimeout(() => {
         const el = document.getElementById('active-evidence-mark');
         if (el) {
@@ -2514,6 +2657,33 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
 
     return (
       <div className="mx-auto max-w-[96rem] px-3 sm:px-6 py-4">
+        {/* Responsive Mobile/Tablet Split-Pane Switcher (< lg) */}
+        <div className="lg:hidden sticky top-2 z-30 mb-3 flex items-center justify-between gap-1.5 rounded-2xl border-2 border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-1.5 shadow-sm">
+          {(
+            [
+              { id: 'both', label: 'Song song (Cả 2)' },
+              { id: 'passage', label: `Bài đọc ${passageNum}` },
+              {
+                id: 'questions',
+                label: `Câu hỏi (${questions.filter((q) => (answers[q.id] || '').trim().length > 0).length}/${questions.length})`,
+              },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setMobileSplitView(tab.id)}
+              className={`flex-1 rounded-xl px-2.5 py-2 text-xs font-black transition-all cursor-pointer ${
+                mobileSplitView === tab.id
+                  ? 'bg-[#58CC02] text-white shadow-2xs'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
         <div
           ref={splitContainerRef}
           className="flex flex-col lg:flex-row gap-4 lg:gap-0 lg:h-[calc(100vh-148px)] items-stretch"
@@ -2521,7 +2691,9 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
           {/* Left Column: VSTEP Reading Passage with numbered paragraphs & underlined target words */}
           <div
             style={{ width: `${leftPanelWidth}%` }}
-            className="w-full max-lg:!w-full lg:h-full flex flex-col overflow-hidden rounded-3xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm shrink-0"
+            className={`w-full max-lg:!w-full lg:h-full flex flex-col overflow-hidden rounded-3xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm shrink-0 ${
+              mobileSplitView === 'questions' ? 'max-lg:hidden' : ''
+            }`}
           >
             <div className="shrink-0 z-20 bg-white dark:bg-slate-900 px-5 sm:px-7 py-3.5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -2624,7 +2796,11 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
           {renderResizerHandle()}
 
           {/* Right Column: 10 VSTEP Multiple-Choice Questions (A, B, C, D) */}
-          <div className="flex-1 min-w-0 lg:h-full flex flex-col overflow-hidden rounded-3xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+          <div
+            className={`flex-1 min-w-0 lg:h-full flex flex-col overflow-hidden rounded-3xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm ${
+              mobileSplitView === 'passage' ? 'max-lg:hidden' : ''
+            }`}
+          >
             <div className="shrink-0 z-20 bg-white dark:bg-slate-900 px-6 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
               <span className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-100">
                 Reading Passage {passageNum} · Câu hỏi {firstRelNum} – {lastRelNum} (4 lựa chọn A, B, C, D)
@@ -2662,10 +2838,13 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                         : 'border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/30 hover:border-lime-400'
                     }`}
                   >
-                    {/* Question Prompt Header */}
-                    <div className="flex items-start justify-between gap-3 mb-3.5">
+                    {/* Question Prompt Header (Supports highlighting keywords in question stem) */}
+                    <div
+                      onMouseUp={handleQuestionMouseUp}
+                      className="flex items-start justify-between gap-3 mb-3.5 select-text"
+                    >
                       <div className="flex items-start gap-2.5 text-left">
-                        <span className="mt-0.5 flex h-7 min-w-7 px-1.5 shrink-0 items-center justify-center rounded-xl bg-[#58CC02] font-mono text-xs font-black text-white shadow-2xs border-b-2 border-[#3C8C02]">
+                        <span className="mt-0.5 flex h-7 min-w-7 px-1.5 shrink-0 items-center justify-center rounded-xl bg-[#58CC02] font-mono text-xs font-black text-white shadow-2xs border-b-2 border-[#3C8C02] select-none">
                           {relNum}
                         </span>
                         <div className="text-sm sm:text-[15px] font-bold text-slate-900 dark:text-slate-100 leading-snug">
@@ -2908,7 +3087,7 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
         </div>
       )}
 
-      {renderKeyboardShortcutsBar()}
+      {renderKeyboardShortcutsBar(true)}
 
       {questions.map((q) => {
         const relNum = getPartRelativeNumber(q.id);
@@ -2942,32 +3121,36 @@ export const QuestionStage: React.FC<QuestionStageProps> = ({
                   : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
               }`}
             >
-              {/* Accordion Header */}
+              {/* Accordion Header (Supports highlighting keywords in Listening & Reading Part 1 question stems) */}
               <div
                 onClick={() => toggleAccordion(q.id)}
-                className="flex w-full items-center justify-between p-4 sm:p-5 text-left transition-colors hover:bg-lime-50/30 dark:hover:bg-slate-800/50 cursor-pointer"
+                onMouseUp={handleQuestionMouseUp}
+                className="flex w-full items-center justify-between p-4 sm:p-5 text-left transition-colors hover:bg-lime-50/30 dark:hover:bg-slate-800/50 cursor-pointer select-text"
               >
                 <div className="flex items-center gap-3">
                   <span
-                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-xl font-mono text-xs font-black text-white shadow-2xs ${
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-xl font-mono text-xs font-black text-white shadow-2xs select-none ${
                       isOddPart ? 'bg-[#2E7D32]' : 'bg-[#65A30D]'
                     }`}
                   >
                     {relNum}
                   </span>
                   <span className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-                    {q.prompt
-                      ? q.prompt.replace(/^Question\s+\d+$/i, `Question ${relNum}`)
-                      : `Question ${relNum}`}
+                    {renderRichFormattedTokens(
+                      q.prompt
+                        ? q.prompt.replace(/^Question\s+\d+$/i, `Question ${relNum}`)
+                        : `Question ${relNum}`,
+                      `lprompt-${q.id}`
+                    )}
                   </span>
                   {currentAnswer && (
-                    <span className="rounded-lg bg-lime-100 dark:bg-lime-900/60 px-2.5 py-0.5 text-xs font-black text-lime-800 dark:text-lime-200 flex items-center gap-1">
+                    <span className="rounded-lg bg-lime-100 dark:bg-lime-900/60 px-2.5 py-0.5 text-xs font-black text-lime-800 dark:text-lime-200 flex items-center gap-1 select-none">
                       {mode === 'practice' && <Lock className="h-3 w-3 text-[#2E7D32] dark:text-[#78E014]" />}
                       Đã chọn: {currentAnswer}
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2 shrink-0 ml-2">
+                <div className="flex items-center gap-2 shrink-0 ml-2 select-none">
                   {renderFlagButton(q.id, true)}
                   {isOpen ? (
                     <ChevronUp className="h-5 w-5 text-slate-400" />

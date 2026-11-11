@@ -433,7 +433,13 @@ class AudioManager {
     this.play();
   }
 
+  private speechTimerId: ReturnType<typeof setTimeout> | null = null;
+
   private cancelAnySpeechSynthesis() {
+    if (this.speechTimerId) {
+      clearTimeout(this.speechTimerId);
+      this.speechTimerId = null;
+    }
     this.isSpeechActive = false;
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
@@ -451,6 +457,22 @@ class AudioManager {
       this.audio.pause();
     }
     this.cancelAnySpeechSynthesis();
+    this.notifyListeners();
+  }
+
+  /**
+   * Stops playback, cancels any pending speech synthesis or gesture listeners,
+   * and resets position cleanly when transitioning away from Listening sections or exiting exam.
+   */
+  public stopAndRelease() {
+    this.pause();
+    if (this.audio) {
+      try {
+        this.audio.currentTime = 0;
+      } catch {
+        // Ignore
+      }
+    }
     this.notifyListeners();
   }
 
@@ -579,6 +601,9 @@ class AudioManager {
 
       osc.start();
       osc.stop(ctx.currentTime + 0.5);
+      setTimeout(() => {
+        ctx.close().catch(() => {});
+      }, 650);
     } catch {
       // Audio context might be restricted before user gesture
     }
@@ -587,6 +612,11 @@ class AudioManager {
   public speakText(text: string, onEnd?: () => void, speakerLabel?: string) {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
 
+    // Ensure HTML5 audio is paused so MP3 and TTS never overlap
+    if (this.audio && !this.audio.paused) {
+      this.audio.pause();
+    }
+    this.pendingAutoPlay = false;
     this.cancelAnySpeechSynthesis();
     this.playExamChime();
 
@@ -597,7 +627,8 @@ class AudioManager {
       )
       .trim();
 
-    setTimeout(() => {
+    this.speechTimerId = setTimeout(() => {
+      this.speechTimerId = null;
       const utterance = new SpeechSynthesisUtterance(cleanedSpeechText || text);
       utterance.lang = 'en-GB';
       utterance.volume = this.volume;
@@ -657,7 +688,7 @@ class AudioManager {
       };
 
       window.speechSynthesis.speak(utterance);
-    }, 300);
+    }, 250);
   }
 }
 

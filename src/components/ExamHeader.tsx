@@ -13,6 +13,7 @@ import {
   BookOpen,
   WifiOff,
   CloudCheck,
+  RefreshCw,
   Save,
   MessageSquareWarning,
   Sun,
@@ -22,10 +23,20 @@ import {
   Maximize2,
   Minimize2,
   ShieldAlert,
+  StickyNote,
+  Keyboard,
 } from 'lucide-react';
 import { InteractiveAudioPlayer } from './InteractiveAudioPlayer';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+
+export type CloudSyncStatusType =
+  | 'idle'
+  | 'saving_local'
+  | 'syncing_cloud'
+  | 'synced_cloud'
+  | 'offline_saved'
+  | 'sync_error';
 
 interface ExamHeaderProps {
   timeRemainingSeconds: number;
@@ -37,6 +48,12 @@ interface ExamHeaderProps {
   showAudioPlayer?: boolean;
   isOnline?: boolean;
   lastSavedText?: string;
+  cloudSyncStatus?: CloudSyncStatusType;
+  onForceCloudSync?: () => void;
+  isScratchpadOpen?: boolean;
+  scratchpadBadgeCount?: number;
+  onToggleScratchpad?: () => void;
+  onOpenShortcutsModal?: () => void;
   audioBadgeLabel?: string;
   strictProctoring?: boolean;
   isFullscreen?: boolean;
@@ -62,6 +79,12 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
   showAudioPlayer = true,
   isOnline = true,
   lastSavedText,
+  cloudSyncStatus = 'idle',
+  onForceCloudSync,
+  isScratchpadOpen = false,
+  scratchpadBadgeCount = 0,
+  onToggleScratchpad,
+  onOpenShortcutsModal,
   audioBadgeLabel,
   strictProctoring = false,
   isFullscreen = false,
@@ -201,7 +224,7 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
           )}
         </div>
 
-        {/* Center: Timer + Pause Button (with compact 'Saved HH:MM:SS' stacked directly underneath) */}
+        {/* Center: Timer + Pause Button (with interactive Local/Cloud Sync badge stacked underneath) */}
         <div className="flex items-center gap-2">
           <div
             className="flex items-center gap-2 font-mono text-sm sm:text-base font-black tabular-nums tracking-wide text-white bg-black/20 border-b-2 border-black/25 px-3 py-1.5 rounded-xl"
@@ -223,7 +246,7 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
                 type="button"
                 onClick={onPauseClick}
                 className={`flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 border border-white/25 border-b-3 border-b-black/25 active:border-b-0 active:translate-y-0.5 px-2.5 sm:px-3 text-xs font-black text-white transition-all cursor-pointer whitespace-nowrap ${
-                  hasRealBackup || !isOnline ? 'py-1' : 'py-1.5'
+                  hasRealBackup || !isOnline || cloudSyncStatus !== 'idle' ? 'py-1' : 'py-1.5'
                 }`}
                 title="Tạm dừng bài làm"
               >
@@ -231,36 +254,93 @@ export const ExamHeader: React.FC<ExamHeaderProps> = React.memo(({
                 <span className="hidden sm:inline">Tạm dừng</span>
               </button>
 
-              {(hasRealBackup || !isOnline) && (
-                <div
-                  className={`mt-0.5 flex items-center gap-1 text-[10px] font-bold leading-none tabular-nums whitespace-nowrap ${
-                    isOnline ? 'text-lime-100' : 'text-amber-200'
+              {(hasRealBackup || !isOnline || cloudSyncStatus !== 'idle') && (
+                <button
+                  type="button"
+                  onClick={() => onForceCloudSync?.()}
+                  disabled={!onForceCloudSync || cloudSyncStatus === 'syncing_cloud'}
+                  className={`mt-0.5 flex items-center gap-1 text-[10px] font-bold leading-none tabular-nums whitespace-nowrap hover:underline cursor-pointer ${
+                    !isOnline || cloudSyncStatus === 'offline_saved'
+                      ? 'text-amber-200'
+                      : cloudSyncStatus === 'sync_error'
+                      ? 'text-rose-200'
+                      : 'text-lime-100'
                   }`}
                   title={
-                    isOnline
-                      ? `Bài làm của bạn đã được sao lưu tự động (${lastSavedText})`
-                      : 'Đang Offline · Bài làm đã được sao lưu trực tiếp vào máy'
+                    !isOnline
+                      ? 'Đang Offline · Bài làm đã lưu vào trình duyệt. Sẽ tự đồng bộ khi có mạng.'
+                      : 'Bấm để đồng bộ ngay bài làm dở lên Cloud Firestore'
                   }
                 >
-                  {isOnline ? (
+                  {!isOnline || cloudSyncStatus === 'offline_saved' ? (
+                    <>
+                      <WifiOff className="h-2.5 w-2.5 shrink-0" />
+                      <span>{lastSavedText || 'Đã lưu Offline'}</span>
+                    </>
+                  ) : cloudSyncStatus === 'syncing_cloud' ? (
+                    <>
+                      <RefreshCw className="h-2.5 w-2.5 text-lime-200 animate-spin shrink-0" />
+                      <span>Đang đồng bộ Cloud...</span>
+                    </>
+                  ) : cloudSyncStatus === 'synced_cloud' ? (
                     <>
                       <CloudCheck className="h-2.5 w-2.5 text-lime-200 shrink-0" />
-                      <span>{lastSavedText}</span>
+                      <span>{lastSavedText || 'Đã đồng bộ Cloud'}</span>
                     </>
                   ) : (
                     <>
-                      <WifiOff className="h-2.5 w-2.5 shrink-0" />
-                      <span>{lastSavedText || 'Saved Offline'}</span>
+                      <Save className="h-2.5 w-2.5 text-lime-200 shrink-0" />
+                      <span>{lastSavedText || 'Đã lưu máy'}</span>
                     </>
                   )}
-                </div>
+                </button>
               )}
             </div>
           )}
         </div>
 
-        {/* Right: Fullscreen/Proctoring + Compact Theme Icon + Report Bug + Teacher Mode Toggle + Submit + Menu */}
-        <div className="flex items-center gap-2 sm:gap-2.5">
+        {/* Right: Scratchpad + Shortcuts + Fullscreen/Proctoring + Theme + Report Bug + Teacher Mode + Submit + Menu */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Scratchpad Notes Button (Works across all 4 skills, Shortcut: N) */}
+          {onToggleScratchpad && (
+            <button
+              type="button"
+              onClick={onToggleScratchpad}
+              className={`relative flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-black transition-all active:border-b-0 active:translate-y-0.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                isScratchpadOpen
+                  ? 'bg-[#FFC800] text-amber-950 border-2 border-[#FF9600] border-b-3 border-b-[#E58700] shadow-xs'
+                  : 'bg-white/20 hover:bg-white/30 text-white border border-white/25 border-b-3 border-b-black/25'
+              }`}
+              title="Bật/Tắt Sổ Ghi Chú Nháp & Danh sách Highlight (Phím tắt: N)"
+            >
+              <StickyNote className="h-3.5 w-3.5 shrink-0" />
+              <span className="hidden lg:inline">Sổ nháp</span>
+              {scratchpadBadgeCount > 0 && (
+                <span
+                  className={`rounded-md px-1.5 py-0.2 text-[10px] font-mono font-black tabular-nums ${
+                    isScratchpadOpen
+                      ? 'bg-amber-950 text-[#FFC800]'
+                      : 'bg-[#FFC800] text-amber-950'
+                  }`}
+                >
+                  {scratchpadBadgeCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Keyboard Shortcuts Guide Button (Shortcut: ?) */}
+          {onOpenShortcutsModal && (
+            <button
+              type="button"
+              onClick={onOpenShortcutsModal}
+              className="hidden sm:flex items-center justify-center rounded-xl bg-white/20 hover:bg-white/30 border border-white/25 border-b-3 border-b-black/25 active:border-b-0 active:translate-y-0.5 p-2 text-white transition-all cursor-pointer shrink-0"
+              title="Bảng tra cứu Phím tắt & Công cụ phòng thi (Phím tắt: ?)"
+              aria-label="Phím tắt phòng thi"
+            >
+              <Keyboard className="h-4 w-4 text-white" />
+            </button>
+          )}
           {/* Tab Switch Warning Badge in Strict Exam Mode */}
           {mode === 'exam' && strictProctoring && tabSwitchCount > 0 && (
             <span

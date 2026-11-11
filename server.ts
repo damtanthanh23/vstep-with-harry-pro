@@ -946,6 +946,476 @@ Hãy trả về kết quả định dạng JSON với cấu trúc:
 });
 
 /**
+ * In-Stage AI Writing Coach Endpoint (/api/ai/coach-writing)
+ * Evaluates a single Writing Task (Task 1 Letter/Email or Task 2 Essay) during Practice mode:
+ * - 4 VSTEP criteria (0-3 each -> /10.0 band + B1/B2/C1 estimate)
+ * - Sentence-by-sentence corrections (original -> improved B2-C1 -> Vietnamese reason)
+ * - Upgraded Band B2-C1 sample based on the student's draft
+ */
+app.post('/api/ai/coach-writing', async (req, res) => {
+  const { taskNumber = 1, promptText = '', studentText = '', minWords = 120, sampleAnswer = '' } = req.body || {};
+  const cleanText = String(studentText || '').trim();
+  const wordCount = cleanText ? cleanText.split(/\s+/).filter(Boolean).length : 0;
+
+  if (wordCount < 5) {
+    return res.status(400).json({
+      error: 'Vui lòng viết ít nhất 1-2 câu tiếng Anh để Giám khảo AI phân tích và sửa lỗi chi tiết.',
+    });
+  }
+
+  try {
+    const isTask1 = Number(taskNumber) === 1;
+    const systemInstruction = `Bạn là Giám khảo Chấm thi Viết VSTEP B1–B2–C1 Cấp cao (Bộ Giáo dục & Đào tạo).
+Nhiệm vụ của bạn là chấm thử và sửa lỗi chi tiết cho ${
+      isTask1 ? 'Writing Task 1 (Thư / Email, tối thiểu 120 từ)' : 'Writing Task 2 (Bài luận Essay, tối thiểu 250 từ)'
+    }.
+Chấm theo 4 tiêu chí chuẩn VSTEP (mỗi tiêu chí từ 0.0 đến 3.0 điểm, tổng 12 điểm quy đổi sang thang 10.0):
+1. taskFulfillment (0-3): Mức độ hoàn thành yêu cầu đề bài và độ dài (${wordCount}/${minWords} từ).
+2. organization (0-3): Bố cục chia đoạn, mạch lạc và từ nối (Linking words).
+3. vocabulary (0-3): Vốn từ vựng, collocations học thuật.
+4. grammar (0-3): Độ đa dạng cấu trúc câu và chính xác ngữ pháp.
+
+QUAN TRỌNG:
+- Trong mảng "sentenceCorrections", hãy trích xuất 2 đến 5 câu nguyên văn ("original") từ bài làm của học viên có lỗi ngữ pháp/từ vựng hoặc còn đơn giản (A2/B1), viết lại thành câu nâng cấp chuẩn B2–C1 ("improved") và giải thích rõ bằng tiếng Việt ("reasonVi"). Chuỗi "original" PHẢI khớp chính xác với một câu hoặc mệnh đề có trong bài làm của học viên để học viên bấm 1 chạm thay thế vào bài.
+- Trong "upgradedSample", hãy viết một bài hoàn chỉnh đạt chuẩn VSTEP B2–C1 phát triển từ chính ý tưởng trong bài nháp của học viên.`;
+
+    const userPrompt = `Đề bài ${isTask1 ? 'Writing Task 1' : 'Writing Task 2'}:
+"""
+${String(promptText).slice(0, 1500)}
+"""
+
+Bài làm hiện tại của học viên (${wordCount} từ / yêu cầu tối thiểu ${minWords} từ):
+"""
+${cleanText.slice(0, 3500)}
+"""
+
+Hãy chấm điểm 4 tiêu chí, trích xuất các câu cần sửa/nâng cấp và viết bài mẫu nâng band B2–C1 theo đúng JSON schema.`;
+
+    const response = await generateGeminiSafe({
+      preferredModels: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'],
+      contents: userPrompt,
+      timeoutMs: 25000,
+      config: {
+        systemInstruction,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            overallBand10: { type: Type.NUMBER },
+            cefrEstimate: { type: Type.STRING },
+            criteria: {
+              type: Type.OBJECT,
+              properties: {
+                taskFulfillment: { type: Type.NUMBER },
+                organization: { type: Type.NUMBER },
+                vocabulary: { type: Type.NUMBER },
+                grammar: { type: Type.NUMBER },
+              },
+              required: ['taskFulfillment', 'organization', 'vocabulary', 'grammar'],
+            },
+            summaryVi: { type: Type.STRING },
+            sentenceCorrections: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  original: { type: Type.STRING },
+                  improved: { type: Type.STRING },
+                  reasonVi: { type: Type.STRING },
+                },
+                required: ['original', 'improved', 'reasonVi'],
+              },
+            },
+            upgradedSample: { type: Type.STRING },
+          },
+          required: [
+            'overallBand10',
+            'cefrEstimate',
+            'criteria',
+            'summaryVi',
+            'sentenceCorrections',
+            'upgradedSample',
+          ],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    const c = parsed.criteria || {};
+    const tf = Math.min(3, Math.max(0, Number(c.taskFulfillment ?? 1.5)));
+    const org = Math.min(3, Math.max(0, Number(c.organization ?? 1.5)));
+    const voc = Math.min(3, Math.max(0, Number(c.vocabulary ?? 1.5)));
+    const gra = Math.min(3, Math.max(0, Number(c.grammar ?? 1.5)));
+    const computedBand10 = Number((((tf + org + voc + gra) / 12) * 10).toFixed(1));
+    const finalBand10 =
+      typeof parsed.overallBand10 === 'number' && parsed.overallBand10 > 0
+        ? Number(Math.min(10, Math.max(0, parsed.overallBand10)).toFixed(1))
+        : computedBand10;
+    const cefrEstimate =
+      finalBand10 >= 8.5 ? 'C1' : finalBand10 >= 6.0 ? 'B2' : 'B1';
+
+    return res.json({
+      overallBand10: finalBand10,
+      cefrEstimate,
+      criteria: {
+        taskFulfillment: Number(tf.toFixed(1)),
+        organization: Number(org.toFixed(1)),
+        vocabulary: Number(voc.toFixed(1)),
+        grammar: Number(gra.toFixed(1)),
+      },
+      summaryVi:
+        parsed.summaryVi ||
+        `Bài viết đạt khoảng ${finalBand10}/10.0 (${cefrEstimate}). Hãy xem các gợi ý sửa câu bên dưới để nâng cấp từ vựng và cấu trúc ngữ pháp.`,
+      sentenceCorrections: Array.isArray(parsed.sentenceCorrections)
+        ? parsed.sentenceCorrections.slice(0, 6)
+        : [],
+      upgradedSample: parsed.upgradedSample || sampleAnswer || cleanText,
+    });
+  } catch (err) {
+    console.warn('Fallback in /api/ai/coach-writing:', err);
+    const sentences = cleanText
+      .split(/(?<=[.?!])\s+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 8);
+    const lengthRatio = Math.min(1, wordCount / Math.max(1, Number(minWords) || 120));
+    const baseCrit = Number((1.2 + lengthRatio * 1.2).toFixed(1));
+    const band10 = Number((((baseCrit * 4) / 12) * 10).toFixed(1));
+    const fallbackCorrections = sentences.slice(0, 2).map((s, idx) => ({
+      original: s,
+      improved:
+        idx === 0
+          ? `Furthermore, regarding this issue, ${s.charAt(0).toLowerCase()}${s.slice(1)}`
+          : `Taking this factor into account, ${s.charAt(0).toLowerCase()}${s.slice(1)}`,
+      reasonVi:
+        'Bổ sung cụm từ chuyển ý học thuật (Linking phrase) giúp tăng điểm Coherence & Lexical Resource chuẩn VSTEP B2.',
+    }));
+
+    return res.json({
+      overallBand10: band10,
+      cefrEstimate: band10 >= 6.0 ? 'B2' : 'B1',
+      criteria: {
+        taskFulfillment: baseCrit,
+        organization: baseCrit,
+        vocabulary: baseCrit,
+        grammar: baseCrit,
+      },
+      summaryVi: `Bài viết hiện có ${wordCount}/${minWords} từ (ước tính ${band10}/10.0). Hãy bổ sung từ nối học thuật và mở rộng ví dụ cụ thể cho từng luận điểm.`,
+      sentenceCorrections: fallbackCorrections,
+      upgradedSample: sampleAnswer || cleanText,
+    });
+  }
+});
+
+/**
+ * In-Stage AI Speaking Coach Endpoint (/api/ai/coach-speaking)
+ * Evaluates a single Speaking Part (Part 1, Part 2, or Part 3) transcript during Practice mode:
+ * - 4 VSTEP criteria (0-3 each -> /10.0 band + B1/B2/C1 estimate)
+ * - Sentence-by-sentence spoken upgrades (original -> natural B2-C1 spoken phrase -> Vietnamese reason)
+ * - Upgraded Band B2-C1 spoken response
+ */
+app.post('/api/ai/coach-speaking', async (req, res) => {
+  const { partNumber = 1, promptText = '', studentText = '', targetMinWords = 60, sampleAnswer = '' } =
+    req.body || {};
+  const cleanText = String(studentText || '').trim();
+  const wordCount = cleanText ? cleanText.split(/\s+/).filter(Boolean).length : 0;
+
+  if (wordCount < 4) {
+    return res.status(400).json({
+      error: 'Vui lòng thu âm hoặc nhập ít nhất 1-2 câu trả lời tiếng Anh để AI chấm thử và nâng band.',
+    });
+  }
+
+  try {
+    const pNum = Number(partNumber) || 1;
+    const partLabel =
+      pNum === 1
+        ? 'Speaking Part 1 (Social Interaction - Giao tiếp xã hội)'
+        : pNum === 2
+        ? 'Speaking Part 2 (Solution Discussion - Thảo luận giải pháp)'
+        : 'Speaking Part 3 (Topic Development - Phát triển chủ đề Mind-map)';
+
+    const systemInstruction = `Bạn là Giám khảo Chấm thi Nói VSTEP B1–B2–C1 Cấp cao (Bộ Giáo dục & Đào tạo).
+Nhiệm vụ của bạn là chấm thử và nâng cấp bài nói ${partLabel} dựa trên bản ghi lời nói (transcript) của học viên.
+Chấm theo 4 nhóm tiêu chí VSTEP (mỗi tiêu chí 0.0 - 3.0 điểm, quy đổi sang thang 10.0):
+1. taskFulfillment (0-3): Trả lời đúng trọng tâm câu hỏi/tình huống và độ dài phản xạ (${wordCount}/${targetMinWords} từ).
+2. organization (0-3): Mạch lạc, sử dụng Discourse Markers tự nhiên (Well, To be honest, On the one hand, First and foremost...).
+3. vocabulary (0-3): Từ vựng và Idioms/Collocations đúng ngữ cảnh nói.
+4. grammar (0-3): Đa dạng cấu trúc câu phức và chính xác ngữ pháp khi nói.
+
+QUAN TRỌNG:
+- Trong "sentenceCorrections", trích xuất 2 đến 5 câu hoặc cụm từ nguyên văn ("original") từ bài nói của học viên, sửa lỗi và nâng cấp thành câu nói tự nhiên chuẩn B2–C1 ("improved"), kèm giải thích ngắn gọn bằng tiếng Việt ("reasonVi"). Chuỗi "original" PHẢI khớp chính xác với đoạn văn bản trong bài làm của học viên để bấm 1 chạm thay thế.
+- Trong "upgradedSample", viết lại bài nói mẫu hoàn chỉnh chuẩn VSTEP B2–C1 phát triển từ chính ý tưởng của học viên.`;
+
+    const userPrompt = `Đề bài ${partLabel}:
+"""
+${String(promptText).slice(0, 1500)}
+"""
+
+Nội dung bài nói hiện tại của học viên (${wordCount} từ):
+"""
+${cleanText.slice(0, 3000)}
+"""
+
+Hãy chấm điểm 4 tiêu chí, gợi ý sửa từng câu nói và tạo bài nói mẫu nâng band B2–C1 theo đúng JSON schema.`;
+
+    const response = await generateGeminiSafe({
+      preferredModels: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'],
+      contents: userPrompt,
+      timeoutMs: 25000,
+      config: {
+        systemInstruction,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            overallBand10: { type: Type.NUMBER },
+            cefrEstimate: { type: Type.STRING },
+            criteria: {
+              type: Type.OBJECT,
+              properties: {
+                taskFulfillment: { type: Type.NUMBER },
+                organization: { type: Type.NUMBER },
+                vocabulary: { type: Type.NUMBER },
+                grammar: { type: Type.NUMBER },
+              },
+              required: ['taskFulfillment', 'organization', 'vocabulary', 'grammar'],
+            },
+            summaryVi: { type: Type.STRING },
+            sentenceCorrections: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  original: { type: Type.STRING },
+                  improved: { type: Type.STRING },
+                  reasonVi: { type: Type.STRING },
+                },
+                required: ['original', 'improved', 'reasonVi'],
+              },
+            },
+            upgradedSample: { type: Type.STRING },
+          },
+          required: [
+            'overallBand10',
+            'cefrEstimate',
+            'criteria',
+            'summaryVi',
+            'sentenceCorrections',
+            'upgradedSample',
+          ],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    const c = parsed.criteria || {};
+    const tf = Math.min(3, Math.max(0, Number(c.taskFulfillment ?? 1.5)));
+    const org = Math.min(3, Math.max(0, Number(c.organization ?? 1.5)));
+    const voc = Math.min(3, Math.max(0, Number(c.vocabulary ?? 1.5)));
+    const gra = Math.min(3, Math.max(0, Number(c.grammar ?? 1.5)));
+    const computedBand10 = Number((((tf + org + voc + gra) / 12) * 10).toFixed(1));
+    const finalBand10 =
+      typeof parsed.overallBand10 === 'number' && parsed.overallBand10 > 0
+        ? Number(Math.min(10, Math.max(0, parsed.overallBand10)).toFixed(1))
+        : computedBand10;
+    const cefrEstimate =
+      finalBand10 >= 8.5 ? 'C1' : finalBand10 >= 6.0 ? 'B2' : 'B1';
+
+    return res.json({
+      overallBand10: finalBand10,
+      cefrEstimate,
+      criteria: {
+        taskFulfillment: Number(tf.toFixed(1)),
+        organization: Number(org.toFixed(1)),
+        vocabulary: Number(voc.toFixed(1)),
+        grammar: Number(gra.toFixed(1)),
+      },
+      summaryVi:
+        parsed.summaryVi ||
+        `Bài nói đạt khoảng ${finalBand10}/10.0 (${cefrEstimate}). Bạn có thể nghe phát âm và áp dụng các câu nâng cấp bên dưới.`,
+      sentenceCorrections: Array.isArray(parsed.sentenceCorrections)
+        ? parsed.sentenceCorrections.slice(0, 6)
+        : [],
+      upgradedSample: parsed.upgradedSample || sampleAnswer || cleanText,
+    });
+  } catch (err) {
+    console.warn('Fallback in /api/ai/coach-speaking:', err);
+    const sentences = cleanText
+      .split(/(?<=[.?!])\s+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 6);
+    const lengthRatio = Math.min(1, wordCount / Math.max(1, Number(targetMinWords) || 60));
+    const baseCrit = Number((1.3 + lengthRatio * 1.1).toFixed(1));
+    const band10 = Number((((baseCrit * 4) / 12) * 10).toFixed(1));
+    const fallbackCorrections = sentences.slice(0, 2).map((s) => ({
+      original: s,
+      improved: `Well, to be honest, ${s.charAt(0).toLowerCase()}${s.slice(1)}`,
+      reasonVi:
+        'Mở đầu bằng Discourse Marker tự nhiên giúp tăng độ trôi chảy (Fluency & Discourse Management) trong phòng thi VSTEP.',
+    }));
+
+    return res.json({
+      overallBand10: band10,
+      cefrEstimate: band10 >= 6.0 ? 'B2' : 'B1',
+      criteria: {
+        taskFulfillment: baseCrit,
+        organization: baseCrit,
+        vocabulary: baseCrit,
+        grammar: baseCrit,
+      },
+      summaryVi: `Bài nói hiện có ${wordCount} từ (ước tính ${band10}/10.0). Hãy kết hợp thêm các từ nối phản xạ tự nhiên và giải thích rõ lý do cho từng ý.`,
+      sentenceCorrections: fallbackCorrections,
+      upgradedSample: sampleAnswer || cleanText,
+    });
+  }
+});
+
+/**
+ * AI Mistake Distractor & Evidence Analyzer (/api/ai/explain-mistake)
+ * Explains why the student's chosen option is a distractor trap and why the correct answer is right,
+ * plus extracts key VSTEP vocabulary from the question context.
+ */
+app.post('/api/ai/explain-mistake', async (req, res) => {
+  const {
+    section = 'READING',
+    partNumber = 1,
+    prompt = '',
+    options = [],
+    correctAnswer = '',
+    userWrongAnswer = '',
+    contextText = '',
+  } = req.body || {};
+
+  const optionsFormatted = Array.isArray(options)
+    ? options.map((o: any) => `${o.id}. ${o.text}`).join('\n')
+    : '';
+
+  const buildFallbackExplanation = () => {
+    const rightOpt = Array.isArray(options)
+      ? options.find(
+          (o: any) => String(o.id).trim().toUpperCase() === String(correctAnswer).trim().toUpperCase()
+        )
+      : null;
+    const wrongOpt = Array.isArray(options)
+      ? options.find(
+          (o: any) => String(o.id).trim().toUpperCase() === String(userWrongAnswer).trim().toUpperCase()
+        )
+      : null;
+
+    return {
+      whyCorrectVi: `Đáp án đúng là ${correctAnswer}${
+        rightOpt ? ` (${rightOpt.text})` : ''
+      } vì khớp trực tiếp với thông tin trọng tâm trong bài ${
+        section === 'LISTENING' ? 'nghe' : 'đọc'
+      } thông qua cách diễn đạt tương đương (paraphrase).`,
+      whyWrongTrapVi: `Phương án bạn chọn (${userWrongAnswer || 'Chưa chọn'}${
+        wrongOpt ? `: ${wrongOpt.text}` : ''
+      }) là bẫy nhiễu (distractor) thường gặp trong đề VSTEP: chứa từ khóa xuất hiện trong bài nhưng sai chi tiết ngữ cảnh, chủ thể hoặc mang nghĩa suy diễn quá mức.`,
+      examTipVi:
+        section === 'LISTENING'
+          ? 'Mẹo Listening Part ' +
+            partNumber +
+            ': Chú ý các từ chuyển ý như "However", "Actually", "Instead of" vì đáp án đúng thường nằm ngay sau từ đổi ý.'
+          : 'Mẹo Reading Part ' +
+            partNumber +
+            ': Định vị từ khóa trong câu hỏi trước, sau đó đối chiếu kỹ mệnh đề chứa từ đồng nghĩa thay vì chọn đáp án lặp lại nguyên văn từ lẻ.',
+      keyVocab: [
+        {
+          word: 'paraphrase',
+          meaningVi: 'diễn đạt lại bằng từ đồng nghĩa',
+        },
+        {
+          word: 'distractor',
+          meaningVi: 'phương án gây nhiễu trong đề thi',
+        },
+      ],
+    };
+  };
+
+  if (!ai) {
+    return res.json(buildFallbackExplanation());
+  }
+
+  try {
+    const systemPrompt = `Bạn là Chuyên gia luyện thi VSTEP B1-B2-C1. Hãy phân tích ngắn gọn, súc tích câu hỏi ${section} Part ${partNumber} mà học viên vừa làm sai:
+Câu hỏi: ${prompt}
+Các lựa chọn:
+${optionsFormatted}
+Đáp án đúng: ${correctAnswer}
+Đáp án học viên chọn nhầm: ${userWrongAnswer}
+Ngữ cảnh bài đọc / lời thoại (nếu có): ${String(contextText || '').slice(0, 1200)}
+
+Hãy trả về JSON gồm:
+1. whyCorrectVi: Giải thích rõ vì sao đáp án ${correctAnswer} là đúng kèm bằng chứng.
+2. whyWrongTrapVi: Giải mã vì sao đáp án ${userWrongAnswer} là bẫy nhiễu (bẫy từ đồng âm, phủ định, thông tin không được nhắc tới, hay sai chủ ngữ/thời gian).
+3. examTipVi: 1 mẹo làm bài thực chiến ngắn gọn để không lặp lại lỗi này.
+4. keyVocab: Mảng 2-3 từ/cụm từ vựng cốt lõi trong câu hỏi kèm nghĩa tiếng Việt.`;
+
+    const response = await generateGeminiSafe({
+      contents: systemPrompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            whyCorrectVi: { type: Type.STRING },
+            whyWrongTrapVi: { type: Type.STRING },
+            examTipVi: { type: Type.STRING },
+            keyVocab: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  word: { type: Type.STRING },
+                  meaningVi: { type: Type.STRING },
+                },
+                required: ['word', 'meaningVi'],
+              },
+            },
+          },
+          required: ['whyCorrectVi', 'whyWrongTrapVi', 'examTipVi', 'keyVocab'],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    const fallback = buildFallbackExplanation();
+    return res.json({
+      whyCorrectVi: parsed.whyCorrectVi || fallback.whyCorrectVi,
+      whyWrongTrapVi: parsed.whyWrongTrapVi || fallback.whyWrongTrapVi,
+      examTipVi: parsed.examTipVi || fallback.examTipVi,
+      keyVocab:
+        Array.isArray(parsed.keyVocab) && parsed.keyVocab.length > 0
+          ? parsed.keyVocab.slice(0, 4)
+          : fallback.keyVocab,
+    });
+  } catch (err) {
+    console.warn('Fallback in /api/ai/explain-mistake:', err);
+    return res.json(buildFallbackExplanation());
+  }
+});
+
+const serverAiGradingCache = new Map<string, { savedAt: number; payload: any }>();
+
+function getServerCache(key: string): any | null {
+  const entry = serverAiGradingCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.savedAt > 1000 * 60 * 60 * 12) {
+    serverAiGradingCache.delete(key);
+    return null;
+  }
+  return entry.payload;
+}
+
+function setServerCache(key: string, payload: any): void {
+  if (serverAiGradingCache.size >= 150) {
+    const oldestKey = serverAiGradingCache.keys().next().value;
+    if (oldestKey) serverAiGradingCache.delete(oldestKey);
+  }
+  serverAiGradingCache.set(key, { savedAt: Date.now(), payload });
+}
+
+/**
  * Strict AI Writing Examiner Endpoint (/api/ai/grade-writing)
  * Evaluates Writing Task 1 & Task 2 strictly against the official VSTEP B1-B2-C1 4-criteria rubric
  * (Task Fulfilment, Organization & Cohesion, Vocabulary, Grammar; 0-3 each = 12 marks/task, VSTEP formula = (Task1 + Task2 * 2) / 3 on 10-point scale)
@@ -986,6 +1456,12 @@ app.post('/api/ai/grade-writing', async (req, res) => {
         strengthsVi: [],
         improvementsVi: ['Cần viết thư/email tối thiểu 120 từ và trả lời đầy đủ tất cả các yêu cầu trong đề bài.'],
         correctedSample: task1Prompt.sampleAnswer || '',
+        sentenceCorrections: [],
+        bandSamples: {
+          b1Sample: task1Prompt.sampleAnswer || '',
+          b2Sample: task1Prompt.sampleAnswer || '',
+          c1Sample: task1Prompt.sampleAnswer || '',
+        },
       },
       task2Criteria: {
         taskFulfilment: 0,
@@ -997,10 +1473,22 @@ app.post('/api/ai/grade-writing', async (req, res) => {
         strengthsVi: [],
         improvementsVi: ['Cần viết bài luận (Essay) tối thiểu 250 từ với bố cục 4 đoạn rõ ràng.'],
         correctedSample: task2Prompt.sampleAnswer || '',
+        sentenceCorrections: [],
+        bandSamples: {
+          b1Sample: task2Prompt.sampleAnswer || '',
+          b2Sample: task2Prompt.sampleAnswer || '',
+          c1Sample: task2Prompt.sampleAnswer || '',
+        },
       },
       overallBandComment: 'Thí sinh chưa nộp bài viết cho cả 2 phần Writing Task 1 và Task 2 (0.0/10 điểm VSTEP).',
       isAiGraded: true,
     });
+  }
+
+  const cacheKey = `writing::${task1Text.slice(0, 500)}::${task2Text.slice(0, 500)}::${task1Words}::${task2Words}`;
+  const cachedResult = getServerCache(cacheKey);
+  if (cachedResult) {
+    return res.json(cachedResult);
   }
 
   try {
@@ -1020,7 +1508,9 @@ Nhiệm vụ của bạn là chấm điểm NGHIÊM NGẶT, KHÁCH QUAN và CHÍ
 
 QUY TẮC NGHIÊM NGẶT:
 - Nếu phần nào thí sinh bỏ trống (0 từ), BẮT BUỘC chấm 0 điểm cho cả 4 tiêu chí của phần đó (total = 0).
-- Tổng điểm mỗi Task (total) PHẢI bằng tổng của (taskFulfilment + grammar + vocabulary + organization) trên thang 0..12.`;
+- Tổng điểm mỗi Task (total) PHẢI bằng tổng của (taskFulfilment + grammar + vocabulary + organization) trên thang 0..12.
+- Trong "sentenceCorrections": Trích xuất 2-4 câu nguyên văn ("original") từ bài làm của thí sinh, viết bản sửa lỗi/nâng cấp chuẩn B2-C1 ("improved") và giải thích rõ bằng tiếng Việt ("reasonVi").
+- Trong "bandSamples": Cung cấp 3 phiên bản bài mẫu hoàn chỉnh cho đề bài đó ở 3 cấp độ: "b1Sample" (Bậc 3 - B1 đơn giản, rõ ý), "b2Sample" (Bậc 4 - B2 mạch lạc, giàu từ nối), và "c1Sample" (Bậc 5 - C1 học thuật, cấu trúc nâng cao).`;
 
     const prompt = `HÃY CHẤM BÀI THI VSTEP WRITING (B1–B2–C1) SAU ĐÂY THEO RUBRICS BỘ GD&ĐT:
 
@@ -1067,6 +1557,27 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
           type: Type.STRING,
           description: 'Bài viết đã được AI nâng cấp và sửa lỗi hoàn chỉnh lên chuẩn VSTEP B2–C1 (Band 7.5–8.5/10)',
         },
+        sentenceCorrections: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              original: { type: Type.STRING },
+              improved: { type: Type.STRING },
+              reasonVi: { type: Type.STRING },
+            },
+            required: ['original', 'improved', 'reasonVi'],
+          },
+        },
+        bandSamples: {
+          type: Type.OBJECT,
+          properties: {
+            b1Sample: { type: Type.STRING },
+            b2Sample: { type: Type.STRING },
+            c1Sample: { type: Type.STRING },
+          },
+          required: ['b1Sample', 'b2Sample', 'c1Sample'],
+        },
       },
       required: [
         'taskFulfilment',
@@ -1078,13 +1589,15 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
         'strengthsVi',
         'improvementsVi',
         'correctedSample',
+        'sentenceCorrections',
+        'bandSamples',
       ],
     };
 
     const response = await generateGeminiSafe({
       preferredModels: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'],
       contents: prompt,
-      timeoutMs: 25000,
+      timeoutMs: 28000,
       config: {
         systemInstruction,
         responseMimeType: 'application/json',
@@ -1105,7 +1618,7 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
 
     const parsed = JSON.parse(response.text || '{}');
 
-    const normalizeCriteria = (c: any, isEmpty: boolean) => {
+    const normalizeCriteria = (c: any, isEmpty: boolean, defaultSample: string) => {
       if (isEmpty || !c) {
         return {
           taskFulfilment: 0,
@@ -1116,7 +1629,13 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
           feedbackVi: 'Thí sinh bỏ trống phần viết này (0/12 điểm).',
           strengthsVi: [],
           improvementsVi: ['Cần hoàn thành bài viết đầy đủ theo yêu cầu độ dài chuẩn VSTEP Bộ GD&ĐT.'],
-          correctedSample: '',
+          correctedSample: defaultSample,
+          sentenceCorrections: [],
+          bandSamples: {
+            b1Sample: defaultSample,
+            b2Sample: defaultSample,
+            c1Sample: defaultSample,
+          },
         };
       }
       const tf = Math.max(0, Math.min(3, Math.round(Number(c.taskFulfilment) || 0)));
@@ -1124,6 +1643,7 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
       const vc = Math.max(0, Math.min(3, Math.round(Number(c.vocabulary) || 0)));
       const og = Math.max(0, Math.min(3, Math.round(Number(c.organization) || 0)));
       const tot = tf + gr + vc + og;
+      const corrSample = String(c.correctedSample || defaultSample || '');
       return {
         taskFulfilment: tf,
         grammar: gr,
@@ -1133,17 +1653,23 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
         feedbackVi: String(c.feedbackVi || ''),
         strengthsVi: Array.isArray(c.strengthsVi) ? c.strengthsVi : [],
         improvementsVi: Array.isArray(c.improvementsVi) ? c.improvementsVi : [],
-        correctedSample: String(c.correctedSample || ''),
+        correctedSample: corrSample,
+        sentenceCorrections: Array.isArray(c.sentenceCorrections) ? c.sentenceCorrections.slice(0, 6) : [],
+        bandSamples: {
+          b1Sample: String(c.bandSamples?.b1Sample || corrSample),
+          b2Sample: String(c.bandSamples?.b2Sample || corrSample),
+          c1Sample: String(c.bandSamples?.c1Sample || corrSample),
+        },
       };
     };
 
-    const c1 = normalizeCriteria(parsed.task1Criteria, !task1Text);
-    const c2 = normalizeCriteria(parsed.task2Criteria, !task2Text);
+    const c1 = normalizeCriteria(parsed.task1Criteria, !task1Text, task1Prompt.sampleAnswer || '');
+    const c2 = normalizeCriteria(parsed.task2Criteria, !task2Text, task2Prompt.sampleAnswer || '');
     const t1Band10 = (c1.total / 12) * 10;
     const t2Band10 = (c2.total / 12) * 10;
     const vstepWriting10 = Math.round(((t1Band10 + t2Band10 * 2) / 3) * 2) / 2;
 
-    return res.json({
+    const payload = {
       task1Score: c1.total,
       task2Score: c2.total,
       task1Criteria: c1,
@@ -1152,7 +1678,9 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
         parsed.overallBandComment ||
         `Điểm Writing VSTEP đạt ${vstepWriting10.toFixed(1)}/10.0 theo công thức Bộ GD&ĐT: (Task 1 [${t1Band10.toFixed(1)}] + Task 2 [${t2Band10.toFixed(1)}] × 2) / 3.`,
       isAiGraded: true,
-    });
+    };
+    setServerCache(cacheKey, payload);
+    return res.json(payload);
   } catch (err) {
     console.warn('Error in /api/ai/grade-writing, returning strict rubric evaluation:', err);
     return res.status(500).json({ error: 'Không thể kết nối AI chấm bài lúc này.' });
@@ -1177,6 +1705,12 @@ app.post('/api/ai/grade-speaking', async (req, res) => {
     return res.status(400).json({ error: 'Thí sinh chưa có nội dung bài nói (Transcript) để chấm bằng AI.' });
   }
 
+  const cacheKey = `speaking::${part1Text.slice(0, 400)}::${part2Text.slice(0, 400)}::${part3Text.slice(0, 400)}`;
+  const cachedResult = getServerCache(cacheKey);
+  if (cachedResult) {
+    return res.json(cachedResult);
+  }
+
   try {
     const systemInstruction = `Bạn là Giám khảo Chấm thi Nói Cấp cao (Chief VSTEP Speaking Examiner) theo đúng Quy chế Đánh giá năng lực Tiếng Anh bậc 3–5 (VSTEP B1–B2–C1) của Bộ Giáo dục và Đào tạo Việt Nam.
 Nhiệm vụ của bạn là chấm điểm NGHIÊM NGẶT, KHÁCH QUAN và CHÍNH XÁC cho 3 phần thi Speaking của thí sinh theo đúng 5 Tiêu chí chấm Speaking VSTEP trên thang điểm 0–10:
@@ -1188,7 +1722,9 @@ Nhiệm vụ của bạn là chấm điểm NGHIÊM NGẶT, KHÁCH QUAN và CHÍ
 
 QUY TẮC NGHIÊM NGẶT:
 - Nếu Part nào thí sinh bỏ trống hoàn toàn, chấm 0 điểm cho cả 5 tiêu chí của Part đó (total10 = 0).
-- Điểm trung bình mỗi Part (total10) làm tròn đến 0.5 trên thang 10.`;
+- Điểm trung bình mỗi Part (total10) làm tròn đến 0.5 trên thang 10.
+- Trong "sentenceCorrections": Trích xuất 2-4 câu nói nguyên văn ("original") từ bài nói của thí sinh, nâng cấp thành câu nói tự nhiên chuẩn B2-C1 ("improved") và giải thích ngắn gọn bằng tiếng Việt ("reasonVi").
+- Trong "bandSamples": Cung cấp 3 bài nói mẫu cho Part đó ở 3 mức độ: "b1Sample" (Bậc 3 - B1), "b2Sample" (Bậc 4 - B2) và "c1Sample" (Bậc 5 - C1).`;
 
     const p1Task = speakingTasks[0] || {};
     const p2Task = speakingTasks[1] || {};
@@ -1268,6 +1804,28 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
         feedbackVi: { type: Type.STRING, description: 'Nhận xét chi tiết của Giám khảo VSTEP bằng tiếng Việt' },
         strengthsVi: { type: Type.ARRAY, items: { type: Type.STRING } },
         improvementsVi: { type: Type.ARRAY, items: { type: Type.STRING } },
+        correctedSample: { type: Type.STRING },
+        sentenceCorrections: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              original: { type: Type.STRING },
+              improved: { type: Type.STRING },
+              reasonVi: { type: Type.STRING },
+            },
+            required: ['original', 'improved', 'reasonVi'],
+          },
+        },
+        bandSamples: {
+          type: Type.OBJECT,
+          properties: {
+            b1Sample: { type: Type.STRING },
+            b2Sample: { type: Type.STRING },
+            c1Sample: { type: Type.STRING },
+          },
+          required: ['b1Sample', 'b2Sample', 'c1Sample'],
+        },
       },
       required: [
         'grammar',
@@ -1279,13 +1837,16 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
         'feedbackVi',
         'strengthsVi',
         'improvementsVi',
+        'correctedSample',
+        'sentenceCorrections',
+        'bandSamples',
       ],
     };
 
     const response = await generateGeminiSafe({
       preferredModels: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'],
       contents: prompt,
-      timeoutMs: 25000,
+      timeoutMs: 28000,
       config: {
         systemInstruction,
         responseMimeType: 'application/json',
@@ -1305,7 +1866,7 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
     const parsed = JSON.parse(response.text || '{}');
     const roundHalf = (n: number) => Math.round(Math.max(0, Math.min(10, n)) * 2) / 2;
 
-    const normalizePart = (c: any, isEmpty: boolean, partNum: number) => {
+    const normalizePart = (c: any, isEmpty: boolean, partNum: number, defaultSample: string) => {
       if (isEmpty || !c) {
         return {
           grammar: 0,
@@ -1317,6 +1878,13 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
           feedbackVi: `Thí sinh chưa trả lời Speaking Part ${partNum} (0.0/10 điểm).`,
           strengthsVi: [],
           improvementsVi: [`Cần thu âm hoặc nhập bài nói đầy đủ cho Speaking Part ${partNum}.`],
+          correctedSample: defaultSample,
+          sentenceCorrections: [],
+          bandSamples: {
+            b1Sample: defaultSample,
+            b2Sample: defaultSample,
+            c1Sample: defaultSample,
+          },
         };
       }
       const gr = roundHalf(Number(c.grammar) || 0);
@@ -1325,6 +1893,7 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
       const fl = roundHalf(Number(c.fluency) || 0);
       const dm = roundHalf(Number(c.discourseManagement) || 0);
       const avg = roundHalf((gr + vc + pr + fl + dm) / 5);
+      const corrSample = String(c.correctedSample || defaultSample || '');
       return {
         grammar: gr,
         vocabulary: vc,
@@ -1335,15 +1904,22 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
         feedbackVi: String(c.feedbackVi || ''),
         strengthsVi: Array.isArray(c.strengthsVi) ? c.strengthsVi : [],
         improvementsVi: Array.isArray(c.improvementsVi) ? c.improvementsVi : [],
+        correctedSample: corrSample,
+        sentenceCorrections: Array.isArray(c.sentenceCorrections) ? c.sentenceCorrections.slice(0, 6) : [],
+        bandSamples: {
+          b1Sample: String(c.bandSamples?.b1Sample || corrSample),
+          b2Sample: String(c.bandSamples?.b2Sample || corrSample),
+          c1Sample: String(c.bandSamples?.c1Sample || corrSample),
+        },
       };
     };
 
-    const p1 = normalizePart(parsed.part1Criteria, !part1Text, 1);
-    const p2 = normalizePart(parsed.part2Criteria, !part2Text, 2);
-    const p3 = normalizePart(parsed.part3Criteria, !part3Text, 3);
+    const p1 = normalizePart(parsed.part1Criteria, !part1Text, 1, p1Task.sampleAnswer || '');
+    const p2 = normalizePart(parsed.part2Criteria, !part2Text, 2, p2Task.sampleAnswer || '');
+    const p3 = normalizePart(parsed.part3Criteria, !part3Text, 3, p3Task.sampleAnswer || '');
     const overallBand10 = roundHalf(p1.total10 * 0.25 + p2.total10 * 0.35 + p3.total10 * 0.4);
 
-    return res.json({
+    const payload = {
       part1Score: p1.total10,
       part2Score: p2.total10,
       part3Score: p3.total10,
@@ -1355,7 +1931,9 @@ Hãy trả về JSON theo đúng cấu trúc yêu cầu.`;
         parsed.overallBandComment ||
         `Tổng điểm Speaking VSTEP đạt ${overallBand10.toFixed(1)}/10.0 (Part 1: ${p1.total10.toFixed(1)} · Part 2: ${p2.total10.toFixed(1)} · Part 3: ${p3.total10.toFixed(1)}).`,
       isAiGraded: true,
-    });
+    };
+    setServerCache(cacheKey, payload);
+    return res.json(payload);
   } catch (err) {
     console.warn('Error in /api/ai/grade-speaking:', err);
     return res.status(500).json({ error: 'Không thể kết nối AI chấm Speaking lúc này.' });
@@ -1931,6 +2509,419 @@ app.delete('/api/tests/:id', (req, res) => {
     return res.json({ ok: true });
   } catch {
     return res.status(500).json({ error: 'Failed to delete test on server' });
+  }
+});
+
+// ============================================================================
+// IN-PLACE SANDBOX COACH ENDPOINTS (/api/ai/writing-coach & /api/ai/speaking-coach)
+// & AI EXAM PART GENERATOR (/api/ai/generate-exam-part)
+// ============================================================================
+app.post('/api/ai/writing-coach', async (req, res) => {
+  const {
+    partNumber = 1,
+    title = '',
+    stimulusText = '',
+    bulletPoints = [],
+    minWords = 120,
+    studentText = '',
+  } = req.body || {};
+
+  const cleanText = String(studentText || '').trim();
+  const wordCount = cleanText ? cleanText.split(/\s+/).filter(Boolean).length : 0;
+
+  if (wordCount < 5) {
+    return res.status(400).json({
+      error: 'Vui lòng nhập ít nhất 1-2 câu tiếng Anh để Giám khảo AI chấm điểm và sửa lỗi.',
+    });
+  }
+
+  try {
+    const isTask1 = Number(partNumber) === 1;
+    const systemInstruction = `Bạn là Giám khảo Chấm thi Viết VSTEP B1–B2–C1 Cấp cao (Bộ GD&ĐT).
+Chấm bài ${isTask1 ? 'Writing Task 1 (Thư/Email, ≥120 từ)' : 'Writing Task 2 (Bài luận Essay, ≥250 từ)'} trên thang điểm 10.0 cho từng tiêu chí (taskFulfillment, organization, vocabulary, grammar) và điểm tổng overallScore (thang 10.0, làm tròn 0.5).
+Trả về nhận xét chi tiết bằng tiếng Việt (overallFeedbackVi), danh sách 2-5 câu cần sửa lỗi hoặc nâng cấp (sentenceCorrections: original, improved, explanationVi), và 3 bài mẫu hoàn chỉnh phân hóa theo 3 cấp độ: sampleB1 (Band 4.0-5.5), sampleB2 (Band 6.0-8.0), sampleC1 (Band 8.5-10.0).`;
+
+    const userPrompt = `Đề bài (${title}):
+${stimulusText}
+${Array.isArray(bulletPoints) && bulletPoints.length > 0 ? bulletPoints.join('\n') : ''}
+
+Bài làm của học viên (${wordCount}/${minWords} từ):
+"""
+${cleanText.slice(0, 3500)}
+"""`;
+
+    const response = await generateGeminiSafe({
+      preferredModels: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'],
+      contents: userPrompt,
+      timeoutMs: 25000,
+      config: {
+        systemInstruction,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            overallScore: { type: Type.NUMBER },
+            criteria: {
+              type: Type.OBJECT,
+              properties: {
+                taskFulfillment: { type: Type.NUMBER },
+                organization: { type: Type.NUMBER },
+                vocabulary: { type: Type.NUMBER },
+                grammar: { type: Type.NUMBER },
+              },
+              required: ['taskFulfillment', 'organization', 'vocabulary', 'grammar'],
+            },
+            overallFeedbackVi: { type: Type.STRING },
+            sentenceCorrections: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  original: { type: Type.STRING },
+                  improved: { type: Type.STRING },
+                  explanationVi: { type: Type.STRING },
+                },
+                required: ['original', 'improved', 'explanationVi'],
+              },
+            },
+            sampleB1: { type: Type.STRING },
+            sampleB2: { type: Type.STRING },
+            sampleC1: { type: Type.STRING },
+          },
+          required: [
+            'overallScore',
+            'criteria',
+            'overallFeedbackVi',
+            'sentenceCorrections',
+            'sampleB1',
+            'sampleB2',
+            'sampleC1',
+          ],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    return res.json(parsed);
+  } catch (err) {
+    console.warn('Fallback in /api/ai/writing-coach:', err);
+    const ratio = Math.min(1, wordCount / Math.max(1, Number(minWords) || 120));
+    const score = Number((5.0 + ratio * 2.5).toFixed(1));
+    const sentences = cleanText
+      .split(/(?<=[.?!])\s+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 6);
+    return res.json({
+      overallScore: score,
+      criteria: {
+        taskFulfillment: score,
+        organization: score,
+        vocabulary: Number(Math.max(4.5, score - 0.5).toFixed(1)),
+        grammar: Number(Math.max(4.5, score - 0.5).toFixed(1)),
+      },
+      overallFeedbackVi: `Bài viết đạt độ dài ${wordCount}/${minWords} từ (ước tính ${score}/10). Hãy chú ý chia đoạn rõ ràng (Mở bài - Thân bài - Kết bài) và bổ sung các liên từ học thuật chuẩn VSTEP B2.`,
+      sentenceCorrections: sentences.slice(0, 2).map((s) => ({
+        original: s,
+        improved: `Furthermore, from an objective standpoint, ${s.charAt(0).toLowerCase()}${s.slice(1)}`,
+        explanationVi: 'Bổ sung cụm từ nối học thuật đầu câu giúp tăng điểm Coherence & Cohesion.',
+      })),
+      sampleB1: cleanText,
+      sampleB2: `Furthermore, regarding this topic, ${cleanText}`,
+      sampleC1: `From a comprehensive perspective, it is undeniable that ${cleanText}`,
+    });
+  }
+});
+
+app.post('/api/ai/speaking-coach', async (req, res) => {
+  const { partNumber = 1, title = '', promptText = '', studentTranscript = '' } = req.body || {};
+  const cleanText = String(studentTranscript || '').trim();
+  const wordCount = cleanText ? cleanText.split(/\s+/).filter(Boolean).length : 0;
+
+  if (wordCount < 4) {
+    return res.status(400).json({
+      error: 'Vui lòng thu âm hoặc nhập ít nhất 1-2 câu tiếng Anh để Giám khảo AI chấm điểm.',
+    });
+  }
+
+  try {
+    const pNum = Number(partNumber) || 1;
+    const systemInstruction = `Bạn là Giám khảo Chấm thi Nói VSTEP B1–B2–C1 Cấp cao (Bộ GD&ĐT).
+Chấm bài Speaking Part ${pNum} (${title}) dựa trên transcript học viên trên thang 10.0 cho 5 tiêu chí (grammar, vocabulary, pronunciation, fluency, discourse) và overallScore (thang 10.0).
+Trả về nhận xét chi tiết bằng tiếng Việt (overallFeedbackVi), danh sách 2-5 câu nói cần nâng cấp (sentenceCorrections: original, improved, explanationVi), và 3 bài nói mẫu phân hóa theo 3 cấp độ: sampleB1, sampleB2, sampleC1.`;
+
+    const userPrompt = `Đề bài Speaking Part ${pNum} (${title}):
+${promptText}
+
+Bài nói của học viên (${wordCount} từ):
+"""
+${cleanText.slice(0, 3000)}
+"""`;
+
+    const response = await generateGeminiSafe({
+      preferredModels: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'],
+      contents: userPrompt,
+      timeoutMs: 25000,
+      config: {
+        systemInstruction,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            overallScore: { type: Type.NUMBER },
+            criteria: {
+              type: Type.OBJECT,
+              properties: {
+                grammar: { type: Type.NUMBER },
+                vocabulary: { type: Type.NUMBER },
+                pronunciation: { type: Type.NUMBER },
+                fluency: { type: Type.NUMBER },
+                discourse: { type: Type.NUMBER },
+              },
+              required: ['grammar', 'vocabulary', 'pronunciation', 'fluency', 'discourse'],
+            },
+            overallFeedbackVi: { type: Type.STRING },
+            sentenceCorrections: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  original: { type: Type.STRING },
+                  improved: { type: Type.STRING },
+                  explanationVi: { type: Type.STRING },
+                },
+                required: ['original', 'improved', 'explanationVi'],
+              },
+            },
+            sampleB1: { type: Type.STRING },
+            sampleB2: { type: Type.STRING },
+            sampleC1: { type: Type.STRING },
+          },
+          required: [
+            'overallScore',
+            'criteria',
+            'overallFeedbackVi',
+            'sentenceCorrections',
+            'sampleB1',
+            'sampleB2',
+            'sampleC1',
+          ],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    return res.json(parsed);
+  } catch (err) {
+    console.warn('Fallback in /api/ai/speaking-coach:', err);
+    const score = Number(Math.min(8.5, 5.5 + Math.min(1, wordCount / 90) * 2.0).toFixed(1));
+    const sentences = cleanText
+      .split(/(?<=[.?!])\s+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 5);
+    return res.json({
+      overallScore: score,
+      criteria: {
+        grammar: score,
+        vocabulary: score,
+        pronunciation: score,
+        fluency: score,
+        discourse: score,
+      },
+      overallFeedbackVi: `Phần trả lời đạt ${wordCount} từ (ước tính ${score}/10). Hãy kết hợp thêm các cụm Discourse Markers tự nhiên như "Well, to be honest...", "Taking everything into account..." để nâng band B2–C1.`,
+      sentenceCorrections: sentences.slice(0, 2).map((s) => ({
+        original: s,
+        improved: `Well, from my personal perspective, ${s.charAt(0).toLowerCase()}${s.slice(1)}`,
+        explanationVi: 'Thêm cụm mở đầu tự nhiên giúp tăng độ trôi chảy (Fluency & Discourse Management).',
+      })),
+      sampleB1: cleanText,
+      sampleB2: `Well, to be completely honest, ${cleanText}`,
+      sampleC1: `Speaking from my personal experience, it goes without saying that ${cleanText}`,
+    });
+  }
+});
+
+/**
+ * AI Exam Part Generator for Teachers (/api/ai/generate-exam-part)
+ * Generates a complete VSTEP Reading Passage (with 10 MCQs, Vietnamese translation, evidence quotes, and explanations)
+ * OR a complete VSTEP Writing Task 1/2 OR Speaking Part 1/2/3 by topic and target band (B1/B2/C1).
+ */
+app.post('/api/ai/generate-exam-part', async (req, res) => {
+  const {
+    targetType = 'READING_PASSAGE', // 'READING_PASSAGE' | 'WRITING_TASK' | 'SPEAKING_PART'
+    partNumber = 1,
+    topic = 'Technology and Education in Modern Society',
+    targetBand = 'B2',
+  } = req.body || {};
+
+  const cleanTopic = String(topic || 'Modern Society and Education').trim();
+  const band = ['B1', 'B2', 'C1'].includes(String(targetBand).toUpperCase())
+    ? String(targetBand).toUpperCase()
+    : 'B2';
+  const pNum = Number(partNumber) || 1;
+
+  try {
+    if (targetType === 'READING_PASSAGE') {
+      const systemInstruction = `Bạn là Chuyên gia Ra đề thi VSTEP B1–B2–C1 của Bộ Giáo dục & Đào tạo Việt Nam.
+Hãy biên soạn 1 Bài đọc hiểu VSTEP Reading Passage ${pNum} hoàn chỉnh theo chủ đề "${cleanTopic}" ở độ khó chuẩn Band ${band}:
+- Gồm tiêu đề bài đọc (title), 4 đến 5 đoạn văn học thuật tiếng Anh (paragraphs, tổng khoảng 350–450 từ), có đánh dấu từ in đậm/gạch chân <u><b>word</b></u> cho câu hỏi từ vựng hoặc đại từ quy chiếu.
+- Bản dịch tiếng Việt tương ứng cho từng đoạn (translationParagraphs).
+- Đúng 10 câu hỏi trắc nghiệm khách quan 4 lựa chọn A, B, C, D (questions) kiểm tra đủ các kỹ năng: Main idea, Detail, Vocabulary in context, Reference, Inference.
+- Mỗi câu hỏi có: prompt, options (4 phương án A, B, C, D), correctAnswer ('A'|'B'|'C'|'D'), evidenceQuote (trích dẫn câu chứa đáp án trong bài đọc), và explanation (giải thích chi tiết bằng tiếng Việt).`;
+
+      const response = await generateGeminiSafe({
+        preferredModels: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'],
+        contents: `Hãy sinh Reading Passage ${pNum} chuẩn VSTEP về chủ đề: "${cleanTopic}" (Độ khó mục tiêu: Band ${band}).`,
+        timeoutMs: 35000,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              paragraphs: { type: Type.ARRAY, items: { type: Type.STRING } },
+              translationParagraphs: { type: Type.ARRAY, items: { type: Type.STRING } },
+              questions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    prompt: { type: Type.STRING },
+                    optionA: { type: Type.STRING },
+                    optionB: { type: Type.STRING },
+                    optionC: { type: Type.STRING },
+                    optionD: { type: Type.STRING },
+                    correctAnswer: { type: Type.STRING },
+                    evidenceQuote: { type: Type.STRING },
+                    explanation: { type: Type.STRING },
+                  },
+                  required: [
+                    'prompt',
+                    'optionA',
+                    'optionB',
+                    'optionC',
+                    'optionD',
+                    'correctAnswer',
+                    'evidenceQuote',
+                    'explanation',
+                  ],
+                },
+              },
+            },
+            required: ['title', 'paragraphs', 'translationParagraphs', 'questions'],
+          },
+        },
+      });
+
+      const parsed = JSON.parse(response.text || '{}');
+      return res.json({
+        targetType: 'READING_PASSAGE',
+        partNumber: pNum,
+        data: parsed,
+      });
+    }
+
+    if (targetType === 'WRITING_TASK') {
+      const isTask1 = pNum === 1;
+      const systemInstruction = `Bạn là Chuyên gia Ra đề thi VSTEP Writing B1–B2–C1.
+Hãy biên soạn đề thi ${
+        isTask1
+          ? 'Writing Task 1 (Viết Thư / Email phản hồi dài tối thiểu 120 từ)'
+          : 'Writing Task 2 (Viết Bài luận Essay học thuật dài tối thiểu 250 từ)'
+      } theo chủ đề "${cleanTopic}" (Trọng tâm phân hóa Band ${band}).
+Trả về đầy đủ: title, scenario, stimulusText (đề bài tiếng Anh), bulletPoints (3 yêu cầu cụ thể), sampleAnswer (bài mẫu Band B2), sampleB1, sampleB2, sampleC1.`;
+
+      const response = await generateGeminiSafe({
+        preferredModels: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'],
+        contents: `Sinh đề VSTEP Writing Task ${pNum} về chủ đề "${cleanTopic}" (Band ${band}).`,
+        timeoutMs: 28000,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              scenario: { type: Type.STRING },
+              stimulusText: { type: Type.STRING },
+              bulletPoints: { type: Type.ARRAY, items: { type: Type.STRING } },
+              sampleAnswer: { type: Type.STRING },
+              sampleB1: { type: Type.STRING },
+              sampleB2: { type: Type.STRING },
+              sampleC1: { type: Type.STRING },
+            },
+            required: [
+              'title',
+              'scenario',
+              'stimulusText',
+              'bulletPoints',
+              'sampleAnswer',
+              'sampleB1',
+              'sampleB2',
+              'sampleC1',
+            ],
+          },
+        },
+      });
+
+      const parsed = JSON.parse(response.text || '{}');
+      return res.json({
+        targetType: 'WRITING_TASK',
+        partNumber: pNum,
+        data: parsed,
+      });
+    }
+
+    // SPEAKING_PART (Part 1, 2, or 3)
+    const systemInstruction = `Bạn là Chuyên gia Ra đề thi VSTEP Speaking B1–B2–C1.
+Hãy biên soạn đề thi Speaking Part ${pNum} theo chủ đề "${cleanTopic}" (Band ${band}):
+- Nếu Part 1 (Social Interaction): cung cấp 2 cụm chủ đề (topicClusters), mỗi cụm 3 câu hỏi giao tiếp xã hội.
+- Nếu Part 2 (Solution Discussion): cung cấp tình huống (situation) và 3 lựa chọn giải pháp (options).
+- Nếu Part 3 (Topic Development Mind-map): cung cấp câu chủ đề (topicStatement), sơ đồ tư duy mindMap (centralIdea + 3 nodes), và 3 câu hỏi mở rộng (followUpQuestions).
+- Kèm bài nói mẫu sampleAnswer, sampleB1, sampleB2, sampleC1.`;
+
+    const response = await generateGeminiSafe({
+      preferredModels: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'],
+      contents: `Sinh đề VSTEP Speaking Part ${pNum} về chủ đề "${cleanTopic}" (Band ${band}).`,
+      timeoutMs: 28000,
+      config: {
+        systemInstruction,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            situation: { type: Type.STRING },
+            options: { type: Type.ARRAY, items: { type: Type.STRING } },
+            topicStatement: { type: Type.STRING },
+            centralIdea: { type: Type.STRING },
+            mindMapNodes: { type: Type.ARRAY, items: { type: Type.STRING } },
+            followUpQuestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+            topic1Title: { type: Type.STRING },
+            topic1Questions: { type: Type.ARRAY, items: { type: Type.STRING } },
+            topic2Title: { type: Type.STRING },
+            topic2Questions: { type: Type.ARRAY, items: { type: Type.STRING } },
+            sampleAnswer: { type: Type.STRING },
+            sampleB1: { type: Type.STRING },
+            sampleB2: { type: Type.STRING },
+            sampleC1: { type: Type.STRING },
+          },
+          required: ['title', 'sampleAnswer', 'sampleB1', 'sampleB2', 'sampleC1'],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    return res.json({
+      targetType: 'SPEAKING_PART',
+      partNumber: pNum,
+      data: parsed,
+    });
+  } catch (err) {
+    console.warn('Error in /api/ai/generate-exam-part:', err);
+    return res.status(500).json({
+      error: 'Không thể kết nối AI sinh đề lúc này. Vui lòng thử lại sau ít giây.',
+    });
   }
 });
 

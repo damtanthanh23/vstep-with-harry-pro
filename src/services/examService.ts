@@ -596,6 +596,43 @@ export function trimAttemptForFirestore(attempt: UserExamAttempt): UserExamAttem
 }
 
 /**
+ * Quota-Safe LocalStorage Writer:
+ * Automatically evicts stale caches or trims oversized base64 audio strings if browser storage is full,
+ * preventing QuotaExceededError from ever dropping student attempts or drafts.
+ */
+export function safeWriteLocalStorageWithQuotaGuard(key: string, valueStr: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    localStorage.setItem(key, valueStr);
+    return true;
+  } catch (err) {
+    try {
+      // Evict transient AI eval cache or legacy keys first
+      localStorage.removeItem('vstep_ai_eval_cache_v1');
+      localStorage.removeItem('langcert_custom_tests_backup');
+      // Trim any oversized attempts arrays in localStorage
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('langcert_attempts_')) {
+          const raw = localStorage.getItem(k);
+          if (raw && raw.length > 250000) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              const slim = parsed.slice(0, 25).map((a) => trimAttemptForFirestore(a));
+              localStorage.setItem(k, JSON.stringify(slim));
+            }
+          }
+        }
+      }
+      localStorage.setItem(key, valueStr);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
  * Save user exam attempt result to Firestore and localStorage backup
  */
 export async function recordUserAttempt(
@@ -605,16 +642,17 @@ export async function recordUserAttempt(
 ): Promise<void> {
   const isGuest = !userId || userId === 'guest';
   const effectiveUserId = isGuest ? 'guest' : userId;
+  const safePayload = trimAttemptForFirestore(attempt);
 
   try {
     const key = `langcert_attempts_${effectiveUserId}`;
     const raw = localStorage.getItem(key);
     const existing: UserExamAttempt[] = raw ? JSON.parse(raw) : [];
     const updated = [
-      attempt,
-      ...existing.filter((a) => a.attemptId !== attempt.attemptId),
-    ].slice(0, 100);
-    localStorage.setItem(key, JSON.stringify(updated));
+      safePayload,
+      ...existing.filter((a) => a.attemptId !== attempt.attemptId).map((a) => trimAttemptForFirestore(a)),
+    ].slice(0, 60);
+    safeWriteLocalStorageWithQuotaGuard(key, JSON.stringify(updated));
   } catch {
     // Ignore local storage errors
   }
@@ -622,7 +660,6 @@ export async function recordUserAttempt(
   if (!canWriteToFirestore()) return;
 
   try {
-    const safePayload = trimAttemptForFirestore(attempt);
     const sanitizedAttempt = sanitizeForFirestore(safePayload);
 
     if (isGuest) {
@@ -853,7 +890,7 @@ export async function updateAttemptAiEvaluationInFirestore(
               }
             : att
         );
-        localStorage.setItem(key, JSON.stringify(updated));
+        safeWriteLocalStorageWithQuotaGuard(key, JSON.stringify(updated));
       }
     }
   } catch {
@@ -866,18 +903,36 @@ export async function updateAttemptAiEvaluationInFirestore(
     const docRef = doc(db, 'users', safeUid, 'attempts', attemptId);
     await safeSetDoc(docRef, sanitizeForFirestore(patch), { merge: true });
 
-    if (typeof patch.vstepBandScore === 'number' && patch.vstepBandScore > 0) {
-      const userDocRef = doc(db, 'users', safeUid);
-      const userSnap = await getDoc(userDocRef);
-      const prevBestBand = Number(userSnap.data()?.bestVstepBandScore) || 0;
-      if (patch.vstepBandScore > prevBestBand) {
-        await safeSetDoc(
-          userDocRef,
-          { bestVstepBandScore: patch.vstepBandScore, lastActiveAt: Date.now() },
-          { merge: true }
-        );
-      }
+    const userDocRef = doc(db, 'users', safeUid);
+    const userSnap = await getDoc(userDocRef);
+    const userData = userSnap.exists() ? userSnap.data() : {};
+    const prevBestBand = Number(userData?.bestVstepBandScore) || 0;
+    const prevRecent: UserExamAttempt[] = Array.isArray(userData?.recentAttempts)
+      ? userData.recentAttempts
+      : [];
+
+    const updatedRecent = prevRecent.map((att) =>
+      att.attemptId === attemptId
+        ? {
+            ...att,
+            ...(patch.writingScore !== undefined ? { writingScore: patch.writingScore } : {}),
+            ...(patch.speakingScore !== undefined ? { speakingScore: patch.speakingScore } : {}),
+            ...(patch.vstepBandScore !== undefined ? { vstepBandScore: patch.vstepBandScore } : {}),
+            ...(patch.aiWritingEvaluation !== undefined ? { aiWritingEvaluation: patch.aiWritingEvaluation } : {}),
+            ...(patch.aiSpeakingEvaluation !== undefined ? { aiSpeakingEvaluation: patch.aiSpeakingEvaluation } : {}),
+            ...(patch.aiDiagnosticReport !== undefined ? { aiDiagnosticReport: patch.aiDiagnosticReport } : {}),
+          }
+        : att
+    );
+
+    const userPatch: Record<string, any> = {
+      recentAttempts: updatedRecent,
+      lastActiveAt: Date.now(),
+    };
+    if (typeof patch.vstepBandScore === 'number' && patch.vstepBandScore > prevBestBand) {
+      userPatch.bestVstepBandScore = patch.vstepBandScore;
     }
+    await safeSetDoc(userDocRef, sanitizeForFirestore(userPatch), { merge: true });
   } catch (err) {
     console.warn('Notice syncing AI evaluation to Firestore attempt:', err);
   }
@@ -921,13 +976,18 @@ export async function fetchUserAttempts(userId: string): Promise<UserExamAttempt
         writingSubmission: a.writingSubmission || existingLocal?.writingSubmission,
         speakingSubmission: a.speakingSubmission || existingLocal?.speakingSubmission,
         aiWritingEvaluation: a.aiWritingEvaluation || existingLocal?.aiWritingEvaluation,
+        aiSpeakingEvaluation: a.aiSpeakingEvaluation || existingLocal?.aiSpeakingEvaluation,
         aiDiagnosticReport: a.aiDiagnosticReport || existingLocal?.aiDiagnosticReport,
+        teacherFeedback: a.teacherFeedback || existingLocal?.teacherFeedback,
       });
     });
 
     const merged = Array.from(map.values()).sort((a, b) => b.completedAt - a.completedAt);
     try {
-      localStorage.setItem(`langcert_attempts_${userId}`, JSON.stringify(merged.slice(0, 100)));
+      safeWriteLocalStorageWithQuotaGuard(
+        `langcert_attempts_${userId}`,
+        JSON.stringify(merged.slice(0, 60).map((a) => trimAttemptForFirestore(a)))
+      );
     } catch {
       // Ignore
     }
@@ -981,52 +1041,129 @@ export async function fetchUserAttempts(userId: string): Promise<UserExamAttempt
 }
 
 /**
+ * Trims huge base64 audio strings (> 50KB) from an in-progress attempt so Cloud Firestore
+ * auto-save documents never exceed the 1MiB document limit while preserving all answers,
+ * writing drafts, speaking transcripts, highlights, and scratchpad notes.
+ */
+export function trimInProgressForFirestore(attempt: InProgressAttempt): InProgressAttempt {
+  const clone: InProgressAttempt = { ...attempt };
+
+  if (clone.speakingSubmission) {
+    const spk = { ...clone.speakingSubmission };
+    if (typeof spk.part1AudioDataUrl === 'string' && spk.part1AudioDataUrl.length > 50000) {
+      delete spk.part1AudioDataUrl;
+    }
+    if (typeof spk.part2AudioDataUrl === 'string' && spk.part2AudioDataUrl.length > 50000) {
+      delete spk.part2AudioDataUrl;
+    }
+    if (typeof spk.part3AudioDataUrl === 'string' && spk.part3AudioDataUrl.length > 50000) {
+      delete spk.part3AudioDataUrl;
+    }
+    clone.speakingSubmission = spk;
+  }
+
+  if (clone.speakingDraft) {
+    const spkDraft = { ...clone.speakingDraft };
+    if (typeof spkDraft.part1AudioDataUrl === 'string' && spkDraft.part1AudioDataUrl.length > 50000) {
+      delete spkDraft.part1AudioDataUrl;
+    }
+    if (typeof spkDraft.part2AudioDataUrl === 'string' && spkDraft.part2AudioDataUrl.length > 50000) {
+      delete spkDraft.part2AudioDataUrl;
+    }
+    if (typeof spkDraft.part3AudioDataUrl === 'string' && spkDraft.part3AudioDataUrl.length > 50000) {
+      delete spkDraft.part3AudioDataUrl;
+    }
+    clone.speakingDraft = spkDraft;
+  }
+
+  if (Array.isArray(clone.userHighlights) && clone.userHighlights.length > 200) {
+    clone.userHighlights = clone.userHighlights.slice(-200);
+  }
+
+  if (clone.scratchpadNotes && typeof clone.scratchpadNotes === 'object') {
+    const safeNotes: Record<string, string> = {};
+    Object.entries(clone.scratchpadNotes).forEach(([k, v]) => {
+      if (typeof v === 'string') {
+        safeNotes[k] = v.slice(0, 12000);
+      }
+    });
+    clone.scratchpadNotes = safeNotes;
+  }
+
+  return clone;
+}
+
+export function getClearedInProgressTimestamps(userId: string): Record<string, number> {
+  try {
+    const safeUid = userId || 'guest';
+    const raw = localStorage.getItem(`langcert_cleared_inprogress_${safeUid}`);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function markInProgressClearedLocally(userId: string, testId: string, clearedAt = Date.now()): void {
+  try {
+    const safeUid = userId || 'guest';
+    const key = `langcert_cleared_inprogress_${safeUid}`;
+    const existing = getClearedInProgressTimestamps(safeUid);
+    existing[testId] = clearedAt;
+    localStorage.setItem(key, JSON.stringify(existing));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+/**
  * Save in-progress attempt to Firestore and update activeDraftSummary on users/{userId}
  */
 export async function saveInProgressAttemptToFirestore(
   userId: string,
   attempt: InProgressAttempt
-): Promise<void> {
-  if (!canWriteToFirestore() || !userId || userId === 'guest') return;
+): Promise<boolean> {
+  if (!canWriteToFirestore() || !userId || userId === 'guest') return false;
   try {
     const now = Date.now();
     const docRef = doc(db, 'users', userId, 'inProgress', attempt.testId);
+    const trimmed = trimInProgressForFirestore(attempt);
     const enrichedAttempt: InProgressAttempt = {
-      ...attempt,
-      writingDraft: attempt.writingSubmission || attempt.writingDraft,
-      speakingDraft: attempt.speakingSubmission || attempt.speakingDraft,
-      timeRemainingSeconds: attempt.timeRemainingSeconds ?? attempt.remainingSeconds,
-      savedAt: attempt.savedAt || now,
-      lastUpdatedAt: attempt.savedAt || now,
+      ...trimmed,
+      writingDraft: trimmed.writingSubmission || trimmed.writingDraft,
+      speakingDraft: trimmed.speakingSubmission || trimmed.speakingDraft,
+      timeRemainingSeconds: trimmed.timeRemainingSeconds ?? trimmed.remainingSeconds ?? 0,
+      savedAt: trimmed.savedAt || now,
+      lastUpdatedAt: trimmed.savedAt || now,
+      cloudSyncedAt: now,
     };
-    await safeSetDoc(docRef, sanitizeForFirestore(enrichedAttempt));
+    const ok = await safeSetDoc(docRef, sanitizeForFirestore(enrichedAttempt));
 
-    const answeredCount = Object.values(attempt.answers || {}).filter(
+    const answeredCount = Object.values(trimmed.answers || {}).filter(
       (v) => v && String(v).trim().length > 0
     ).length;
 
     const writingWordCount =
-      (attempt.writingSubmission?.task1WordCount || attempt.writingDraft?.task1WordCount || 0) +
-      (attempt.writingSubmission?.task2WordCount || attempt.writingDraft?.task2WordCount || 0);
+      (trimmed.writingSubmission?.task1WordCount || trimmed.writingDraft?.task1WordCount || 0) +
+      (trimmed.writingSubmission?.task2WordCount || trimmed.writingDraft?.task2WordCount || 0);
     const speakingWordCount =
-      (attempt.speakingSubmission?.part1WordCount || 0) +
-      (attempt.speakingSubmission?.part2WordCount || 0) +
-      (attempt.speakingSubmission?.part3WordCount || 0);
+      (trimmed.speakingSubmission?.part1WordCount || 0) +
+      (trimmed.speakingSubmission?.part2WordCount || 0) +
+      (trimmed.speakingSubmission?.part3WordCount || 0);
 
     await safeSetDoc(
       doc(db, 'users', userId),
       sanitizeForFirestore({
         activeDraftSummary: {
-          testId: attempt.testId,
-          testTitle: attempt.testTitle || '',
-          mode: attempt.mode || 'exam',
+          testId: trimmed.testId,
+          testTitle: trimmed.testTitle || '',
+          mode: trimmed.mode || 'exam',
           answeredCount,
           totalQuestions: 75,
           writingWordCount: writingWordCount > 0 ? writingWordCount : undefined,
           speakingWordCount: speakingWordCount > 0 ? speakingWordCount : undefined,
-          activeQuestionId: attempt.activeQuestionId,
-          elapsedSeconds: attempt.elapsedSeconds || 0,
-          timeRemainingSeconds: attempt.timeRemainingSeconds ?? attempt.remainingSeconds,
+          activeQuestionId: trimmed.activeQuestionId,
+          elapsedSeconds: trimmed.elapsedSeconds || 0,
+          timeRemainingSeconds: trimmed.timeRemainingSeconds ?? trimmed.remainingSeconds,
           updatedAt: now,
         },
         inProgressSummary: [enrichedAttempt],
@@ -1034,8 +1171,9 @@ export async function saveInProgressAttemptToFirestore(
       }),
       { merge: true }
     );
+    return ok;
   } catch {
-    // Ignore
+    return false;
   }
 }
 
@@ -1046,13 +1184,19 @@ export async function fetchUserInProgressMap(
   userId: string
 ): Promise<Record<string, InProgressAttempt>> {
   try {
+    const clearedMap = getClearedInProgressTimestamps(userId);
     const collRef = collection(db, 'users', userId, 'inProgress');
     const snap = await getDocs(collRef);
     const map: Record<string, InProgressAttempt> = {};
     snap.forEach((d) => {
       const data = d.data() as InProgressAttempt;
-      if (data && (data.testId || d.id)) {
-        map[data.testId || d.id] = { ...data, testId: data.testId || d.id };
+      const tId = data?.testId || d.id;
+      if (data && tId) {
+        const clearedAt = clearedMap[tId] || 0;
+        const savedAt = data.savedAt || data.lastUpdatedAt || 0;
+        if (savedAt >= clearedAt) {
+          map[tId] = { ...data, testId: tId };
+        }
       }
     });
     return map;
@@ -1063,12 +1207,13 @@ export async function fetchUserInProgressMap(
 }
 
 /**
- * Clear in-progress attempt from Firestore upon completion
+ * Clear in-progress attempt from Firestore upon completion or restart
  */
 export async function clearInProgressAttemptFromFirestore(
   userId: string,
   testId: string
 ): Promise<void> {
+  markInProgressClearedLocally(userId, testId, Date.now());
   if (!canWriteToFirestore() || !userId || userId === 'guest') return;
   try {
     const docRef = doc(db, 'users', userId, 'inProgress', testId);
@@ -1839,4 +1984,137 @@ export async function fetchPracticeAuditLogs(
 
   return localEntries;
 }
+
+/**
+ * Saves teacher review commentary and optional Writing/Speaking score overrides
+ * directly to a student's attempt document and top-level recentAttempts in Cloud Firestore.
+ */
+export async function saveTeacherAttemptFeedback(
+  targetUid: string,
+  attemptId: string,
+  feedback: {
+    writingScoreOverride?: number;
+    speakingScoreOverride?: number;
+    commentVi: string;
+    teacherName: string;
+    teacherEmail?: string;
+    updatedAt: number;
+  }
+): Promise<{ updatedWritingScore?: number; updatedSpeakingScore?: number; updatedVstepBandScore?: number }> {
+  if (!targetUid || !attemptId) return {};
+
+  const patch: Record<string, any> = {
+    teacherFeedback: feedback,
+  };
+  if (typeof feedback.writingScoreOverride === 'number' && !isNaN(feedback.writingScoreOverride)) {
+    patch.writingScore = Math.max(0, Math.min(10, Math.round(feedback.writingScoreOverride * 2) / 2));
+  }
+  if (typeof feedback.speakingScoreOverride === 'number' && !isNaN(feedback.speakingScoreOverride)) {
+    patch.speakingScore = Math.max(0, Math.min(10, Math.round(feedback.speakingScoreOverride * 2) / 2));
+  }
+
+  // Update local storage if testing on the same device
+  try {
+    const key = `langcert_attempts_${targetUid}`;
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const list: UserExamAttempt[] = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const updatedList = list.map((att) => {
+          if (att.attemptId !== attemptId) return att;
+          return {
+            ...att,
+            ...patch,
+          };
+        });
+        safeWriteLocalStorageWithQuotaGuard(key, JSON.stringify(updatedList));
+      }
+    }
+  } catch {
+    // Ignore local storage errors
+  }
+
+  if (!canWriteToFirestore() || targetUid.startsWith('demo_')) {
+    return {
+      updatedWritingScore: patch.writingScore,
+      updatedSpeakingScore: patch.speakingScore,
+    };
+  }
+
+  try {
+    const attRef = doc(db, 'users', targetUid, 'attempts', attemptId);
+    const attSnap = await getDoc(attRef);
+    let recalculatedBand: number | undefined;
+
+    if (attSnap.exists()) {
+      const data = attSnap.data() as UserExamAttempt;
+      const lBand = Math.round(((Number(data.listeningScore || 0) / 35) * 10) * 2) / 2;
+      const rBand = Math.round(((Number(data.readingScore || 0) / 40) * 10) * 2) / 2;
+      const wBand =
+        patch.writingScore !== undefined
+          ? patch.writingScore
+          : typeof data.writingScore === 'number'
+          ? data.writingScore
+          : undefined;
+      const sBand =
+        patch.speakingScore !== undefined
+          ? patch.speakingScore
+          : typeof data.speakingScore === 'number'
+          ? data.speakingScore
+          : undefined;
+
+      const activeSkillBands = [lBand, rBand];
+      if (typeof wBand === 'number') activeSkillBands.push(wBand);
+      if (typeof sBand === 'number') activeSkillBands.push(sBand);
+      if (activeSkillBands.length > 0 && (patch.writingScore !== undefined || patch.speakingScore !== undefined)) {
+        const avg = activeSkillBands.reduce((acc, v) => acc + v, 0) / activeSkillBands.length;
+        recalculatedBand = Math.round(avg * 2) / 2;
+        patch.vstepBandScore = recalculatedBand;
+      }
+    }
+
+    await safeSetDoc(attRef, sanitizeForFirestore(patch), { merge: true });
+
+    const userRef = doc(db, 'users', targetUid);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+      const userData = userSnap.data();
+      const prevRecent: UserExamAttempt[] = Array.isArray(userData?.recentAttempts)
+        ? userData.recentAttempts
+        : [];
+      const updatedRecent = prevRecent.map((att) =>
+        att.attemptId === attemptId
+          ? {
+              ...att,
+              ...patch,
+            }
+          : att
+      );
+      const userPatch: Record<string, any> = {
+        recentAttempts: updatedRecent,
+        lastActiveAt: Date.now(),
+      };
+      if (
+        typeof recalculatedBand === 'number' &&
+        recalculatedBand > (Number(userData?.bestVstepBandScore) || 0)
+      ) {
+        userPatch.bestVstepBandScore = recalculatedBand;
+      }
+      await safeSetDoc(userRef, sanitizeForFirestore(userPatch), { merge: true });
+    }
+
+    return {
+      updatedWritingScore: patch.writingScore,
+      updatedSpeakingScore: patch.speakingScore,
+      updatedVstepBandScore: recalculatedBand,
+    };
+  } catch (err) {
+    console.warn('Notice saving teacher feedback to Firestore:', err);
+    return {
+      updatedWritingScore: patch.writingScore,
+      updatedSpeakingScore: patch.speakingScore,
+    };
+  }
+}
+
 

@@ -36,6 +36,9 @@ import {
   ClipboardList,
   Copy,
   Check,
+  Download,
+  TrendingUp,
+  AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { UserProfile, UserRole, GuestSubmission } from '../../../types/studentManagement';
@@ -67,7 +70,15 @@ interface StudentManagementViewProps {
 }
 
 type RoleFilterType = 'all' | 'student' | 'co_teacher' | 'admin';
-type ActivityFilterType = 'all' | 'online' | 'in_progress' | 'submitted' | 'vocab';
+type ActivityFilterType =
+  | 'all'
+  | 'online'
+  | 'in_progress'
+  | 'submitted'
+  | 'vocab'
+  | 'reached_goal'
+  | 'needs_support'
+  | 'active_7d';
 
 export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ onOpenTest }) => {
   const { currentUser, userProfile, isAdmin, isSuperAdmin, isCoTeacher, canManageExams } = useAuth();
@@ -220,6 +231,20 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
         const hasDraft = Boolean(s.activeDraftSummary && s.activeDraftSummary.testId);
         if (!hasDraft) return false;
       }
+      if (activityFilter === 'reached_goal') {
+        const bestScore = s.bestVstepBandScore ?? 0;
+        const targetScore = s.targetScores?.overall ?? 6.0;
+        if (bestScore <= 0 || bestScore < targetScore) return false;
+      }
+      if (activityFilter === 'needs_support') {
+        const bestScore = s.bestVstepBandScore ?? 0;
+        const hasAttempts = (s.totalExamAttempts || 0) > 0;
+        if (!hasAttempts || bestScore >= 5.0) return false;
+      }
+      if (activityFilter === 'active_7d') {
+        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        if (!s.lastActiveAt || s.lastActiveAt < sevenDaysAgo) return false;
+      }
 
       // 3. Search Filter
       if (!searchTerm.trim()) return true;
@@ -236,6 +261,77 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({ on
       );
     });
   }, [allStudents, roleFilter, activityFilter, searchTerm, currentUser]);
+
+  // Export filtered student roster to UTF-8 BOM CSV for Excel / Google Sheets
+  const handleExportClassCsv = () => {
+    const headers = [
+      'STT',
+      'Họ và tên',
+      'Biệt danh',
+      'Email',
+      'Số điện thoại',
+      'Vai trò',
+      'Trạng thái Online',
+      'Số đề đã nộp',
+      'Điểm VSTEP Cao nhất (/10)',
+      'Mục tiêu Overall (/10)',
+      'Đánh giá Tiến độ',
+      'Từ vựng SRS Đã thuộc',
+      'Từ vựng SRS Đang học',
+      'Hoạt động gần nhất',
+    ];
+
+    const escapeCsv = (val: unknown) => {
+      const str = val === null || val === undefined ? '' : String(val);
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
+    const rows = filteredStudents.map((s, idx) => {
+      const best = typeof s.bestVstepBandScore === 'number' ? s.bestVstepBandScore : 0;
+      const target = s.targetScores?.overall ?? 6.0;
+      const attempts = s.totalExamAttempts || 0;
+      const progressStatus =
+        attempts === 0
+          ? 'Chưa nộp bài'
+          : best >= target
+          ? 'Đạt mục tiêu'
+          : best < 5.0
+          ? 'Cần kèm cặp (<5.0)'
+          : 'Đang tiến bộ';
+
+      return [
+        idx + 1,
+        s.displayName || 'Chưa cập nhật',
+        s.nickname || '',
+        s.email || '',
+        s.phone || '',
+        s.role === 'admin' ? 'Giáo viên/Admin' : s.role === 'co_teacher' ? 'Trợ giảng' : 'Học viên',
+        isUserOnline(s, currentUser?.uid) ? 'Đang Online' : 'Offline',
+        attempts,
+        best > 0 ? best.toFixed(1) : '—',
+        s.targetScores?.overall ? s.targetScores.overall.toFixed(1) : '—',
+        progressStatus,
+        s.vocabStats?.masteredCount ?? 0,
+        s.vocabStats?.learningCount ?? 0,
+        s.lastActiveAt ? formatExactLoginTimestamp(s.lastActiveAt) : 'Chưa ghi nhận',
+      ]
+        .map(escapeCsv)
+        .join(',');
+    });
+
+    const csvContent = '\uFEFF' + [headers.map(escapeCsv).join(','), ...rows].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const dateTag = new Date().toISOString().slice(0, 10);
+    link.href = url;
+    link.download = `Bao_Cao_Lop_Hoc_VSTEP_${dateTag}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`Đã xuất báo cáo Excel/CSV (${filteredStudents.length} học viên)!`, 'success');
+  };
 
   // Filter guest submissions based on search term
   const filteredGuestSubmissions = useMemo(() => {
@@ -475,6 +571,16 @@ try {
         <div className="flex items-center gap-2.5 self-start md:self-auto shrink-0 flex-wrap">
           <button
             type="button"
+            onClick={handleExportClassCsv}
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-[#FFC800] hover:bg-[#FFD426] text-slate-900 font-black text-xs transition-all cursor-pointer border-2 border-amber-300 border-b-4 border-b-[#E5B400] active:border-b-0 active:translate-y-1"
+            title="Xuất bảng điểm, mục tiêu và tiến độ học viên ra file CSV/Excel (hỗ trợ Tiếng Việt)"
+          >
+            <Download className="h-4 w-4 text-slate-900" />
+            <span>Xuất Báo Cáo Lớp Học (CSV/Excel)</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setShowExportPromptModal(true)}
             className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-emerald-950/60 hover:bg-emerald-950/80 text-lime-200 font-black text-xs backdrop-blur-xs transition-all cursor-pointer border-2 border-lime-300/40 border-b-4 border-b-emerald-950 active:border-b-0 active:translate-y-1"
             title="Xuất Prompt kèm sẵn API Key & Database ID thật của hệ thống VSTEP"
@@ -580,6 +686,131 @@ try {
           <span>{toastMessage.text}</span>
         </div>
       )}
+
+      {/* Class-Wide Bottleneck Analytics: Top Most-Missed Questions Across All Students */}
+      {(() => {
+        const missCounts: Record<string, { testId: string; testTitle: string; qNum: number; wrongCount: number; totalAnswered: number; mostChosenWrong: Record<string, number> }> = {};
+        allStudents.forEach((stu) => {
+          const recents = Array.isArray(stu.recentAttempts) ? stu.recentAttempts : [];
+          recents.forEach((att) => {
+            if (!att.answers) return;
+            const tId = att.testId || 'test-1';
+            const tTitle = resolveTestTitle(tId, att.testTitle);
+            Object.entries(att.answers).forEach(([qStr, ans]) => {
+              const qNum = Number(qStr);
+              if (isNaN(qNum) || !ans) return;
+              const key = `${tId}__${qNum}`;
+              if (!missCounts[key]) {
+                missCounts[key] = {
+                  testId: tId,
+                  testTitle: tTitle,
+                  qNum,
+                  wrongCount: 0,
+                  totalAnswered: 0,
+                  mostChosenWrong: {},
+                };
+              }
+              missCounts[key].totalAnswered += 1;
+              const normAns = String(ans).trim().toUpperCase();
+              missCounts[key].mostChosenWrong[normAns] =
+                (missCounts[key].mostChosenWrong[normAns] || 0) + 1;
+            });
+          });
+        });
+
+        // Also aggregate from practiceAuditLogs where isCorrect === false
+        allStudents.forEach((stu) => {
+          const recents = Array.isArray(stu.recentAttempts) ? stu.recentAttempts : [];
+          recents.forEach((att) => {
+            const tId = att.testId || 'test-1';
+            const tTitle = resolveTestTitle(tId, att.testTitle);
+            if (Array.isArray(att.practiceAuditLogs)) {
+              att.practiceAuditLogs.forEach((log) => {
+                if (!log.isCorrect) {
+                  const key = `${tId}__${log.qId}`;
+                  if (!missCounts[key]) {
+                    missCounts[key] = {
+                      testId: tId,
+                      testTitle: tTitle,
+                      qNum: log.qId,
+                      wrongCount: 0,
+                      totalAnswered: 0,
+                      mostChosenWrong: {},
+                    };
+                  }
+                  missCounts[key].wrongCount += 1;
+                  missCounts[key].totalAnswered = Math.max(
+                    missCounts[key].totalAnswered,
+                    missCounts[key].wrongCount
+                  );
+                }
+              });
+            }
+          });
+        });
+
+        const topHotspots = Object.values(missCounts)
+          .filter((item) => item.totalAnswered > 0)
+          .sort((a, b) => b.wrongCount - a.wrongCount || b.totalAnswered - a.totalAnswered)
+          .slice(0, 8);
+
+        if (topHotspots.length === 0) return null;
+
+        return (
+          <div className="rounded-3xl bg-white dark:bg-slate-900 p-4 sm:p-5 border-2 border-[#E5E5E5] dark:border-slate-800 border-b-4 border-b-[#CECECE] dark:border-b-slate-950 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-[#FF4B4B] flex items-center justify-center">
+                  <BarChart2 className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                    Thống Kê Câu Hỏi Toàn Lớp Tương Tác &amp; Hay Nhầm Nhất (Gợi ý Chữa Bài Trên Lớp)
+                  </h3>
+                  <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    Tổng hợp tự động từ lịch sử bài nộp của học viên để Giáo viên ưu tiên giải thích kỹ trên lớp
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
+              {topHotspots.map((item) => {
+                const topChoice = Object.entries(item.mostChosenWrong).sort((a, b) => b[1] - a[1])[0];
+                const skillLabel = item.qNum <= 35 ? 'Listening' : 'Reading';
+                return (
+                  <div
+                    key={`${item.testId}_${item.qNum}`}
+                    onClick={() => onOpenTest?.(item.testId)}
+                    className="p-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 hover:border-[#FF4B4B] transition-all cursor-pointer"
+                    title={`${item.testTitle} · Bấm để mở đề thi`}
+                  >
+                    <div className="flex items-center justify-between text-[10px] font-black text-slate-500 dark:text-slate-400">
+                      <span>Câu {item.qNum}</span>
+                      <span className={item.qNum <= 35 ? 'text-[#1CB0F6]' : 'text-[#FF9600]'}>
+                        {skillLabel}
+                      </span>
+                    </div>
+                    <div className="text-xs font-black text-slate-900 dark:text-white truncate mt-0.5">
+                      {item.testTitle}
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-[10px] font-bold tabular-nums">
+                      <span className="text-[#FF4B4B]">
+                        {item.wrongCount > 0 ? `Sai: ${item.wrongCount} lượt` : `${item.totalAnswered} lượt làm`}
+                      </span>
+                      {topChoice && (
+                        <span className="px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-black">
+                          Hay chọn {topChoice[0]}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Primary Main Tabs */}
       <div className="flex items-center gap-2.5 border-b-2 border-[#E5E5E5] dark:border-slate-800 pb-3 flex-wrap">
@@ -737,6 +968,45 @@ try {
           >
             <Layers className="h-3 w-3" />
             <span>Đang học từ vựng (SRS)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActivityFilter('reached_goal')}
+            className={`px-3.5 py-1.5 rounded-xl font-black border-2 border-b-4 transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap active:border-b-0 active:translate-y-1 ${
+              activityFilter === 'reached_goal'
+                ? 'bg-[#58CC02] border-[#58CC02] border-b-[#46A302] text-white'
+                : 'bg-lime-50 dark:bg-emerald-950/60 border-[#58CC02] border-b-[#46A302] text-[#3C8C02] dark:text-lime-300 hover:bg-lime-100'
+            }`}
+          >
+            <TrendingUp className="h-3 w-3" />
+            <span>Đạt mục tiêu Band</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActivityFilter('needs_support')}
+            className={`px-3.5 py-1.5 rounded-xl font-black border-2 border-b-4 transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap active:border-b-0 active:translate-y-1 ${
+              activityFilter === 'needs_support'
+                ? 'bg-[#FF4B4B] border-[#FF4B4B] border-b-[#EA2B2B] text-white'
+                : 'bg-rose-50 dark:bg-rose-950/60 border-[#FF4B4B] border-b-[#EA2B2B] text-[#EA2B2B] dark:text-rose-300 hover:bg-rose-100'
+            }`}
+          >
+            <AlertTriangle className="h-3 w-3" />
+            <span>Cần kèm cặp (&lt; 5.0)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActivityFilter('active_7d')}
+            className={`px-3.5 py-1.5 rounded-xl font-black border-2 border-b-4 transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap active:border-b-0 active:translate-y-1 ${
+              activityFilter === 'active_7d'
+                ? 'bg-[#1CB0F6] border-[#1CB0F6] border-b-[#1899D6] text-white'
+                : 'bg-sky-50 dark:bg-sky-950/60 border-[#1CB0F6] border-b-[#1899D6] text-[#1899D6] dark:text-sky-300 hover:bg-sky-100'
+            }`}
+          >
+            <Calendar className="h-3 w-3" />
+            <span>Hoạt động 7 ngày qua</span>
           </button>
         </div>
 

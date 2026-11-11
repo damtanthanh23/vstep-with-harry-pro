@@ -20,6 +20,18 @@ export interface CEFRLevelInfo {
   vstepGradeLabel?: string;
 }
 
+export interface SentenceCorrectionItem {
+  original: string;
+  improved: string;
+  reasonVi: string;
+}
+
+export interface BandTierSamples {
+  b1Sample?: string;
+  b2Sample?: string;
+  c1Sample?: string;
+}
+
 export interface WritingCriterionScore {
   taskFulfilment: number; // 0-3 (or scaled 0-2.5)
   grammar: number; // 0-3
@@ -31,6 +43,8 @@ export interface WritingCriterionScore {
   strengthsVi?: string[];
   improvementsVi?: string[];
   correctedSample?: string;
+  sentenceCorrections?: SentenceCorrectionItem[];
+  bandSamples?: BandTierSamples;
 }
 
 export interface DetailedWritingEvaluation {
@@ -55,6 +69,9 @@ export interface SpeakingCriterionScore {
   feedbackVi: string;
   strengthsVi?: string[];
   improvementsVi?: string[];
+  correctedSample?: string;
+  sentenceCorrections?: SentenceCorrectionItem[];
+  bandSamples?: BandTierSamples;
 }
 
 export interface DetailedSpeakingEvaluation {
@@ -355,6 +372,76 @@ function scoreSingleWritingTaskStrict(
   const total = taskFulfilment + grammar + vocabulary + organization; // 0-12
   const score10 = Math.round(((total / 12) * 10) * 2) / 2;
 
+  const rawSentences = clean
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 10);
+
+  const sentenceCorrections: SentenceCorrectionItem[] = rawSentences.slice(0, 3).map((orig, idx) => {
+    const cleanOrig = orig.replace(/[.!?]+$/, '');
+    const lowerFirst = cleanOrig.charAt(0).toLowerCase() + cleanOrig.slice(1);
+    if (idx === 0) {
+      return {
+        original: orig,
+        improved:
+          task.partNumber === 1
+            ? `I am writing this letter to provide you with detailed information regarding the fact that ${lowerFirst}.`
+            : `From an objective perspective, it is widely acknowledged that ${lowerFirst}, which plays a pivotal role in modern society.`,
+        reasonVi:
+          task.partNumber === 1
+            ? 'Mở rộng cấu trúc câu mở đầu thư trang trọng/bán trang trọng giúp tăng điểm Task Fulfillment & Organization (B2–C1).'
+            : 'Nâng cấp câu đơn thành câu phức có mệnh đề quan hệ không xác định (, which...) chuẩn Essay B2–C1.',
+      };
+    }
+    if (idx === 1) {
+      return {
+        original: orig,
+        improved: `Furthermore, taking this aspect into consideration, ${lowerFirst} so that long-term benefits can be achieved.`,
+        reasonVi:
+          'Bổ sung cụm phân từ chuyển ý (taking this aspect into consideration) và mệnh đề chỉ mục đích (so that + bị động).',
+      };
+    }
+    return {
+      original: orig,
+      improved: `Consequently, not only does this approach address the issue effectively, but it also ensures that ${lowerFirst}.`,
+      reasonVi:
+        'Áp dụng cấu trúc đảo ngữ "Not only... but also..." giúp bứt phá tiêu chí Grammatical Range lên bậc C1.',
+    };
+  });
+
+  const baseSample = task.sampleAnswer || clean;
+  const bandSamples: BandTierSamples = {
+    b1Sample:
+      task.partNumber === 1
+        ? `Dear Friend,\n\nThank you for your recent email. I am very happy to hear from you and I would like to answer your questions.\n\n${clean}\n\nPlease let me know if you need any more information. I look forward to hearing from you soon.\n\nBest regards,`
+        : `Nowadays, this topic is very important in our daily life. Many people have different opinions about it.\n\n${clean}\n\nIn conclusion, I think we should consider both sides carefully to get the best result for everyone.`,
+    b2Sample: baseSample,
+    c1Sample:
+      task.partNumber === 1
+        ? `${baseSample}\n\nShould you require any further clarification regarding these arrangements, please do not hesitate to contact me at your earliest convenience.`
+        : `${baseSample}\n\nUltimately, synthesizing these multifaceted perspectives reveals that sustainable progress hinges upon a balanced integration of policy innovation and individual responsibility.`,
+  };
+
+  const strengthsVi: string[] = [];
+  const improvementsVi: string[] = [];
+  if (meetsFullMinWords) {
+    strengthsVi.push(`Đạt yêu cầu độ dài chuẩn VSTEP (${wordCount}/${task.minWords} từ tối thiểu).`);
+  } else {
+    improvementsVi.push(
+      `Cần viết thêm ít nhất ${Math.max(10, task.minWords - wordCount)} từ để đạt chuẩn độ dài tối thiểu ${task.minWords} từ của Task ${task.partNumber}.`
+    );
+  }
+  if (usedConnectors.length >= 2) {
+    strengthsVi.push(`Sử dụng từ nối mạch lạc (${usedConnectors.slice(0, 4).join(', ')}).`);
+  } else {
+    improvementsVi.push('Bổ sung từ nối học thuật (Furthermore, Consequently, On the other hand) ở đầu các đoạn thân bài.');
+  }
+  if (usedComplex.length >= 2) {
+    strengthsVi.push('Có vận dụng cấu trúc câu phức và mệnh đề phụ thuộc.');
+  } else {
+    improvementsVi.push('Tăng cường mệnh đề quan hệ (which, who) và câu điều kiện để nâng điểm Ngữ pháp lên B2–C1.');
+  }
+
   return {
     taskFulfilment,
     grammar,
@@ -363,6 +450,11 @@ function scoreSingleWritingTaskStrict(
     total,
     score10,
     feedbackVi: `Đánh giá theo Rubrics VSTEP 4 tiêu chí (${wordCount}/${task.minWords} từ tối thiểu · Quy đổi ${score10.toFixed(1)}/10): Hoàn thành nhiệm vụ ${taskFulfilment}/3 · Bố cục & Mạch lạc ${organization}/3 · Từ vựng ${vocabulary}/3 · Ngữ pháp ${grammar}/3.`,
+    strengthsVi,
+    improvementsVi,
+    correctedSample: baseSample,
+    sentenceCorrections,
+    bandSamples,
   };
 }
 
@@ -563,6 +655,35 @@ function scoreSingleSpeakingPartStrict(
     );
   }
 
+  const rawSpokenSentences = clean
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 8);
+
+  const sentenceCorrections: SentenceCorrectionItem[] = rawSpokenSentences.slice(0, 3).map((orig, idx) => {
+    const cleanOrig = orig.replace(/[.!?]+$/, '');
+    const lowerFirst = cleanOrig.charAt(0).toLowerCase() + cleanOrig.slice(1);
+    if (idx === 0) {
+      return {
+        original: orig,
+        improved: `Well, to be completely honest, when it comes to this topic, I firmly believe that ${lowerFirst}.`,
+        reasonVi: 'Mở đầu bằng Discourse Marker tự nhiên giúp tăng điểm Fluency & Discourse Management ngay từ câu đầu.',
+      };
+    }
+    return {
+      original: orig,
+      improved: `From a practical standpoint, ${lowerFirst}, which significantly enhances our daily experience.`,
+      reasonVi: 'Mở rộng mệnh đề quan hệ nối tiếp giúp câu nói đạt chuẩn ngữ pháp và từ vựng B2–C1.',
+    };
+  });
+
+  const baseSpokenSample = task.sampleAnswer || clean;
+  const bandSamples: BandTierSamples = {
+    b1Sample: `Well, I think this is an interesting question. In my opinion, ${clean} That is why I really like it in my daily life.`,
+    b2Sample: baseSpokenSample,
+    c1Sample: `${baseSpokenSample} Taking everything into account, this perspective not only fosters personal growth but also brings lasting value to the broader community.`,
+  };
+
   return {
     grammar: Number(grammar.toFixed(1)),
     vocabulary: Number(vocabulary.toFixed(1)),
@@ -573,6 +694,9 @@ function scoreSingleSpeakingPartStrict(
     feedbackVi: `Đánh giá Speaking Part ${task.partNumber} (${wordCount} từ${hasAudio ? ' · Có thu âm Micro' : ''} · Đạt ${total10.toFixed(1)}/10): Ngữ pháp ${grammar.toFixed(1)}/2 · Từ vựng ${vocabulary.toFixed(1)}/2 · Phát âm ${pronunciation.toFixed(1)}/2 · Độ trôi chảy ${fluency.toFixed(1)}/2 · Tổ chức ý ${discourseManagement.toFixed(1)}/2.`,
     strengthsVi,
     improvementsVi,
+    correctedSample: baseSpokenSample,
+    sentenceCorrections,
+    bandSamples,
   };
 }
 
@@ -825,3 +949,58 @@ export function calculateExamResults(
     timeSpentSeconds,
   };
 }
+
+const AI_EVAL_CACHE_KEY = 'vstep_ai_eval_cache_v1';
+
+/**
+ * Generates a fast deterministic FNV-1a content hash string for caching AI evaluations
+ */
+export function computeAiContentHash(prefix: string, payload?: unknown): string {
+  const str =
+    payload === undefined
+      ? prefix
+      : `${prefix}::${typeof payload === 'string' ? payload : JSON.stringify(payload || {})}`;
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return `${prefix.slice(0, 16)}_${(h >>> 0).toString(36)}_${str.length}`;
+}
+
+export function getCachedAiEvaluation<T = any>(hashKey: string): T | null {
+  if (!hashKey || typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(AI_EVAL_CACHE_KEY);
+    if (!raw) return null;
+    const map = JSON.parse(raw);
+    if (map && map[hashKey] && map[hashKey].data) {
+      return map[hashKey].data as T;
+    }
+  } catch {
+    // Ignore storage parse error
+  }
+  return null;
+}
+
+export function setCachedAiEvaluation(hashKey: string, data: unknown): void {
+  if (!hashKey || !data || typeof window === 'undefined') return;
+  try {
+    const raw = localStorage.getItem(AI_EVAL_CACHE_KEY);
+    const map: Record<string, { savedAt: number; data: unknown }> = raw ? JSON.parse(raw) : {};
+    map[hashKey] = { savedAt: Date.now(), data };
+
+    // Keep at most 25 most recent cached evaluations to stay well within localStorage quota
+    const keys = Object.keys(map);
+    if (keys.length > 25) {
+      keys
+        .sort((a, b) => (map[a]?.savedAt || 0) - (map[b]?.savedAt || 0))
+        .slice(0, keys.length - 25)
+        .forEach((k) => delete map[k]);
+    }
+    localStorage.setItem(AI_EVAL_CACHE_KEY, JSON.stringify(map));
+  } catch {
+    // Ignore quota errors
+  }
+}
+

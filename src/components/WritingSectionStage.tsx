@@ -13,8 +13,32 @@ import {
   PlusCircle,
   CheckSquare,
   Languages,
+  Wand2,
+  Loader2,
+  Volume2,
+  Check,
+  Copy,
 } from 'lucide-react';
 import { WritingTask, WritingSubmission, SAMPLE_B1_WRITING_TASKS } from '../types/writing';
+import { examAudioManager } from '../utils/audioManager';
+
+interface InStageWritingCoachResult {
+  overallBand10: number;
+  cefrEstimate: 'B1' | 'B2' | 'C1';
+  criteria: {
+    taskFulfillment: number;
+    organization: number;
+    vocabulary: number;
+    grammar: number;
+  };
+  summaryVi: string;
+  sentenceCorrections: Array<{
+    original: string;
+    improved: string;
+    reasonVi: string;
+  }>;
+  upgradedSample: string;
+}
 
 interface WritingSectionStageProps {
   tasks?: WritingTask[];
@@ -143,6 +167,15 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
   const [showPromptTips, setShowPromptTips] = useState(false);
   const activeTaskIndex = controlledIndex !== undefined ? controlledIndex : internalTaskIndex;
 
+  // In-Stage AI Writing Coach state (per task index 0 | 1)
+  const [coachResultByTask, setCoachResultByTask] = useState<
+    Record<number, InStageWritingCoachResult | null>
+  >({});
+  const [isCoaching, setIsCoaching] = useState<boolean>(false);
+  const [coachError, setCoachError] = useState<string | null>(null);
+  const [appliedCorrections, setAppliedCorrections] = useState<Record<string, boolean>>({});
+  const [copiedUpgradedSample, setCopiedUpgradedSample] = useState<boolean>(false);
+
   // Per-task countdown timer: Task 1 = 20 mins (1200s), Task 2 = 40 mins (2400s)
   const [task1SecondsLeft, setTask1SecondsLeft] = useState<number>(20 * 60);
   const [task2SecondsLeft, setTask2SecondsLeft] = useState<number>(40 * 60);
@@ -162,6 +195,7 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
 
   const setActiveTaskIndex = (idx: 0 | 1) => {
     setInternalTaskIndex(idx);
+    setCoachError(null);
     onTaskIndexChange?.(idx);
   };
 
@@ -169,6 +203,7 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
   const task = activeTasks[activeTaskIndex] || activeTasks[0];
 
   const currentText = activeTaskIndex === 0 ? submission.task1Text : submission.task2Text;
+  const activeCoachResult = coachResultByTask[activeTaskIndex] || null;
 
   const countWords = (text: string): number => {
     return text
@@ -210,6 +245,63 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
         ? ''
         : ' ';
     updateCurrentTaskText(`${trimmed}${separator}${phraseEn}`);
+  };
+
+  const handleRunAiCoach = async () => {
+    if (isCoaching) return;
+    const trimmed = currentText.trim();
+    if (countWords(trimmed) < 10) {
+      setCoachError(
+        'Bạn vui lòng viết tối thiểu 10 từ tiếng Anh trước khi bấm Chấm thử & Sửa lỗi AI.'
+      );
+      return;
+    }
+
+    setIsCoaching(true);
+    setCoachError(null);
+    try {
+      const response = await fetch('/api/ai/coach-writing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskNumber: task.partNumber,
+          promptText: `${task.instruction || ''}\n${task.stimulusText || ''}`.trim(),
+          studentText: trimmed,
+          minWords: task.minWords,
+          sampleAnswer: task.sampleAnswer || '',
+        }),
+      });
+      if (!response.ok) {
+        throw new Error('Không thể kết nối máy chủ chấm bài AI.');
+      }
+      const data: InStageWritingCoachResult = await response.json();
+      setCoachResultByTask((prev) => ({
+        ...prev,
+        [activeTaskIndex]: data,
+      }));
+    } catch (err: any) {
+      setCoachError(err?.message || 'Đã xảy ra lỗi khi chấm thử AI. Vui lòng thử lại.');
+    } finally {
+      setIsCoaching(false);
+    }
+  };
+
+  const handleApplyCorrection = (original: string, improved: string, corrKey: string) => {
+    if (isReviewMode) return;
+    const origTrim = original.trim();
+    const impTrim = improved.trim();
+    if (!impTrim) return;
+
+    let updatedText = currentText;
+    if (origTrim && currentText.includes(origTrim)) {
+      updatedText = currentText.replace(origTrim, impTrim);
+    } else {
+      updatedText = currentText.trim()
+        ? `${currentText.trim()}\n${impTrim}`
+        : impTrim;
+    }
+    updateCurrentTaskText(updatedText);
+    setAppliedCorrections((prev) => ({ ...prev, [corrKey]: true }));
   };
 
   const wordCount = activeTaskIndex === 0 ? submission.task1WordCount : submission.task2WordCount;
@@ -537,14 +629,36 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
         {/* Right Column: Writing Editor, Live Structure Checklist & Phrase Bank */}
         <div className="lg:col-span-7 rounded-3xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xs flex flex-col justify-between min-h-[480px]">
           <div className="space-y-4">
-            {/* Header with Live Counter */}
+            {/* Header with Live Counter & In-Stage AI Coach Button */}
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
               <span className="text-xs font-black text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
                 <PenTool className="h-4 w-4 text-[#A560E8]" />
                 <span>Bài làm Writing Task {task.partNumber} của bạn</span>
               </span>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {!isReviewMode && mode === 'practice' && (
+                  <button
+                    type="button"
+                    onClick={handleRunAiCoach}
+                    disabled={isCoaching}
+                    className="btn-duo-purple inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[11px] font-black cursor-pointer disabled:opacity-60"
+                    title="Chấm thử ngay bài viết Task này theo 4 tiêu chí VSTEP kèm sửa lỗi câu & bài mẫu nâng band"
+                  >
+                    {isCoaching ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Đang chấm AI 4 tiêu chí...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Wand2 className="h-3.5 w-3.5" />
+                        <span>Chấm thử &amp; Sửa lỗi AI (4 Tiêu chí)</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
                 <span
                   className={`rounded-xl px-3 py-1 font-mono text-xs font-black border-2 border-b-3 tabular-nums ${
                     wordCount >= task.minWords
@@ -663,6 +777,210 @@ export const WritingSectionStage: React.FC<WritingSectionStageProps> = ({
               }
               className="w-full rounded-2xl border-2 border-[#E5E5E5] border-b-4 border-b-[#CECECE] dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-4 font-sans text-sm leading-relaxed text-slate-800 dark:text-slate-100 outline-hidden transition-all focus:border-[#CE82FF] focus:bg-white dark:focus:bg-slate-900 resize-none"
             />
+
+            {coachError && (
+              <div className="rounded-2xl border-2 border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/50 p-3 text-xs font-bold text-amber-900 dark:text-amber-200">
+                {coachError}
+              </div>
+            )}
+
+            {/* In-Stage AI Writing Coach Panel (4 Criteria + Sentence Corrections + Upgraded B2-C1 Sample) */}
+            {activeCoachResult && (
+              <div className="rounded-3xl border-2 border-[#CE82FF] border-b-4 border-b-[#A560E8] bg-purple-50/50 dark:bg-purple-950/30 p-4 sm:p-5 space-y-4 shadow-xs">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-purple-200/80 dark:border-purple-800/80 pb-3">
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-[#8438C8] dark:text-purple-300 flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5 text-[#A560E8]" />
+                      KẾT QUẢ CHẤM THỬ AI — WRITING TASK {task.partNumber}
+                    </span>
+                    <p className="mt-1 text-xs font-bold text-slate-700 dark:text-slate-200 leading-relaxed">
+                      {activeCoachResult.summaryVi}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="rounded-2xl bg-white dark:bg-slate-900 border-2 border-[#CE82FF] px-3.5 py-2 text-center">
+                      <span className="block text-[10px] font-black uppercase text-slate-400">
+                        Điểm dự kiến
+                      </span>
+                      <span className="font-mono text-lg font-black text-[#8438C8] dark:text-purple-300 tabular-nums">
+                        {activeCoachResult.overallBand10.toFixed(1)}/10
+                      </span>
+                    </div>
+                    <div className="rounded-2xl bg-[#8438C8] text-white px-3.5 py-2 text-center">
+                      <span className="block text-[10px] font-black uppercase opacity-80">
+                        Trình độ
+                      </span>
+                      <span className="font-mono text-lg font-black tabular-nums">
+                        {activeCoachResult.cefrEstimate}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4 Criteria Breakdown (/3.0 each) */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  {[
+                    {
+                      label: 'Task Fulfillment',
+                      vi: 'Đáp ứng đề',
+                      val: activeCoachResult.criteria.taskFulfillment,
+                    },
+                    {
+                      label: 'Organization',
+                      vi: 'Mạch lạc & liên kết',
+                      val: activeCoachResult.criteria.organization,
+                    },
+                    {
+                      label: 'Vocabulary',
+                      vi: 'Từ vựng học thuật',
+                      val: activeCoachResult.criteria.vocabulary,
+                    },
+                    {
+                      label: 'Grammar',
+                      vi: 'Ngữ pháp & cấu trúc',
+                      val: activeCoachResult.criteria.grammar,
+                    },
+                  ].map((c, idx) => (
+                    <div
+                      key={idx}
+                      className="rounded-2xl bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800/80 p-3 space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between text-[11px] font-black text-slate-700 dark:text-slate-200">
+                        <span className="truncate">{c.label}</span>
+                        <span className="font-mono text-[#8438C8] dark:text-purple-300 tabular-nums">
+                          {c.val.toFixed(1)}/3.0
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-[#A560E8]"
+                          style={{ width: `${Math.min(100, Math.round((c.val / 3) * 100))}%` }}
+                        />
+                      </div>
+                      <span className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                        {c.vi}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Sentence-by-sentence corrections with 1-click Apply */}
+                {activeCoachResult.sentenceCorrections &&
+                  activeCoachResult.sentenceCorrections.length > 0 && (
+                    <div className="space-y-2.5">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-100">
+                        Sửa lỗi từng câu &amp; Nâng cấp diễn đạt ({activeCoachResult.sentenceCorrections.length} gợi ý):
+                      </h4>
+                      <div className="space-y-2">
+                        {activeCoachResult.sentenceCorrections.map((item, idx) => {
+                          const corrKey = `${activeTaskIndex}-${idx}-${item.improved.slice(0, 20)}`;
+                          const isApplied = Boolean(appliedCorrections[corrKey]);
+
+                          return (
+                            <div
+                              key={idx}
+                              className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3.5 space-y-2"
+                            >
+                              <div className="text-xs space-y-1">
+                                <div className="text-rose-600 dark:text-rose-400 line-through font-medium">
+                                  {item.original}
+                                </div>
+                                <div className="text-emerald-700 dark:text-emerald-300 font-black">
+                                  → {item.improved}
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+                                <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                                  💡 {item.reasonVi}
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => examAudioManager.speakText(item.improved)}
+                                    className="inline-flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 cursor-pointer"
+                                    title="Nghe phát âm câu đã nâng cấp"
+                                  >
+                                    <Volume2 className="h-3 w-3 text-[#1CB0F6]" />
+                                    <span>Nghe</span>
+                                  </button>
+                                  {!isReviewMode && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleApplyCorrection(item.original, item.improved, corrKey)
+                                      }
+                                      className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1 text-[11px] font-black cursor-pointer transition-colors ${
+                                        isApplied
+                                          ? 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700'
+                                          : 'bg-[#8438C8] hover:bg-[#7229B5] text-white'
+                                      }`}
+                                    >
+                                      <Check className="h-3 w-3" />
+                                      <span>
+                                        {isApplied ? 'Đã áp dụng vào bài' : 'Áp dụng câu sửa vào bài'}
+                                      </span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                {/* Upgraded Band B2-C1 Full Sample */}
+                {activeCoachResult.upgradedSample && (
+                  <div className="rounded-2xl bg-white dark:bg-slate-900 border-2 border-[#CE82FF] p-4 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-black uppercase tracking-wider text-[#8438C8] dark:text-purple-300 flex items-center gap-1.5">
+                        <Sparkles className="h-4 w-4 text-[#A560E8]" />
+                        <span>Bài viết nâng cấp chuẩn Band B2–C1 hoàn chỉnh:</span>
+                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            examAudioManager.speakText(activeCoachResult.upgradedSample)
+                          }
+                          className="inline-flex items-center gap-1 rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/50 px-2.5 py-1 text-[11px] font-black text-[#8438C8] dark:text-purple-200 hover:bg-purple-100 cursor-pointer"
+                        >
+                          <Volume2 className="h-3.5 w-3.5" />
+                          <span>Nghe bài mẫu</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard
+                              ?.writeText(activeCoachResult.upgradedSample)
+                              .catch(() => {});
+                            setCopiedUpgradedSample(true);
+                            setTimeout(() => setCopiedUpgradedSample(false), 2000);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 cursor-pointer"
+                        >
+                          {copiedUpgradedSample ? (
+                            <>
+                              <Check className="h-3.5 w-3.5 text-emerald-600" />
+                              <span>Đã sao chép</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3.5 w-3.5" />
+                              <span>Sao chép</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                    <p className="whitespace-pre-line text-xs leading-relaxed font-medium text-slate-800 dark:text-slate-200 bg-purple-50/40 dark:bg-slate-800/70 p-3.5 rounded-xl border border-purple-100 dark:border-slate-700">
+                      {activeCoachResult.upgradedSample}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {!isReviewMode && (

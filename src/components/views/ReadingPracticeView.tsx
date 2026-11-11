@@ -1,6 +1,17 @@
-import React, { useState } from 'react';
-import { FileText, Play, Sparkles, Columns, BookOpen } from 'lucide-react';
-import { TestMetadata, ExamSection } from '../../types/exam';
+import React, { useState, useMemo } from 'react';
+import {
+  FileText,
+  Play,
+  Sparkles,
+  Columns,
+  BookOpen,
+  Languages,
+  Eye,
+  BookmarkPlus,
+} from 'lucide-react';
+import { TestMetadata, ExamSection, Question } from '../../types/exam';
+import { TEST_1_QUESTIONS } from '../../data/test1Data';
+import { GlobalSelectionDictionaryPopover } from '../GlobalSelectionDictionaryPopover';
 
 interface ReadingPracticeViewProps {
   tests: TestMetadata[];
@@ -15,6 +26,8 @@ export const ReadingPracticeView: React.FC<ReadingPracticeViewProps> = ({
 }) => {
   const [selectedPart, setSelectedPart] = useState<number>(0);
   const [selectedTestId, setSelectedTestId] = useState<string>(tests[0]?.id || 'test-1');
+  const [previewPassageNum, setPreviewPassageNum] = useState<1 | 2 | 3 | 4>(1);
+  const [showBilingualPreview, setShowBilingualPreview] = useState<boolean>(true);
 
   const readingParts: Array<{
     part: 1 | 2 | 3 | 4;
@@ -68,20 +81,44 @@ export const ReadingPracticeView: React.FC<ReadingPracticeViewProps> = ({
 
   const activeTestObj = tests.find((t) => t.id === selectedTestId) || tests[0];
 
+  const testQuestions: Question[] = useMemo(() => {
+    if (activeTestObj?.questions && activeTestObj.questions.length > 0) {
+      return activeTestObj.questions;
+    }
+    return TEST_1_QUESTIONS;
+  }, [activeTestObj]);
+
+  const activePassageSource = useMemo(() => {
+    return testQuestions.find(
+      (q) =>
+        q.section === 'READING' &&
+        q.partNumber === previewPassageNum &&
+        q.readingArticle &&
+        Array.isArray(q.readingArticle.paragraphs) &&
+        q.readingArticle.paragraphs.length > 0
+    );
+  }, [testQuestions, previewPassageNum]);
+
   return (
     <div className="space-y-6 pb-20">
+      <GlobalSelectionDictionaryPopover
+        sourceLabel={`Luyện Đọc · Passage ${previewPassageNum}`}
+        testId={selectedTestId}
+        testTitle={activeTestObj?.title}
+      />
+
       {/* Banner */}
       <div className="rounded-3xl bg-gradient-to-r from-[#58CC02] to-[#3C8C02] border-2 border-[#46A302] border-b-4 border-b-[#2B6600] p-6 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 text-white font-black text-xs mb-2 backdrop-blur-xs">
+          <div className="inline-flex items-center gap-1.5 text-white font-black text-xs mb-2">
             <FileText className="h-3.5 w-3.5" />
-            <span>KỸ NĂNG ĐỌC VSTEP (B1–B2–C1)</span>
+            <span>KỸ NĂNG ĐỌC VSTEP · B1 – B2 – C1</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-black tracking-tight">
             Luyện Đọc Hiểu Chuyên Sâu Theo Passage
           </h2>
           <p className="mt-1 text-xs sm:text-sm text-lime-100 max-w-xl">
-            Tổng cộng 40 câu hỏi chuẩn VSTEP (4 Passages · 60 phút). Giao diện chia đôi màn hình độc lập, bấm dẫn chứng tự động cuộn và dịch nghĩa song ngữ.
+            Tổng cộng 40 câu hỏi chuẩn VSTEP (4 Passages · 60 phút). Bôi đen bất kỳ từ hoặc cụm từ nào trong bài đọc để tra từ điển ngữ cảnh và lưu thẳng vào kho Flashcard SRS.
           </p>
         </div>
 
@@ -89,7 +126,7 @@ export const ReadingPracticeView: React.FC<ReadingPracticeViewProps> = ({
           <button
             type="button"
             onClick={() => handleStartPractice(selectedTestId, 1)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white text-[#2B6600] hover:bg-lime-50 text-xs font-black shadow-md border-2 border-lime-200 border-b-4 border-b-lime-400 active:border-b-0 active:translate-y-1 transition-all cursor-pointer"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white text-[#2B6600] hover:bg-lime-50 text-xs font-black shadow-md border-2 border-lime-200 border-b-4 border-b-lime-400 active:border-b-0 active:translate-y-1 transition-all cursor-pointer whitespace-nowrap shrink-0"
           >
             <Play className="h-4 w-4 fill-[#46A302]" />
             <span>Luyện đọc {activeTestObj?.title || 'Đề 1'}</span>
@@ -117,7 +154,7 @@ export const ReadingPracticeView: React.FC<ReadingPracticeViewProps> = ({
           </select>
         </div>
 
-        {/* Part Filter Pills */}
+        {/* Part Filter Buttons */}
         <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
           <button
             type="button"
@@ -134,7 +171,10 @@ export const ReadingPracticeView: React.FC<ReadingPracticeViewProps> = ({
             <button
               key={p.part}
               type="button"
-              onClick={() => setSelectedPart(p.part)}
+              onClick={() => {
+                setSelectedPart(p.part);
+                setPreviewPassageNum(p.part);
+              }}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-black whitespace-nowrap border-2 border-b-4 active:border-b-0 active:translate-y-1 transition-all cursor-pointer ${
                 selectedPart === p.part
                   ? 'bg-[#58CC02] text-white border-[#58CC02] border-b-[#46A302] shadow-xs'
@@ -161,18 +201,17 @@ export const ReadingPracticeView: React.FC<ReadingPracticeViewProps> = ({
               }`}
             >
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[11px] font-black text-[#46A302] dark:text-[#58CC02] bg-[#D7FFB8]/80 dark:bg-emerald-950/60 border border-[#58CC02]/40 px-2.5 py-0.5 rounded-xl">
+                <div className="flex items-center justify-between mb-2 text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                  <span className="font-black text-[#46A302] dark:text-[#58CC02]">
                     {item.range}
                   </span>
+                  <span>·</span>
                   {item.highlight ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-black text-[#2B6600] dark:text-lime-300 bg-[#D7FFB8] dark:bg-emerald-900/60 px-2.5 py-0.5 rounded-full">
+                    <span className="inline-flex items-center gap-1 text-[#2B6600] dark:text-lime-300 font-black">
                       <Columns className="h-3 w-3" /> Chia đôi màn hình
                     </span>
                   ) : (
-                    <span className="text-[11px] text-slate-400 font-bold">
-                      {activeTestObj?.title}
-                    </span>
+                    <span className="truncate max-w-[140px]">{activeTestObj?.title}</span>
                   )}
                 </div>
 
@@ -199,7 +238,7 @@ export const ReadingPracticeView: React.FC<ReadingPracticeViewProps> = ({
                 <button
                   type="button"
                   onClick={() => handleStartPractice(selectedTestId, item.part)}
-                  className="btn-duo-green py-2.5 px-3 rounded-2xl text-xs"
+                  className="btn-duo-green py-2.5 px-3 rounded-2xl text-xs whitespace-nowrap"
                 >
                   <Play className="h-3.5 w-3.5 fill-white" />
                   <span>Luyện Passage {item.part}</span>
@@ -207,7 +246,7 @@ export const ReadingPracticeView: React.FC<ReadingPracticeViewProps> = ({
                 <button
                   type="button"
                   onClick={() => handleStartExam(selectedTestId, item.part)}
-                  className="btn-duo-blue py-2.5 px-3 rounded-2xl text-xs"
+                  className="btn-duo-blue py-2.5 px-3 rounded-2xl text-xs whitespace-nowrap"
                 >
                   <span>Thi thử Passage {item.part}</span>
                 </button>
@@ -215,6 +254,89 @@ export const ReadingPracticeView: React.FC<ReadingPracticeViewProps> = ({
             </div>
           ))}
       </div>
+
+      {/* Interactive Bilingual Reading Studio & Instant Vocab Lookup */}
+      {activePassageSource?.readingArticle && (
+        <div className="rounded-3xl bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 border-b-4 border-b-slate-300 dark:border-b-slate-950 p-5 sm:p-6 shadow-xs space-y-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-700">
+            <div>
+              <div className="text-xs font-black text-[#46A302] dark:text-[#58CC02] uppercase tracking-wider">
+                Phòng Đọc Song Ngữ & Bóc Tách Từ Vựng (Bôi đen để tra nghĩa & lưu SRS)
+              </div>
+              <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5">
+                {activePassageSource.readingArticle.title || `Reading Passage ${previewPassageNum}`}
+              </h3>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                {([1, 2, 3, 4] as const).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPreviewPassageNum(p)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-colors cursor-pointer whitespace-nowrap ${
+                      previewPassageNum === p
+                        ? 'bg-[#58CC02] text-white shadow-2xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    Passage {p}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowBilingualPreview((prev) => !prev)}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black border transition-colors cursor-pointer whitespace-nowrap ${
+                  showBilingualPreview
+                    ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                    : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-600'
+                }`}
+              >
+                <Languages className="h-3.5 w-3.5" />
+                <span>{showBilingualPreview ? 'Đang bật Dịch Song Ngữ' : 'Bật Dịch Song Ngữ'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleStartPractice(selectedTestId, previewPassageNum)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#58CC02] hover:bg-[#46A302] text-white text-xs font-black shadow-2xs transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <Play className="h-3.5 w-3.5 fill-white" />
+                <span>Làm 10 Câu Passage {previewPassageNum}</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-4 max-h-[520px] overflow-y-auto pr-1">
+            {activePassageSource.readingArticle.paragraphs.map((para, idx) => {
+              const transPara =
+                activePassageSource.readingArticleTranslation?.paragraphs?.[idx] || '';
+              return (
+                <div
+                  key={idx}
+                  className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-700 space-y-2"
+                >
+                  <div className="text-[11px] font-black text-slate-400 uppercase tracking-wider">
+                    Đoạn {idx + 1} · Bôi đen từ bất kỳ để tra từ điển & lưu Flashcard
+                  </div>
+                  <div
+                    className="text-sm sm:text-base text-slate-800 dark:text-slate-100 leading-relaxed"
+                    dangerouslySetInnerHTML={{ __html: para }}
+                  />
+                  {showBilingualPreview && transPara && (
+                    <div className="pt-2 border-t border-slate-200/70 dark:border-slate-800 text-xs sm:text-sm text-slate-600 dark:text-slate-300 italic leading-relaxed">
+                      {transPara}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

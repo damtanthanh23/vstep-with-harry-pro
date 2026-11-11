@@ -13,6 +13,8 @@ import {
   TestMetadata,
   UserExamAttempt,
   InProgressAttempt,
+  ExamUserHighlight,
+  ExamScratchpadNotesMap,
   isDraftTest,
 } from './types/exam';
 import { TestSelectionView, SkillPackageType } from './components/TestSelectionView';
@@ -21,7 +23,8 @@ import { LoginModal } from './components/LoginModal';
 import { UserProfileModal } from './components/UserProfileModal';
 import { AiPdfUploadModal } from './components/AiPdfUploadModal';
 import { InteractiveTranscriptModal } from './components/InteractiveTranscriptModal';
-import { ExamHeader } from './components/ExamHeader';
+import { ExamHeader, CloudSyncStatusType } from './components/ExamHeader';
+import { ExamScratchpadDrawer, ExamShortcutsGuideModal } from './components/ExamScratchpadModal';
 import { ExamFooter } from './components/ExamFooter';
 import { SummaryBoardDrawer } from './components/SummaryBoardDrawer';
 import { SectionTransitionView } from './components/SectionTransitionView';
@@ -75,6 +78,8 @@ import {
   saveInProgressAttemptToFirestore,
   fetchUserInProgressMap,
   clearInProgressAttemptFromFirestore,
+  getClearedInProgressTimestamps,
+  markInProgressClearedLocally,
   hydrateQuestionsFromStorage,
   savePracticeAnswerImmediately,
   fetchPracticeAuditLogs,
@@ -393,6 +398,7 @@ export default function App() {
   const [activeWritingAiEval, setActiveWritingAiEval] = useState<any>(undefined);
   const [activeSpeakingAiEval, setActiveSpeakingAiEval] = useState<any>(undefined);
   const [activeAiDiagnostic, setActiveAiDiagnostic] = useState<any>(null);
+  const [activeTeacherFeedback, setActiveTeacherFeedback] = useState<any>(undefined);
 
   // Strict Fullscreen & Tab-Switch Proctoring State
   const [strictExamMode, setStrictExamMode] = useState<boolean>(true);
@@ -405,6 +411,18 @@ export default function App() {
   const [activeQuestionId, setActiveQuestionId] = useState<number>(1);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [flagged, setFlagged] = useState<Record<number, boolean>>({});
+  const [userHighlights, setUserHighlights] = useState<ExamUserHighlight[]>([]);
+  const [eliminatedOptions, setEliminatedOptions] = useState<Record<number, string[]>>({});
+  const [scratchpadNotes, setScratchpadNotes] = useState<ExamScratchpadNotesMap>({
+    GENERAL: '',
+    LISTENING: '',
+    READING: '',
+    WRITING: '',
+    SPEAKING: '',
+  });
+  const [isScratchpadOpen, setIsScratchpadOpen] = useState<boolean>(false);
+  const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState<boolean>(false);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatusType>('idle');
 
   // Timers & Pause State (Items 11 & 15)
   const [timeRemainingSeconds, setTimeRemainingSeconds] = useState<number>(172 * 60);
@@ -582,63 +600,126 @@ export default function App() {
     }
 
     const userMapKey = `langcert_in_progress_map_${currentUser.uid}`;
+    const clearedMap = getClearedInProgressTimestamps(currentUser.uid);
     let localUserMap: Record<string, InProgressAttempt> = {};
     try {
       const rawUserMap = localStorage.getItem(userMapKey) || localStorage.getItem('langcert_in_progress_map');
       if (rawUserMap) {
         const parsed = JSON.parse(rawUserMap);
         if (parsed && typeof parsed === 'object') {
-          localUserMap = parsed;
-          setInProgressMap(parsed);
+          Object.entries(parsed as Record<string, InProgressAttempt>).forEach(([tId, draft]) => {
+            if (draft && (draft.savedAt || 0) > (clearedMap[tId] || 0)) {
+              localUserMap[tId] = draft;
+            }
+          });
+          setInProgressMap(localUserMap);
         }
       }
     } catch {
       // Ignore
     }
 
-    fetchUserAttempts(currentUser.uid)
-      .then((attempts) => {
-        const scores: Record<string, number> = {};
-        attempts.forEach((a) => {
-          if (scores[a.testId] === undefined || a.score > scores[a.testId]) {
-            scores[a.testId] = a.score;
-          }
-        });
-        setCompletedScoresMap(scores);
-        syncStreakWithCloudAndAttempts(currentUser.uid, attempts).catch(() => {});
-      })
-      .catch(() => {
-        syncStreakWithCloudAndAttempts(currentUser.uid, []).catch(() => {});
+    Promise.all([
+      fetchUserAttempts(currentUser.uid).catch(() => [] as UserExamAttempt[]),
+      fetchUserInProgressMap(currentUser.uid).catch(() => ({} as Record<string, InProgressAttempt>)),
+    ]).then(([attempts, remoteMap]) => {
+      const scores: Record<string, number> = {};
+      const latestCompletedAtByTest: Record<string, number> = {};
+      attempts.forEach((a) => {
+        if (scores[a.testId] === undefined || a.score > scores[a.testId]) {
+          scores[a.testId] = a.score;
+        }
+        if ((a.completedAt || 0) > (latestCompletedAtByTest[a.testId] || 0)) {
+          latestCompletedAtByTest[a.testId] = a.completedAt || 0;
+        }
       });
+      setCompletedScoresMap(scores);
+      syncStreakWithCloudAndAttempts(currentUser.uid, attempts).catch(() => {});
 
-    fetchUserInProgressMap(currentUser.uid)
-      .then((remoteMap) => {
-        setInProgressMap(() => {
-          const merged: Record<string, InProgressAttempt> = { ...localUserMap };
-          Object.entries(remoteMap).forEach(([tId, rAttempt]) => {
-            const lAttempt = merged[tId];
-            if (!lAttempt || (rAttempt.savedAt || 0) >= (lAttempt.savedAt || 0)) {
-              merged[tId] = rAttempt;
-            }
-          });
-          try {
-            localStorage.setItem(userMapKey, JSON.stringify(merged));
-            localStorage.setItem('langcert_in_progress_map', JSON.stringify(merged));
-          } catch {
-            // Ignore
+      const latestClearedMap = getClearedInProgressTimestamps(currentUser.uid);
+      setInProgressMap(() => {
+        const merged: Record<string, InProgressAttempt> = {};
+
+        // Merge local and remote drafts, keeping the newer one
+        const allTestIds = new Set([
+          ...Object.keys(localUserMap),
+          ...Object.keys(remoteMap),
+        ]);
+
+        allTestIds.forEach((tId) => {
+          const lAttempt = localUserMap[tId];
+          const rAttempt = remoteMap[tId];
+          let candidate: InProgressAttempt | undefined = lAttempt;
+          if (rAttempt && (!lAttempt || (rAttempt.savedAt || 0) >= (lAttempt.savedAt || 0))) {
+            // Preserve local base64 audio or highlights if remote was trimmed for Firestore size
+            candidate = {
+              ...lAttempt,
+              ...rAttempt,
+              speakingSubmission:
+                lAttempt?.speakingSubmission?.part1AudioDataUrl ||
+                lAttempt?.speakingSubmission?.part2AudioDataUrl ||
+                lAttempt?.speakingSubmission?.part3AudioDataUrl
+                  ? {
+                      ...EMPTY_SPEAKING_SUBMISSION,
+                      ...lAttempt.speakingSubmission,
+                      ...rAttempt.speakingSubmission,
+                      part1AudioDataUrl:
+                        rAttempt.speakingSubmission?.part1AudioDataUrl ||
+                        lAttempt.speakingSubmission?.part1AudioDataUrl,
+                      part2AudioDataUrl:
+                        rAttempt.speakingSubmission?.part2AudioDataUrl ||
+                        lAttempt.speakingSubmission?.part2AudioDataUrl,
+                      part3AudioDataUrl:
+                        rAttempt.speakingSubmission?.part3AudioDataUrl ||
+                        lAttempt.speakingSubmission?.part3AudioDataUrl,
+                    }
+                  : rAttempt.speakingSubmission,
+            };
           }
-          // Backfill any local in-progress draft to Firestore so Admin sees real-time progress
-          const entries = Object.values(merged);
-          if (entries.length > 0) {
-            const latestDraft = entries.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))[0];
-            if (latestDraft && latestDraft.testId) {
+
+          if (!candidate) return;
+          const savedAt = candidate.savedAt || 0;
+          const clearedAt = latestClearedMap[tId] || 0;
+          const completedAt = latestCompletedAtByTest[tId] || 0;
+
+          // Discard ghost drafts that are older than a completed submission or explicit restart
+          if (savedAt <= clearedAt || (completedAt > 0 && savedAt <= completedAt + 5000)) {
+            try {
+              localStorage.removeItem(`langcert_inprogress_${currentUser.uid}_${tId}`);
+              localStorage.removeItem(`langcert_inprogress_${tId}`);
+            } catch {
+              // Ignore
+            }
+            if (rAttempt) {
+              clearInProgressAttemptFromFirestore(currentUser.uid, tId).catch(() => {});
+            }
+            return;
+          }
+
+          merged[tId] = candidate;
+        });
+
+        try {
+          localStorage.setItem(userMapKey, JSON.stringify(merged));
+          localStorage.setItem('langcert_in_progress_map', JSON.stringify(merged));
+        } catch {
+          // Ignore
+        }
+
+        // Backfill the newest active local draft to Firestore if it hasn't been synced yet
+        const entries = Object.values(merged);
+        if (entries.length > 0) {
+          const latestDraft = entries.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))[0];
+          if (latestDraft && latestDraft.testId) {
+            const remoteSavedAt = remoteMap[latestDraft.testId]?.savedAt || 0;
+            if ((latestDraft.savedAt || 0) > remoteSavedAt) {
               saveInProgressAttemptToFirestore(currentUser.uid, latestDraft).catch(() => {});
             }
           }
-          return merged;
-        });
-      })
-      .catch(() => {});
+        }
+        return merged;
+      });
+    });
   }, [currentUser]);
 
   // Keep a mutable ref of rapidly changing timer/navigation state so auto-save never re-triggers on 1-second clock ticks
@@ -680,6 +761,12 @@ export default function App() {
       flagged,
       writingSubmission,
       speakingSubmission,
+      userHighlights: userHighlights.length > 0 ? userHighlights : undefined,
+      eliminatedOptions:
+        Object.keys(eliminatedOptions).length > 0 ? eliminatedOptions : undefined,
+      scratchpadNotes: Object.values(scratchpadNotes).some((v) => v && v.trim().length > 0)
+        ? scratchpadNotes
+        : undefined,
       timeRemainingSeconds: metrics.timeRemainingSeconds,
       elapsedSeconds: metrics.elapsedSeconds,
       totalPausedSeconds: metrics.totalPausedSeconds,
@@ -696,18 +783,20 @@ export default function App() {
     flagged,
     writingSubmission,
     speakingSubmission,
+    userHighlights,
+    eliminatedOptions,
+    scratchpadNotes,
   ]);
 
-  // Track last cloud sync timestamp so Firestore writes are throttled to at most once every 60 seconds
+  // Track last cloud sync timestamp so Firestore writes are throttled to at most once every 45 seconds
   const lastCloudSyncAtRef = useRef<number>(0);
   const pendingCloudSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 2-Tier Smart Auto-Save:
-  // Tier 1 (Local): Instant 800ms localStorage backup with compact 'Saved HH:MM:SS' timestamp (0 Firestore cost)
-  // Tier 2 (Cloud): Throttled Firestore backup at most once every 60 seconds when changes occur
-  useEffect(() => {
-    if (currentScreen !== 'exam') return;
+  // Track whether the user dismissed the reload recovery banner in this view
+  const [dismissedRecoveryBanner, setDismissedRecoveryBanner] = useState<boolean>(false);
 
+  // Helper to check if current exam session has any meaningful user progress worth saving
+  const hasAnyExamProgress = useMemo(() => {
     const hasAnsweredAny = Object.values(answers).some((v) => v && v.trim().length > 0);
     const hasFlaggedAny = Object.values(flagged).some(Boolean);
     const hasWritingAny =
@@ -720,13 +809,78 @@ export default function App() {
       Boolean(speakingSubmission.part1AudioDataUrl) ||
       Boolean(speakingSubmission.part2AudioDataUrl) ||
       Boolean(speakingSubmission.part3AudioDataUrl);
+    const hasHighlightsAny = userHighlights.length > 0;
+    const hasEliminatedAny = Object.values(eliminatedOptions).some((arr) => arr && arr.length > 0);
+    const hasScratchpadAny = Object.values(scratchpadNotes).some((v) => v && v.trim().length > 0);
 
-    if (!hasAnsweredAny && !hasFlaggedAny && !hasWritingAny && !hasSpeakingAny) {
-      return;
-    }
+    return (
+      hasAnsweredAny ||
+      hasFlaggedAny ||
+      hasWritingAny ||
+      hasSpeakingAny ||
+      hasHighlightsAny ||
+      hasEliminatedAny ||
+      hasScratchpadAny
+    );
+  }, [
+    answers,
+    flagged,
+    writingSubmission,
+    speakingSubmission,
+    userHighlights,
+    eliminatedOptions,
+    scratchpadNotes,
+  ]);
 
-    // Immediately persist lightweight writing & speaking drafts to localStorage partitioned by user
+  // Helper to execute Cloud Firestore sync and update status indicators
+  const syncSnapshotToCloud = useCallback(
+    async (snap: InProgressAttempt) => {
+      if (!currentUser) {
+        setCloudSyncStatus('offline_saved');
+        return;
+      }
+      if (!navigator.onLine) {
+        setCloudSyncStatus('offline_saved');
+        return;
+      }
+      setCloudSyncStatus('syncing_cloud');
+      lastCloudSyncAtRef.current = Date.now();
+      const ok = await saveInProgressAttemptToFirestore(currentUser.uid, snap);
+      const timeStr = new Date().toLocaleTimeString('vi-VN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+      if (ok) {
+        setCloudSyncStatus('synced_cloud');
+        setLastSavedText(`Cloud ${timeStr}`);
+      } else {
+        setCloudSyncStatus('sync_error');
+        setLastSavedText(`Lưu máy ${timeStr}`);
+      }
+    },
+    [currentUser]
+  );
+
+  // 2-Tier Smart Auto-Save:
+  // Tier 1 (Local): Instant 500ms localStorage backup + live inProgressMap state update + active reload recovery snapshot
+  // Tier 2 (Cloud): Throttled Firestore backup at most once every 45 seconds when changes occur
+  useEffect(() => {
+    if (currentScreen !== 'exam') return;
+    if (!hasAnyExamProgress) return;
+
     const uidPrefix = currentUser?.uid || 'guest';
+    const hasWritingAny =
+      writingSubmission.task1Text.trim().length > 0 ||
+      writingSubmission.task2Text.trim().length > 0;
+    const hasSpeakingAny =
+      speakingSubmission.part1Text.trim().length > 0 ||
+      speakingSubmission.part2Text.trim().length > 0 ||
+      speakingSubmission.part3Text.trim().length > 0 ||
+      Boolean(speakingSubmission.part1AudioDataUrl) ||
+      Boolean(speakingSubmission.part2AudioDataUrl) ||
+      Boolean(speakingSubmission.part3AudioDataUrl);
+
     try {
       if (hasWritingAny) {
         localStorage.setItem(
@@ -752,11 +906,15 @@ export default function App() {
       // Ignore storage quota errors
     }
 
+    setCloudSyncStatus('saving_local');
+
     const debounceTimer = setTimeout(() => {
       const snap = buildInProgressSnapshot();
       try {
         localStorage.setItem(`langcert_inprogress_${uidPrefix}_${selectedTestId}`, JSON.stringify(snap));
         localStorage.setItem(`langcert_inprogress_${selectedTestId}`, JSON.stringify(snap));
+        localStorage.setItem(`vstep_active_exam_session_v1_${uidPrefix}`, JSON.stringify(snap));
+        localStorage.setItem('vstep_active_exam_session_v1', JSON.stringify(snap));
         const rawMap = localStorage.getItem(inProgressStorageKey);
         const parsedMap = rawMap ? JSON.parse(rawMap) : {};
         parsedMap[selectedTestId] = snap;
@@ -766,67 +924,68 @@ export default function App() {
         // Ignore storage errors
       }
 
+      setInProgressMap((prev) => ({
+        ...prev,
+        [selectedTestId]: snap,
+      }));
+
       const nowStr = new Date().toLocaleTimeString('vi-VN', {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
       });
-      setLastSavedText(`Saved ${nowStr}`);
+      setLastSavedText(`Lưu máy ${nowStr}`);
 
       if (currentUser && isOnline) {
-        const CLOUD_THROTTLE_MS = 60000;
+        const CLOUD_THROTTLE_MS = 45000;
         const elapsedSinceLastCloud = Date.now() - lastCloudSyncAtRef.current;
 
         if (elapsedSinceLastCloud >= CLOUD_THROTTLE_MS) {
-          lastCloudSyncAtRef.current = Date.now();
           if (pendingCloudSyncTimerRef.current) {
             clearTimeout(pendingCloudSyncTimerRef.current);
             pendingCloudSyncTimerRef.current = null;
           }
-          saveInProgressAttemptToFirestore(currentUser.uid, snap).catch(() => {});
-        } else if (!pendingCloudSyncTimerRef.current) {
-          const remainingWait = Math.max(5000, CLOUD_THROTTLE_MS - elapsedSinceLastCloud);
-          pendingCloudSyncTimerRef.current = setTimeout(() => {
-            pendingCloudSyncTimerRef.current = null;
-            lastCloudSyncAtRef.current = Date.now();
-            const latestSnap = buildInProgressSnapshot();
-            saveInProgressAttemptToFirestore(currentUser.uid, latestSnap).catch(() => {});
-          }, remainingWait);
+          syncSnapshotToCloud(snap);
+        } else {
+          setCloudSyncStatus('synced_cloud');
+          if (!pendingCloudSyncTimerRef.current) {
+            const remainingWait = Math.max(4000, CLOUD_THROTTLE_MS - elapsedSinceLastCloud);
+            pendingCloudSyncTimerRef.current = setTimeout(() => {
+              pendingCloudSyncTimerRef.current = null;
+              const latestSnap = buildInProgressSnapshot();
+              syncSnapshotToCloud(latestSnap);
+            }, remainingWait);
+          }
         }
+      } else {
+        setCloudSyncStatus('offline_saved');
       }
-    }, 800);
+    }, 500);
 
     return () => clearTimeout(debounceTimer);
   }, [
     currentScreen,
     selectedTestId,
+    currentGroupIndex,
+    hasAnyExamProgress,
     answers,
     flagged,
     writingSubmission,
     speakingSubmission,
+    userHighlights,
+    eliminatedOptions,
+    scratchpadNotes,
     buildInProgressSnapshot,
+    syncSnapshotToCloud,
     currentUser,
     isOnline,
     inProgressStorageKey,
   ]);
 
-  // Immediate flush helper: bypasses 60s throttle when student switches sections, hides tab, or exits exam
+  // Immediate flush helper: bypasses throttle when student switches sections, hides tab, reloads (beforeunload), or clicks manual sync
   const flushInProgressToCloudImmediately = useCallback(() => {
     if (currentScreen !== 'exam') return;
-    const hasAnsweredAny = Object.values(answers).some((v) => v && v.trim().length > 0);
-    const hasFlaggedAny = Object.values(flagged).some(Boolean);
-    const hasWritingAny =
-      writingSubmission.task1Text.trim().length > 0 ||
-      writingSubmission.task2Text.trim().length > 0;
-    const hasSpeakingAny =
-      speakingSubmission.part1Text.trim().length > 0 ||
-      speakingSubmission.part2Text.trim().length > 0 ||
-      speakingSubmission.part3Text.trim().length > 0 ||
-      Boolean(speakingSubmission.part1AudioDataUrl) ||
-      Boolean(speakingSubmission.part2AudioDataUrl) ||
-      Boolean(speakingSubmission.part3AudioDataUrl);
-
-    if (!hasAnsweredAny && !hasFlaggedAny && !hasWritingAny && !hasSpeakingAny) return;
+    if (!hasAnyExamProgress) return;
 
     if (pendingCloudSyncTimerRef.current) {
       clearTimeout(pendingCloudSyncTimerRef.current);
@@ -837,6 +996,9 @@ export default function App() {
     const uidPrefix = currentUser?.uid || 'guest';
     try {
       localStorage.setItem(`langcert_inprogress_${uidPrefix}_${selectedTestId}`, JSON.stringify(snap));
+      localStorage.setItem(`langcert_inprogress_${selectedTestId}`, JSON.stringify(snap));
+      localStorage.setItem(`vstep_active_exam_session_v1_${uidPrefix}`, JSON.stringify(snap));
+      localStorage.setItem('vstep_active_exam_session_v1', JSON.stringify(snap));
       const rawMap = localStorage.getItem(inProgressStorageKey);
       const parsedMap = rawMap ? JSON.parse(rawMap) : {};
       parsedMap[selectedTestId] = snap;
@@ -846,21 +1008,80 @@ export default function App() {
       // Ignore
     }
 
-    if (currentUser) {
-      lastCloudSyncAtRef.current = Date.now();
-      saveInProgressAttemptToFirestore(currentUser.uid, snap).catch(() => {});
-    }
+    setInProgressMap((prev) => ({
+      ...prev,
+      [selectedTestId]: snap,
+    }));
+
+    syncSnapshotToCloud(snap);
   }, [
     currentScreen,
-    answers,
-    flagged,
-    writingSubmission,
-    speakingSubmission,
+    hasAnyExamProgress,
     buildInProgressSnapshot,
     currentUser,
     selectedTestId,
     inProgressStorageKey,
+    syncSnapshotToCloud,
   ]);
+
+  // Manual 1-click Force Cloud Sync from ExamHeader
+  const handleForceCloudSync = useCallback(() => {
+    if (currentScreen !== 'exam') return;
+    const snap = buildInProgressSnapshot();
+    const uidPrefix = currentUser?.uid || 'guest';
+    try {
+      localStorage.setItem(`langcert_inprogress_${uidPrefix}_${selectedTestId}`, JSON.stringify(snap));
+      localStorage.setItem(`langcert_inprogress_${selectedTestId}`, JSON.stringify(snap));
+      const rawMap = localStorage.getItem(inProgressStorageKey);
+      const parsedMap = rawMap ? JSON.parse(rawMap) : {};
+      parsedMap[selectedTestId] = snap;
+      localStorage.setItem(inProgressStorageKey, JSON.stringify(parsedMap));
+      localStorage.setItem('langcert_in_progress_map', JSON.stringify(parsedMap));
+    } catch {
+      // Ignore
+    }
+    setInProgressMap((prev) => ({
+      ...prev,
+      [selectedTestId]: snap,
+    }));
+    syncSnapshotToCloud(snap);
+  }, [
+    currentScreen,
+    buildInProgressSnapshot,
+    currentUser,
+    selectedTestId,
+    inProgressStorageKey,
+    syncSnapshotToCloud,
+  ]);
+
+  // Append selected quote from passage/question directly into the Scratchpad for the active skill
+  const handleAppendToScratchpad = useCallback(
+    (snippet: string, sectionKey?: string) => {
+      const targetKey = (
+        sectionKey && ['LISTENING', 'READING', 'WRITING', 'SPEAKING', 'GENERAL'].includes(sectionKey)
+          ? sectionKey
+          : 'GENERAL'
+      ) as keyof ExamScratchpadNotesMap;
+      setScratchpadNotes((prev) => {
+        const existing = prev[targetKey] || '';
+        const separator = existing.trim().length > 0 ? '\n' : '';
+        return {
+          ...prev,
+          [targetKey]: `${existing}${separator}• "${snippet.trim()}"`,
+        };
+      });
+      setIsScratchpadOpen(true);
+    },
+    []
+  );
+
+  // Total badge count for Scratchpad button in ExamHeader (non-empty note tabs + highlight count)
+  const scratchpadBadgeCount = useMemo(() => {
+    const noteTabsWithContent = Object.values(scratchpadNotes).filter(
+      (v) => v && v.trim().length > 0
+    ).length;
+    return noteTabsWithContent + userHighlights.length;
+  }, [scratchpadNotes, userHighlights.length]);
 
   // Toggle Fullscreen helper
   const handleToggleFullscreen = useCallback(() => {
@@ -884,7 +1105,7 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
-  // Flush to Cloud Firestore immediately when tab is hidden or page is closed during an active exam
+  // Flush to Cloud Firestore & LocalStorage immediately when tab is hidden, reloaded (beforeunload), or page is closed during an active exam
   // Also enforce Tab-Switch Proctoring Alert when in Exam mode with strictExamMode enabled
   useEffect(() => {
     if (currentScreen !== 'exam') return;
@@ -918,9 +1139,11 @@ export default function App() {
     };
     document.addEventListener('visibilitychange', handleVisibilityOrHide);
     window.addEventListener('pagehide', flushInProgressToCloudImmediately);
+    window.addEventListener('beforeunload', flushInProgressToCloudImmediately);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityOrHide);
       window.removeEventListener('pagehide', flushInProgressToCloudImmediately);
+      window.removeEventListener('beforeunload', flushInProgressToCloudImmediately);
     };
   }, [currentScreen, flushInProgressToCloudImmediately, examMode, strictExamMode, isPaused, isSubmitModalOpen]);
 
@@ -1270,6 +1493,19 @@ export default function App() {
     );
     setAnswers(saved.answers || {});
     setFlagged(saved.flagged || {});
+    setUserHighlights(saved.userHighlights || []);
+    setEliminatedOptions(saved.eliminatedOptions || {});
+    setScratchpadNotes(
+      saved.scratchpadNotes || {
+        GENERAL: '',
+        LISTENING: '',
+        READING: '',
+        WRITING: '',
+        SPEAKING: '',
+      }
+    );
+    setIsScratchpadOpen(false);
+    setIsShortcutsModalOpen(false);
     const uidPrefix = currentUser?.uid || 'guest';
     // Restore writing submission from saved attempt or dedicated local draft backup
     let restoredWriting: WritingSubmission =
@@ -1332,9 +1568,11 @@ export default function App() {
         minute: '2-digit',
         second: '2-digit',
       });
-      setLastSavedText(`Saved ${savedTimeStr}`);
+      setLastSavedText(`Đã lưu ${savedTimeStr}`);
+      setCloudSyncStatus(isOnline ? 'synced_cloud' : 'offline_saved');
     } else {
       setLastSavedText('');
+      setCloudSyncStatus('idle');
     }
     setIsPaused(false);
     setIsSummaryDrawerOpen(false);
@@ -1351,6 +1589,7 @@ export default function App() {
     }
 
     const uidPrefix = currentUser?.uid || 'guest';
+    markInProgressClearedLocally(uidPrefix, testId);
     setInProgressMap((prev) => {
       const next = { ...prev };
       delete next[testId];
@@ -1383,6 +1622,7 @@ export default function App() {
     setActiveWritingAiEval(attempt.aiWritingEvaluation);
     setActiveSpeakingAiEval(attempt.aiSpeakingEvaluation);
     setActiveAiDiagnostic(attempt.aiDiagnosticReport || null);
+    setActiveTeacherFeedback(attempt.teacherFeedback);
     setAnswers(attempt.answers || {});
     setWritingSubmission(
       attempt.writingSubmission || {
@@ -1412,6 +1652,7 @@ export default function App() {
     setActiveWritingAiEval(undefined);
     setActiveSpeakingAiEval(undefined);
     setActiveAiDiagnostic(null);
+    setActiveTeacherFeedback(undefined);
     setTabSwitchCount(0);
     setIsTabWarningModalOpen(false);
     if (examMode === 'exam' && strictExamMode) {
@@ -1459,6 +1700,18 @@ export default function App() {
     setSelectedPartsForSession(partsToRun);
     setAnswers({});
     setFlagged({});
+    setUserHighlights([]);
+    setEliminatedOptions({});
+    setScratchpadNotes({
+      GENERAL: '',
+      LISTENING: '',
+      READING: '',
+      WRITING: '',
+      SPEAKING: '',
+    });
+    setIsScratchpadOpen(false);
+    setIsShortcutsModalOpen(false);
+    setCloudSyncStatus('idle');
     setWritingSubmission({
       task1Text: '',
       task1WordCount: 0,
@@ -1487,6 +1740,7 @@ export default function App() {
 
     // Clear previous in-progress for this test
     const uidPrefix = currentUser?.uid || 'guest';
+    markInProgressClearedLocally(uidPrefix, testId);
     setInProgressMap((prev) => {
       const next = { ...prev };
       delete next[testId];
@@ -1552,43 +1806,28 @@ export default function App() {
   const handleBackToTests = () => {
     examAudioManager.pause();
     clearSessionLocalAudioOverrides();
-    if (currentScreen === 'exam') {
-      const hasAnsweredAny = Object.values(answers).some((v) => v && v.trim().length > 0);
-      const hasFlaggedAny = Object.values(flagged).some(Boolean);
-      const hasWritingAny =
-        writingSubmission.task1Text.trim().length > 0 ||
-        writingSubmission.task2Text.trim().length > 0;
-      const hasSpeakingAny =
-        speakingSubmission.part1Text.trim().length > 0 ||
-        speakingSubmission.part2Text.trim().length > 0 ||
-        speakingSubmission.part3Text.trim().length > 0 ||
-        Boolean(speakingSubmission.part1AudioDataUrl) ||
-        Boolean(speakingSubmission.part2AudioDataUrl) ||
-        Boolean(speakingSubmission.part3AudioDataUrl);
-
-      if (hasAnsweredAny || hasFlaggedAny || hasWritingAny || hasSpeakingAny) {
-        if (pendingCloudSyncTimerRef.current) {
-          clearTimeout(pendingCloudSyncTimerRef.current);
-          pendingCloudSyncTimerRef.current = null;
+    if (currentScreen === 'exam' && hasAnyExamProgress) {
+      if (pendingCloudSyncTimerRef.current) {
+        clearTimeout(pendingCloudSyncTimerRef.current);
+        pendingCloudSyncTimerRef.current = null;
+      }
+      const snap = buildInProgressSnapshot();
+      const uidPrefix = currentUser?.uid || 'guest';
+      setInProgressMap((prev) => {
+        const updated = { ...prev, [selectedTestId]: snap };
+        try {
+          localStorage.setItem(inProgressStorageKey, JSON.stringify(updated));
+          localStorage.setItem('langcert_in_progress_map', JSON.stringify(updated));
+          localStorage.setItem(`langcert_inprogress_${uidPrefix}_${selectedTestId}`, JSON.stringify(snap));
+          localStorage.setItem(`langcert_inprogress_${selectedTestId}`, JSON.stringify(snap));
+        } catch {
+          // Ignore
         }
-        const snap = buildInProgressSnapshot();
-        const uidPrefix = currentUser?.uid || 'guest';
-        setInProgressMap((prev) => {
-          const updated = { ...prev, [selectedTestId]: snap };
-          try {
-            localStorage.setItem(inProgressStorageKey, JSON.stringify(updated));
-            localStorage.setItem('langcert_in_progress_map', JSON.stringify(updated));
-            localStorage.setItem(`langcert_inprogress_${uidPrefix}_${selectedTestId}`, JSON.stringify(snap));
-            localStorage.setItem(`langcert_inprogress_${selectedTestId}`, JSON.stringify(snap));
-          } catch {
-            // Ignore
-          }
-          return updated;
-        });
-        if (currentUser) {
-          lastCloudSyncAtRef.current = Date.now();
-          saveInProgressAttemptToFirestore(currentUser.uid, snap).catch(() => {});
-        }
+        return updated;
+      });
+      if (currentUser) {
+        lastCloudSyncAtRef.current = Date.now();
+        saveInProgressAttemptToFirestore(currentUser.uid, snap).catch(() => {});
       }
     }
     setIsPaused(false);
@@ -1779,7 +2018,20 @@ export default function App() {
         }
       }
 
-      if (currentGroup.type !== 'questions' || currentQuestions.length === 0) return;
+      if (currentGroup.type !== 'questions' || currentQuestions.length === 0) {
+        // Still allow N (Scratchpad) and ? (Shortcuts Guide) on Transition, Writing, or Speaking screens
+        if (e.key === 'n' || e.key === 'N') {
+          e.preventDefault();
+          setIsScratchpadOpen((prev) => !prev);
+          return;
+        }
+        if (e.key === '?') {
+          e.preventDefault();
+          setIsShortcutsModalOpen((prev) => !prev);
+          return;
+        }
+        return;
+      }
 
       const activeQ =
         currentQuestions.find((q) => q.id === activeQuestionId) || currentQuestions[0];
@@ -1917,6 +2169,7 @@ export default function App() {
     setActiveWritingAiEval(undefined);
     setActiveSpeakingAiEval(undefined);
     setActiveAiDiagnostic(null);
+    setActiveTeacherFeedback(undefined);
     setIsTabWarningModalOpen(false);
     try {
       if (document.fullscreenElement) {
@@ -1985,6 +2238,7 @@ export default function App() {
     }
 
     const uidPrefix = currentUser?.uid || 'guest';
+    markInProgressClearedLocally(uidPrefix, selectedTestId);
     setInProgressMap((prev) => {
       const next = { ...prev };
       delete next[selectedTestId];
@@ -1997,6 +2251,8 @@ export default function App() {
         localStorage.removeItem(`langcert_writing_draft_${selectedTestId}`);
         localStorage.removeItem(`langcert_speaking_draft_${uidPrefix}_${selectedTestId}`);
         localStorage.removeItem(`langcert_speaking_draft_${selectedTestId}`);
+        localStorage.removeItem(`vstep_active_exam_session_v1_${uidPrefix}`);
+        localStorage.removeItem('vstep_active_exam_session_v1');
       } catch {
         // Ignore
       }
@@ -2190,6 +2446,134 @@ export default function App() {
     return [h, m, s].map((v) => v.toString().padStart(2, '0')).join(':');
   };
 
+  // Detect recoverable active exam session after page reload (within last 24 hours)
+  const recoverableExamSession = useMemo((): InProgressAttempt | null => {
+    const MAX_AGE_MS = 24 * 60 * 60 * 1000;
+    const entries = Object.values(inProgressMap).filter(
+      (item) => item && item.testId && Date.now() - (item.savedAt || 0) <= MAX_AGE_MS
+    );
+    if (entries.length > 0) {
+      return entries.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))[0];
+    }
+    const uidPrefix = currentUser?.uid || 'guest';
+    try {
+      const rawSession =
+        localStorage.getItem(`vstep_active_exam_session_v1_${uidPrefix}`) ||
+        localStorage.getItem('vstep_active_exam_session_v1');
+      if (rawSession) {
+        const parsed: InProgressAttempt = JSON.parse(rawSession);
+        if (parsed && parsed.testId && Date.now() - (parsed.savedAt || 0) <= MAX_AGE_MS) {
+          return parsed;
+        }
+      }
+    } catch {
+      // Ignore
+    }
+    return null;
+  }, [inProgressMap, currentUser]);
+
+  const renderReloadRecoveryBanner = () => {
+    if (!recoverableExamSession || dismissedRecoveryBanner) return null;
+
+    const answeredCnt = Object.values(recoverableExamSession.answers || {}).filter(
+      (v) => v && v.trim().length > 0
+    ).length;
+    const wWords =
+      (recoverableExamSession.writingSubmission?.task1WordCount || 0) +
+      (recoverableExamSession.writingSubmission?.task2WordCount || 0);
+    const sWords =
+      (recoverableExamSession.speakingSubmission?.part1WordCount || 0) +
+      (recoverableExamSession.speakingSubmission?.part2WordCount || 0) +
+      (recoverableExamSession.speakingSubmission?.part3WordCount || 0);
+    const savedTimeLabel = recoverableExamSession.savedAt
+      ? new Date(recoverableExamSession.savedAt).toLocaleTimeString('vi-VN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        })
+      : '';
+
+    return (
+      <div className="fixed bottom-4 right-4 left-4 sm:left-auto sm:max-w-md z-50 rounded-3xl border-2 border-[#FF9600] border-b-4 border-b-[#E58700] bg-white dark:bg-slate-900 p-4 shadow-2xl">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#FFF4E5] dark:bg-amber-950 text-[#E58700] border border-[#FF9600]">
+              <Save className="h-4 w-4" />
+            </span>
+            <div>
+              <span className="block text-[10px] font-black uppercase tracking-wider text-[#E58700] dark:text-amber-400">
+                Tự động lưu nháp • {savedTimeLabel ? `Lưu lúc ${savedTimeLabel}` : 'Vừa lưu'}
+              </span>
+              <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white line-clamp-1">
+                {recoverableExamSession.testTitle || 'Đề thi VSTEP đang làm dở'}
+              </h4>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDismissedRecoveryBanner(true)}
+            className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 cursor-pointer"
+            title="Ẩn thông báo này"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] font-bold text-slate-600 dark:text-slate-300 tabular-nums">
+          <span className="rounded-lg bg-slate-100 dark:bg-slate-800 px-2 py-0.5">
+            {recoverableExamSession.mode === 'exam' ? 'Chế độ Thi thử' : 'Chế độ Luyện tập'}
+          </span>
+          {answeredCnt > 0 && (
+            <span className="rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 px-2 py-0.5">
+              Đã khoanh {answeredCnt} câu
+            </span>
+          )}
+          {wWords > 0 && (
+            <span className="rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 px-2 py-0.5">
+              Writing: {wWords} từ
+            </span>
+          )}
+          {sWords > 0 && (
+            <span className="rounded-lg bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 px-2 py-0.5">
+              Speaking: {sWords} từ
+            </span>
+          )}
+          {(recoverableExamSession.timeRemainingSeconds || 0) > 0 && (
+            <span className="rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 px-2 py-0.5">
+              Còn {formatClock(recoverableExamSession.timeRemainingSeconds)}
+            </span>
+          )}
+        </div>
+
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setDismissedRecoveryBanner(true)}
+            className="btn-duo-white rounded-xl px-3 py-1.5 text-[11px] font-black cursor-pointer"
+          >
+            Để sau
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!inProgressMap[recoverableExamSession.testId]) {
+                setInProgressMap((prev) => ({
+                  ...prev,
+                  [recoverableExamSession.testId]: recoverableExamSession,
+                }));
+              }
+              handleResumeInProgressTest(recoverableExamSession.testId);
+            }}
+            className="btn-duo-orange inline-flex items-center gap-1.5 rounded-xl px-4 py-1.5 text-[11px] font-black cursor-pointer"
+          >
+            <Play className="h-3.5 w-3.5 fill-white" />
+            <span>Tiếp tục làm bài ngay</span>
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   // LANDING VIEW (Home / Showcase)
   if (currentScreen === 'landing') {
     return (
@@ -2212,6 +2596,7 @@ export default function App() {
           }
           onOpenAdminFeedbackModal={() => setIsAdminFeedbackModalOpen(true)}
         />
+        {renderReloadRecoveryBanner()}
         <LoginModal
           isOpen={isLoginModalOpen}
           onClose={() => setIsLoginModalOpen(false)}
@@ -2320,6 +2705,7 @@ export default function App() {
           completedScoresMap={completedScoresMap}
           customQuestionsMap={customQuestionsMap}
         />
+        {renderReloadRecoveryBanner()}
 
         {/* Pre-Start Part & Timer Configuration Modal (Item 15 & 16) */}
         {preStartModalOpen && (
@@ -2570,11 +2956,23 @@ export default function App() {
                 <>
                   {/* Practice Mode: Granular Part Picker */}
                   <div className="mt-5">
-                    <div className="flex items-center justify-between mb-2.5">
+                    <div className="flex items-center justify-between mb-2.5 flex-wrap gap-2">
                       <label className="text-xs font-black uppercase tracking-wider text-[#777777] dark:text-slate-400">
                         2. Chọn các Part muốn luyện tập ({selectedPartsForSession.length}/{ALL_PRACTICE_PARTS.length} Part)
                       </label>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedPartsForSession(['L1', 'R1', 'W1', 'S1']);
+                            setPracticeTimerType('custom');
+                            setCustomMinutesInput(30);
+                          }}
+                          className="btn-duo-orange px-2.5 py-1 rounded-xl text-[11px] font-black cursor-pointer"
+                          title="Chọn nhanh 4 kỹ năng rút gọn (L1 + R1 + W1 + S1) trong 30 phút"
+                        >
+                          ⚡ Mini VSTEP 30 Phút (4 Kỹ năng)
+                        </button>
                         <button
                           type="button"
                           onClick={() => setSelectedPartsForSession(ALL_PRACTICE_PARTS)}
@@ -2931,6 +3329,7 @@ export default function App() {
             }
           }}
           initialAiDiagnostic={activeAiDiagnostic}
+          teacherFeedback={activeTeacherFeedback}
           onAiDiagnosticGenerated={(report) => {
             setActiveAiDiagnostic(report);
             if (activeAttemptId) {
@@ -2997,6 +3396,12 @@ export default function App() {
           audioBadgeLabel={activeAudioBadgeLabel}
           isOnline={isOnline}
           lastSavedText={lastSavedText}
+          cloudSyncStatus={cloudSyncStatus}
+          onForceCloudSync={handleForceCloudSync}
+          isScratchpadOpen={isScratchpadOpen}
+          scratchpadBadgeCount={scratchpadBadgeCount}
+          onToggleScratchpad={() => setIsScratchpadOpen((prev) => !prev)}
+          onOpenShortcutsModal={() => setIsShortcutsModalOpen(true)}
           onOpenTranscript={
             examMode === 'practice' &&
             currentGroup.type === 'questions' &&
@@ -3071,6 +3476,14 @@ export default function App() {
               flagged={flagged}
               mode={examMode}
               externalScriptToggleCounter={scriptToggleCounter}
+              userHighlights={userHighlights}
+              onUserHighlightsChange={setUserHighlights}
+              eliminatedOptions={eliminatedOptions}
+              onEliminatedOptionsChange={setEliminatedOptions}
+              isScratchpadOpen={isScratchpadOpen}
+              onToggleScratchpad={() => setIsScratchpadOpen((prev) => !prev)}
+              onAppendToScratchpad={handleAppendToScratchpad}
+              onOpenShortcutsModal={() => setIsShortcutsModalOpen(true)}
               onAnswerChange={handleAnswerChange}
               onToggleFlag={handleToggleFlag}
               onSelectQuestion={setActiveQuestionId}
@@ -3331,6 +3744,27 @@ export default function App() {
         isOpen={isFeedbackModalOpen}
         onClose={() => setIsFeedbackModalOpen(false)}
         contextData={feedbackContextData}
+      />
+
+      {/* Floating / Docked Exam Scratchpad & Highlights Manager */}
+      <ExamScratchpadDrawer
+        isOpen={isScratchpadOpen}
+        onClose={() => setIsScratchpadOpen(false)}
+        activeSection={currentGroup.section}
+        testTitle={activeTestMetadata.title}
+        notesMap={scratchpadNotes}
+        onChangeNotesMap={setScratchpadNotes}
+        userHighlights={userHighlights}
+        onRemoveHighlight={(id) =>
+          setUserHighlights((prev) => prev.filter((h) => h.id !== id))
+        }
+        onClearAllHighlights={() => setUserHighlights([])}
+      />
+
+      {/* Keyboard Shortcuts Guide Modal */}
+      <ExamShortcutsGuideModal
+        isOpen={isShortcutsModalOpen}
+        onClose={() => setIsShortcutsModalOpen(false)}
       />
     </div>
   );

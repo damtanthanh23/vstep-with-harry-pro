@@ -64,6 +64,7 @@ import { computeVocabStatsFromPartition } from '../../../services/vocabCloudServ
 import { generateDefault15TopicDecks } from '../../../data/b1Official15TopicsData';
 import { getZodiacFromBirthDate } from '../ZodiacPixelMascot';
 import { resolvePlayableAudioUrl } from '../../../utils/audioStorageService';
+import { saveTeacherAttemptFeedback } from '../../../services/examService';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 
@@ -128,6 +129,91 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
       speaking: 6.5,
     }
   );
+
+  // Teacher Direct Review & Score Override State for Selected Attempt
+  const [teacherCommentInput, setTeacherCommentInput] = useState<string>('');
+  const [teacherWritingOverrideInput, setTeacherWritingOverrideInput] = useState<string>('');
+  const [teacherSpeakingOverrideInput, setTeacherSpeakingOverrideInput] = useState<string>('');
+  const [teacherReviewerName, setTeacherReviewerName] = useState<string>('Mr.Harry (Giảng viên VSTEP)');
+  const [isSavingTeacherFeedback, setIsSavingTeacherFeedback] = useState<boolean>(false);
+  const [teacherFeedbackSavedMsg, setTeacherFeedbackSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!selectedAttemptDetail) {
+      setTeacherCommentInput('');
+      setTeacherWritingOverrideInput('');
+      setTeacherSpeakingOverrideInput('');
+      setTeacherFeedbackSavedMsg(null);
+      return;
+    }
+    setTeacherCommentInput(selectedAttemptDetail.teacherFeedback?.commentVi || '');
+    setTeacherWritingOverrideInput(
+      selectedAttemptDetail.teacherFeedback?.writingScoreOverride !== undefined
+        ? String(selectedAttemptDetail.teacherFeedback.writingScoreOverride)
+        : selectedAttemptDetail.writingScore !== undefined
+        ? String(selectedAttemptDetail.writingScore)
+        : ''
+    );
+    setTeacherSpeakingOverrideInput(
+      selectedAttemptDetail.teacherFeedback?.speakingScoreOverride !== undefined
+        ? String(selectedAttemptDetail.teacherFeedback.speakingScoreOverride)
+        : selectedAttemptDetail.speakingScore !== undefined
+        ? String(selectedAttemptDetail.speakingScore)
+        : ''
+    );
+    if (selectedAttemptDetail.teacherFeedback?.teacherName) {
+      setTeacherReviewerName(selectedAttemptDetail.teacherFeedback.teacherName);
+    }
+    setTeacherFeedbackSavedMsg(null);
+  }, [selectedAttemptDetail]);
+
+  const handleSaveTeacherFeedback = async () => {
+    if (!selectedAttemptDetail || isSavingTeacherFeedback) return;
+    setIsSavingTeacherFeedback(true);
+    setTeacherFeedbackSavedMsg(null);
+    try {
+      const parsedW =
+        teacherWritingOverrideInput.trim() !== ''
+          ? Math.max(0, Math.min(10, Number(teacherWritingOverrideInput)))
+          : undefined;
+      const parsedS =
+        teacherSpeakingOverrideInput.trim() !== ''
+          ? Math.max(0, Math.min(10, Number(teacherSpeakingOverrideInput)))
+          : undefined;
+
+      const feedbackObj = {
+        commentVi: teacherCommentInput.trim(),
+        writingScoreOverride: parsedW !== undefined && !isNaN(parsedW) ? parsedW : undefined,
+        speakingScoreOverride: parsedS !== undefined && !isNaN(parsedS) ? parsedS : undefined,
+        teacherName: teacherReviewerName.trim() || 'Mr.Harry (Giảng viên VSTEP)',
+        updatedAt: Date.now(),
+      };
+
+      const res = await saveTeacherAttemptFeedback(
+        student.uid,
+        selectedAttemptDetail.attemptId,
+        feedbackObj
+      );
+
+      const updatedAttempt: UserExamAttempt = {
+        ...selectedAttemptDetail,
+        teacherFeedback: feedbackObj,
+        ...(res.updatedWritingScore !== undefined ? { writingScore: res.updatedWritingScore } : {}),
+        ...(res.updatedSpeakingScore !== undefined ? { speakingScore: res.updatedSpeakingScore } : {}),
+        ...(res.updatedVstepBandScore !== undefined ? { vstepBandScore: res.updatedVstepBandScore } : {}),
+      };
+
+      setSelectedAttemptDetail(updatedAttempt);
+      setAttempts((prev) =>
+        prev.map((a) => (a.attemptId === updatedAttempt.attemptId ? updatedAttempt : a))
+      );
+      setTeacherFeedbackSavedMsg('Đã lưu lời phê & điểm chấm của Giáo viên lên Cloud Firestore! Học viên sẽ thấy ngay trên màn hình Kết quả.');
+    } catch {
+      setTeacherFeedbackSavedMsg('Lỗi khi lưu nhận xét giáo viên. Vui lòng thử lại.');
+    } finally {
+      setIsSavingTeacherFeedback(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -2476,6 +2562,103 @@ export const StudentDetail360Modal: React.FC<StudentDetail360ModalProps> = ({
                   </div>
                 </div>
               )}
+              {/* Teacher Direct Review, Score Override & Commentary Box */}
+              <div className="space-y-3 pt-4 border-t-2 border-slate-200 dark:border-slate-800">
+                <div className="rounded-2xl bg-lime-50/80 dark:bg-emerald-950/30 p-4 border-2 border-[#58CC02] space-y-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <h4 className="text-xs font-black uppercase text-[#2E7D32] dark:text-[#58CC02] flex items-center gap-1.5">
+                      <GraduationCap className="h-4 w-4" />
+                      <span>Giáo Viên Chấm Điểm &amp; Ghi Lời Phê Trực Tiếp (Đồng bộ sang Học viên)</span>
+                    </h4>
+                    {selectedAttemptDetail.teacherFeedback?.updatedAt && (
+                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                        Cập nhật: {new Date(selectedAttemptDetail.teacherFeedback.updatedAt).toLocaleString('vi-VN')}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                    <div>
+                      <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                        Điểm Writing GV chấm (/10)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        max="10"
+                        value={teacherWritingOverrideInput}
+                        onChange={(e) => setTeacherWritingOverrideInput(e.target.value)}
+                        placeholder="VD: 6.5"
+                        className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-black tabular-nums text-slate-900 dark:text-white focus:border-[#58CC02] focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                        Điểm Speaking GV chấm (/10)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        max="10"
+                        value={teacherSpeakingOverrideInput}
+                        onChange={(e) => setTeacherSpeakingOverrideInput(e.target.value)}
+                        placeholder="VD: 7.0"
+                        className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-black tabular-nums text-slate-900 dark:text-white focus:border-[#58CC02] focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                        Tên Giáo viên chấm bài
+                      </label>
+                      <input
+                        type="text"
+                        value={teacherReviewerName}
+                        onChange={(e) => setTeacherReviewerName(e.target.value)}
+                        placeholder="Mr.Harry (Giảng viên)"
+                        className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-bold text-slate-900 dark:text-white focus:border-[#58CC02] focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                      Lời phê chi tiết &amp; Hướng dẫn sửa bài cho học viên:
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={teacherCommentInput}
+                      onChange={(e) => setTeacherCommentInput(e.target.value)}
+                      placeholder="Nhập nhận xét về bố cục bài viết, cách phát âm Speaking hoặc những bẫy Listening/Reading học viên cần lưu ý..."
+                      className="w-full rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-xs font-semibold text-slate-900 dark:text-white focus:border-[#58CC02] focus:outline-none"
+                    />
+                  </div>
+
+                  {teacherFeedbackSavedMsg && (
+                    <div className="p-2.5 rounded-xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-200 text-[11px] font-black flex items-center gap-1.5">
+                      <CheckCircle2 className="h-4 w-4 text-[#58CC02] shrink-0" />
+                      <span>{teacherFeedbackSavedMsg}</span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleSaveTeacherFeedback}
+                      disabled={isSavingTeacherFeedback}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#58CC02] hover:bg-[#46A302] text-white font-black text-xs border-b-4 border-[#3C8C02] active:border-b-0 active:translate-y-0.5 transition-all cursor-pointer disabled:opacity-60"
+                    >
+                      <Save className="h-3.5 w-3.5" />
+                      <span>
+                        {isSavingTeacherFeedback
+                          ? 'Đang lưu lên Cloud...'
+                          : 'Lưu Điểm & Lời Phê Giáo Viên'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-end shrink-0">

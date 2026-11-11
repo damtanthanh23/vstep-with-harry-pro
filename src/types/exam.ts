@@ -126,6 +126,18 @@ export function isDraftTest(test?: TestMetadata | null): boolean {
   return test.status === 'draft' || test.categoryTag === 'Đề Nháp';
 }
 
+export interface ExamUserHighlight {
+  id: string;
+  partKey: string;
+  text: string;
+  color: 'yellow' | 'green' | 'pink';
+  targetType?: 'passage' | 'question';
+  questionId?: number;
+  createdAt?: number;
+}
+
+export type ExamScratchpadNotesMap = Record<string, string>;
+
 export interface InProgressAttempt {
   testId: string;
   testTitle?: string;
@@ -137,6 +149,9 @@ export interface InProgressAttempt {
   speakingSubmission?: SpeakingSubmission;
   writingDraft?: WritingSubmission;
   speakingDraft?: SpeakingSubmission;
+  userHighlights?: ExamUserHighlight[];
+  eliminatedOptions?: Record<number, string[]>;
+  scratchpadNotes?: ExamScratchpadNotesMap;
   timeRemainingSeconds: number;
   remainingSeconds?: number;
   elapsedSeconds: number;
@@ -145,6 +160,7 @@ export interface InProgressAttempt {
   activeQuestionId: number;
   savedAt: number;
   lastUpdatedAt?: number;
+  cloudSyncedAt?: number;
   practiceAuditLogs?: PracticeAuditEntry[];
   practiceLockedAnswers?: Record<number, boolean>;
 }
@@ -208,6 +224,15 @@ export interface PracticeAuditEntry {
   practicedAt: number;
 }
 
+export interface TeacherAttemptFeedback {
+  writingScoreOverride?: number;
+  speakingScoreOverride?: number;
+  commentVi: string;
+  teacherName: string;
+  teacherEmail?: string;
+  updatedAt: number;
+}
+
 export interface UserExamAttempt {
   attemptId: string;
   testId: string;
@@ -231,6 +256,7 @@ export interface UserExamAttempt {
   aiWritingEvaluation?: any;
   aiSpeakingEvaluation?: any;
   aiDiagnosticReport?: any;
+  teacherFeedback?: TeacherAttemptFeedback;
   selectedParts?: string[];
   practiceAuditLogs?: PracticeAuditEntry[];
   practicedQuestionsCount?: number;

@@ -26,6 +26,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { UkFlagLogo } from '../UkFlagLogo';
+import { PWAInstallButton } from '../pwa/PWAInstallButton';
 
 export type NavTabType =
   | 'home'
@@ -219,6 +220,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </button>
           )}
+
+          <PWAInstallButton isCollapsed={isCollapsed} />
         </div>
 
         {/* Admin Management Tab & Notification Inbox - Gated to Admins & Teachers */}
